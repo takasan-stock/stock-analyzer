@@ -94,6 +94,60 @@ def fetch_stock_info(ticker_code: str):
         "net_cash": net_cash_status,
     }, None
 
+# ==========================================
+# 売上高の履歴取得 ＆ CAGR計算
+# ==========================================
+def fetch_revenue_history(ticker_code: str):
+    """
+    yfinanceから年次の売上高（Total Revenue）を取得する。
+    Yahoo!ファイナンスの無料データは通常直近4期分程度しか提供されないため、
+    「5年」分が取れるとは限らない点に注意。
+    戻り値: (決算期と売上高のDataFrame または None, エラーメッセージ または None)
+    """
+    code = ticker_code.strip()
+    if not code:
+        return None, "ティッカーコードを入力してください。"
+
+    yf_symbol = code if "." in code else f"{code}.T"
+
+    try:
+        ticker_obj = yf.Ticker(yf_symbol)
+        financials = ticker_obj.financials
+    except Exception as e:
+        return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
+
+    if financials is None or financials.empty:
+        return None, f"「{yf_symbol}」の決算データが見つかりませんでした。"
+
+    revenue_row = None
+    for label in ["Total Revenue", "TotalRevenue"]:
+        if label in financials.index:
+            revenue_row = financials.loc[label]
+            break
+
+    if revenue_row is None:
+        return None, "売上高（Total Revenue）の項目が見つかりませんでした。"
+
+    revenue_row = revenue_row.dropna().sort_index()  # 決算期が古い順に並べ替え
+
+    if len(revenue_row) < 2:
+        return None, "CAGRを算出するための決算データが2期分以上ありません。"
+
+    df_rev = pd.DataFrame({
+        "決算期": [d.strftime("%Y-%m") if hasattr(d, "strftime") else str(d) for d in revenue_row.index],
+        "売上高（百万）": [round(v / 1_000_000, 1) for v in revenue_row.values],
+    })
+    df_rev["_date"] = list(revenue_row.index)
+    df_rev["_raw"] = list(revenue_row.values)
+
+    return df_rev, None
+
+def calc_cagr(start_val, end_val, years):
+    """売上などのCAGR（年平均成長率）を計算する"""
+    if start_val is None or end_val is None or start_val <= 0 or years is None or years <= 0:
+        return None
+    return (end_val / start_val) ** (1 / years) - 1
+
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
 if "df" not in st.session_state:
@@ -102,7 +156,7 @@ if "df" not in st.session_state:
 st.title("📊 銘柄管理ダッシュボード")
 st.caption("Obsidian（Dataview / Templater）の代わりに、ブラウザ上で動く株式管理ダッシュボードです。")
 
-tab1, tab2, tab3 = st.tabs(["📋 一覧・編集", "📝 新規銘柄登録", "📊 分析"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析"])
 
 # ------------------------------------------
 # タブ1：一覧表示 ＋ 編集・削除
@@ -277,9 +331,109 @@ with tab2:
                 st.rerun()
 
 # ------------------------------------------
-# タブ3：分析
+# タブ3：売上CAGR計算
 # ------------------------------------------
 with tab3:
+    st.subheader("🧮 売上CAGR計算")
+    st.caption(
+        "売上5y CAGR（年平均成長率）を計算するためのタブです。"
+        "ティッカーからの自動取得、またはIR資料などの数値を手入力して計算できます。"
+    )
+
+    calc_mode = st.radio(
+        "計算方法",
+        ["🌐 ティッカーから自動取得", "✍️ 手入力で計算"],
+        horizontal=True
+    )
+
+    st.divider()
+
+    if calc_mode == "🌐 ティッカーから自動取得":
+        col_c1, col_c2 = st.columns([2, 1])
+        with col_c1:
+            cagr_ticker = st.text_input("ティッカーコード (例: 7974)", key="cagr_ticker")
+        with col_c2:
+            st.write("")
+            cagr_fetch_clicked = st.button("📊 決算データを取得")
+
+        if cagr_fetch_clicked:
+            with st.spinner("決算データを取得中..."):
+                df_rev, error = fetch_revenue_history(cagr_ticker)
+
+            if error:
+                st.error(f"⚠️ {error}")
+                st.info(
+                    "Yahoo!ファイナンスの無料データは小型株や新興企業では取得できない場合があります。"
+                    "その場合は「手入力で計算」をお試しください。"
+                )
+            else:
+                st.markdown("##### 年度別 売上高")
+                st.dataframe(
+                    df_rev[["決算期", "売上高（百万）"]],
+                    hide_index=True, use_container_width=True
+                )
+
+                fig_rev = px.bar(
+                    df_rev, x="決算期", y="売上高（百万）",
+                    title="年度別 売上高の推移", text="売上高（百万）"
+                )
+                st.plotly_chart(fig_rev, use_container_width=True)
+
+                start_val = df_rev["_raw"].iloc[0]
+                end_val = df_rev["_raw"].iloc[-1]
+                start_date = df_rev["_date"].iloc[0]
+                end_date = df_rev["_date"].iloc[-1]
+                years_span = (end_date - start_date).days / 365.25
+
+                cagr_value = calc_cagr(start_val, end_val, years_span)
+
+                n_periods = len(df_rev)
+                if n_periods < 6:
+                    st.warning(
+                        f"⚠️ Yahoo!ファイナンスから取得できたのは直近 {n_periods} 期分（約{years_span:.1f}年分）のデータです。"
+                        "「5年」CAGRとしてはやや短いので、ラベルや精度には注意してください。"
+                    )
+
+                if cagr_value is not None:
+                    st.metric(
+                        f"実質 約{years_span:.1f}年 CAGR",
+                        f"{cagr_value:+.1%}"
+                    )
+                    st.caption("👇 この値を「新規銘柄登録」タブの『売上5y CAGR』欄にコピーして使ってください")
+                    st.code(f"{cagr_value*100:.1f}%", language=None)
+                else:
+                    st.error("CAGRを計算できませんでした（データが不正、または期間が0年です）。")
+
+    else:
+        st.markdown("##### IR資料・決算短信などの数値を入力してください")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            start_rev = st.number_input(
+                "5年前（または開始期）の売上高", min_value=0.0, value=0.0, step=1.0,
+                help="単位は百万円・億円など何でもOKです（開始と終了で揃えてください）"
+            )
+        with col_m2:
+            end_rev = st.number_input(
+                "直近期の売上高", min_value=0.0, value=0.0, step=1.0
+            )
+        with col_m3:
+            n_years_manual = st.number_input(
+                "年数", min_value=1, max_value=20, value=5, step=1
+            )
+
+        if st.button("🧮 CAGRを計算", type="primary"):
+            cagr_manual = calc_cagr(start_rev, end_rev, n_years_manual)
+            if cagr_manual is None:
+                st.error("⚠️ 売上高は0より大きい値を入力してください。")
+            else:
+                st.metric(f"{n_years_manual}年 CAGR", f"{cagr_manual:+.1%}")
+                st.caption("👇 この値を「新規銘柄登録」タブの『売上5y CAGR』欄にコピーして使ってください")
+                st.code(f"{cagr_manual*100:.1f}%", language=None)
+
+# ------------------------------------------
+# タブ4：分析
+# ------------------------------------------
+with tab4:
     df = st.session_state.df
     st.subheader("ポートフォリオの分析")
 
