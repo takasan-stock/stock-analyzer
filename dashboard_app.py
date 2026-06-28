@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import yfinance as yf
 import os
 import datetime
 
@@ -39,6 +40,59 @@ def load_data():
 
 def save_data(df):
     df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+
+# ==========================================
+# Yahoo!ファイナンスから銘柄情報を自動取得
+# ==========================================
+def fetch_stock_info(ticker_code: str):
+    """
+    日本株のティッカーコードから、銘柄名・PER・ネットキャッシュの簡易判定を取得する。
+    取得できなかった項目は None になる。
+    戻り値: (info_dict, error_message)
+    """
+    code = ticker_code.strip()
+    if not code:
+        return None, "ティッカーコードを入力してください。"
+
+    # 「7974」のような数字だけのコードには .T（東証）を自動付与
+    yf_symbol = code if "." in code else f"{code}.T"
+
+    try:
+        ticker_obj = yf.Ticker(yf_symbol)
+        info = ticker_obj.info
+    except Exception as e:
+        return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
+
+    if not info or not (info.get("longName") or info.get("shortName")):
+        return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
+
+    name = info.get("longName") or info.get("shortName") or ""
+
+    per = info.get("trailingPE")
+    per_str = f"{per:.1f}" if isinstance(per, (int, float)) else ""
+
+    # ネットキャッシュの簡易判定（現金 - 負債 を 時価総額 で比較）
+    net_cash_status = "不明"
+    try:
+        cash = info.get("totalCash") or 0
+        debt = info.get("totalDebt") or 0
+        market_cap = info.get("marketCap") or 0
+        if market_cap > 0:
+            ratio = (cash - debt) / market_cap
+            if ratio > 0.1:
+                net_cash_status = "潤沢"
+            elif ratio > -0.1:
+                net_cash_status = "普通"
+            else:
+                net_cash_status = "マイナス"
+    except Exception:
+        pass
+
+    return {
+        "name": name,
+        "per": per_str,
+        "net_cash": net_cash_status,
+    }, None
 
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
@@ -130,20 +184,61 @@ with tab1:
 with tab2:
     st.subheader("分析結果の入力")
 
-    with st.form("register_form", clear_on_submit=True):
+    # 自動取得した値をクリアするフラグ処理（ウィジェット生成前に実行する必要がある）
+    if st.session_state.get("reset_new_form", False):
+        st.session_state.new_ticker = ""
+        for k in ["fetched_name", "fetched_per", "fetched_netcash"]:
+            st.session_state.pop(k, None)
+        st.session_state.reset_new_form = False
+
+    st.markdown("##### ① ティッカーコードを入力して自動取得（任意）")
+    col_t1, col_t2 = st.columns([2, 1])
+    with col_t1:
+        ticker = st.text_input("ティッカーコード (例: 7974)", key="new_ticker")
+    with col_t2:
+        st.write("")
+        fetch_clicked = st.button("🔍 銘柄情報をWeb上から自動取得")
+
+    if fetch_clicked:
+        with st.spinner("Yahoo!ファイナンスから取得中..."):
+            data, error = fetch_stock_info(ticker)
+        if error:
+            st.error(f"⚠️ {error}")
+        else:
+            st.session_state.fetched_name = data["name"]
+            st.session_state.fetched_per = data["per"]
+            st.session_state.fetched_netcash = data["net_cash"]
+            st.success(
+                f"✅「{data['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを下のフォームに反映しています。"
+                "セクターと売上関連の項目は自動取得の対象外なので、ご自身で入力してください。"
+            )
+
+    st.caption(
+        "※ 銘柄名・PER・ネットキャッシュ（簡易判定）のみ自動取得します。"
+        "セクター分類や売上CAGR・売上予想はWeb上の単純な数値取得では精度が出ないため、手動入力のままにしています。"
+    )
+
+    st.divider()
+    st.markdown("##### ② 内容を確認して登録")
+
+    with st.form("register_form"):
         col1, col2 = st.columns(2)
 
         with col1:
-            ticker = st.text_input("ティッカーコード (例: 7974)")
-            name = st.text_input("銘柄名 (例: 任天堂)")
+            st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True)
+            name = st.text_input("銘柄名", value=st.session_state.get("fetched_name", ""))
             sector = st.selectbox("セクター", SECTOR_OPTIONS)
             status = st.selectbox("ステータス", STATUS_OPTIONS)
 
         with col2:
-            cagr = st.text_input("売上5y CAGR (例: 15.2%)")
-            forecast = st.text_input("売上予想 (例: 今期+10%成長)")
-            per = st.text_input("PER (例: 15.5)")
-            net_cash = st.selectbox("ネットキャッシュ", NETCASH_OPTIONS)
+            cagr = st.text_input("売上5y CAGR (例: 15.2%) ※自動取得対象外")
+            forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外")
+            per = st.text_input("PER (例: 15.5)", value=st.session_state.get("fetched_per", ""))
+            netcash_default = st.session_state.get("fetched_netcash", "不明")
+            net_cash = st.selectbox(
+                "ネットキャッシュ", NETCASH_OPTIONS,
+                index=NETCASH_OPTIONS.index(netcash_default) if netcash_default in NETCASH_OPTIONS else 3
+            )
 
         memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)")
 
@@ -151,7 +246,7 @@ with tab2:
 
         if submitted:
             if ticker == "":
-                st.error("⚠️ ティッカーコードは必須です！")
+                st.error("⚠️ ①でティッカーコードを入力してください！")
             else:
                 existing_tickers = st.session_state.df["ティッカー"].astype(str).tolist()
                 if ticker in existing_tickers:
@@ -178,6 +273,7 @@ with tab2:
                 save_data(st.session_state.df)
 
                 st.success(f"✅ {ticker} ({name}) を登録しました！")
+                st.session_state.reset_new_form = True
                 st.rerun()
 
 # ------------------------------------------
