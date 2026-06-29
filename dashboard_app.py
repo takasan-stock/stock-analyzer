@@ -162,6 +162,46 @@ def fetch_revenue_history(ticker_code: str):
 
     return df_rev, None
 
+def fetch_next_earnings_date(ticker_code: str):
+    """
+    yfinanceから次回決算発表予定日を取得する。
+    yfinanceのバージョンによって calendar が dict か DataFrame かが変わるため、両方に対応する。
+    戻り値: (date または None, エラーメッセージ または None)
+    """
+    code = ticker_code.strip()
+    if not code:
+        return None, "ティッカーコードを入力してください。"
+
+    yf_symbol = code if "." in code else f"{code}.T"
+
+    try:
+        ticker_obj = yf.Ticker(yf_symbol)
+        calendar = ticker_obj.calendar
+    except Exception as e:
+        return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
+
+    if calendar is None or (hasattr(calendar, "empty") and calendar.empty) or calendar == {}:
+        return None, f"「{yf_symbol}」の決算スケジュール情報が見つかりませんでした。"
+
+    earnings_dates = None
+    if isinstance(calendar, dict):
+        earnings_dates = calendar.get("Earnings Date")
+    else:
+        try:
+            if "Earnings Date" in calendar.index:
+                earnings_dates = calendar.loc["Earnings Date"].dropna().tolist()
+        except Exception:
+            earnings_dates = None
+
+    if not earnings_dates:
+        return None, f"「{yf_symbol}」の次回決算発表予定日はまだ公表されていないようです。"
+
+    next_date = earnings_dates[0] if isinstance(earnings_dates, (list, tuple)) else earnings_dates
+    if hasattr(next_date, "date"):
+        next_date = next_date.date()
+
+    return next_date, None
+
 def calc_cagr(start_val, end_val, years):
     """売上などのCAGR（年平均成長率）を計算する"""
     if start_val is None or end_val is None or start_val <= 0 or years is None or years <= 0:
@@ -569,6 +609,57 @@ with tab5:
 
         matched_rows = df[df["ティッカー"].astype(str) == selected_ticker]
         selected_row = matched_rows.iloc[0] if not matched_rows.empty else None
+
+        st.divider()
+
+        # --- 直近の決算スケジュール（カウントダウン） ---
+        st.markdown("##### 📅 直近の決算スケジュール")
+        col_e1, col_e2 = st.columns([1, 2])
+        with col_e1:
+            earnings_clicked = st.button("📅 決算スケジュールを取得", key=f"earnings_btn_{selected_ticker}")
+
+        if earnings_clicked:
+            with st.spinner("取得中..."):
+                next_date, error = fetch_next_earnings_date(selected_ticker)
+            if error:
+                st.session_state[f"earnings_result_{selected_ticker}"] = ("error", error)
+            else:
+                st.session_state[f"earnings_result_{selected_ticker}"] = ("ok", next_date)
+
+        result = st.session_state.get(f"earnings_result_{selected_ticker}")
+        if result:
+            status, value = result
+            if status == "error":
+                st.error(f"⚠️ {value}")
+            else:
+                today = datetime.date.today()
+                delta = (value - today).days
+                col_d1, col_d2 = st.columns(2)
+                col_d1.metric("次回決算発表予定日", value.strftime("%Y-%m-%d"))
+                if delta < 0:
+                    col_d2.metric("状況", "発表済み／要確認")
+                elif delta == 0:
+                    col_d2.metric("残り日数", "本日！")
+                else:
+                    col_d2.metric("残り日数", f"{delta} 日")
+        else:
+            st.caption("ボタンを押すと、Yahoo!ファイナンスから次回決算発表予定日を取得します。")
+
+        st.divider()
+
+        # --- 基本データカード ---
+        st.markdown("##### 📊 基本データ")
+        if selected_row is not None:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns(3)
+                c1.metric("ステータス", selected_row["ステータス"] or "—")
+                c1.metric("コード", selected_row["ティッカー"])
+                c2.metric("セクター", selected_row["セクター"] or "—")
+                c2.metric("PER", selected_row["PER"] or "—")
+                c3.metric("売上5y CAGR", selected_row["売上5y CAGR"] or "—")
+                c3.metric("ネットキャッシュ", selected_row["ネットキャッシュ"] or "—")
+                if selected_row["投資家メモ"]:
+                    st.caption(f"💬 投資家メモ：{selected_row['投資家メモ']}")
 
         st.divider()
 
