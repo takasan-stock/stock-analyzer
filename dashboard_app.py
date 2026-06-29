@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import yfinance as yf
 import os
+import io
+import zipfile
 import datetime
 
 # ==========================================
@@ -12,6 +14,11 @@ st.set_page_config(page_title="銘柄管理ダッシュボード", layout="wide"
 
 # データ保存用のローカルCSVファイル名
 DATA_FILE = "portfolio_data.csv"
+
+# 個別銘柄レポート（Markdown）の保存先
+REPORT_DIR = "reports"
+REPORT_BACKUP_DIR = os.path.join(REPORT_DIR, "_backup")
+os.makedirs(REPORT_BACKUP_DIR, exist_ok=True)
 
 COLUMNS = [
     "ティッカー", "銘柄名", "セクター", "ステータス",
@@ -148,6 +155,44 @@ def calc_cagr(start_val, end_val, years):
         return None
     return (end_val / start_val) ** (1 / years) - 1
 
+# ==========================================
+# 個別銘柄レポート（Markdown）の保存・バックアップ
+# ==========================================
+def safe_ticker_filename(ticker_code: str) -> str:
+    """ファイル名として安全な文字だけに絞る（パス区切り文字などを除去）"""
+    return "".join(c for c in str(ticker_code) if c.isalnum() or c in ("-", "_"))
+
+def save_report_with_backup(report_path: str, content: str):
+    """
+    上書き保存する前に、既存の内容を _backup フォルダにタイムスタンプ付きで残す。
+    決算メモなど消えると痛いデータなので、念のための保険。
+    """
+    if os.path.exists(report_path):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = os.path.splitext(os.path.basename(report_path))[0]
+        backup_path = os.path.join(REPORT_BACKUP_DIR, f"{base_name}_{timestamp}.md")
+        try:
+            with open(report_path, "r", encoding="utf-8") as f_old:
+                old_content = f_old.read()
+            with open(backup_path, "w", encoding="utf-8") as f_backup:
+                f_backup.write(old_content)
+        except Exception:
+            pass  # バックアップに失敗しても保存自体は続行する
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+def create_reports_zip() -> io.BytesIO:
+    """reportsフォルダ内の.mdファイルをまとめてZIP化する（バックアップフォルダは除く）"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in os.listdir(REPORT_DIR):
+            fpath = os.path.join(REPORT_DIR, fname)
+            if os.path.isfile(fpath) and fname.endswith(".md"):
+                zf.write(fpath, arcname=fname)
+    buf.seek(0)
+    return buf
+
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
 if "df" not in st.session_state:
@@ -156,7 +201,9 @@ if "df" not in st.session_state:
 st.title("📊 銘柄管理ダッシュボード")
 st.caption("Obsidian（Dataview / Templater）の代わりに、ブラウザ上で動く株式管理ダッシュボードです。")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析", "📑 個別銘柄レポート"
+])
 
 # ------------------------------------------
 # タブ1：一覧表示 ＋ 編集・削除
@@ -188,7 +235,7 @@ with tab1:
             )
             view_df = view_df[mask]
 
-        st.dataframe(view_df, use_container_width=True, hide_index=True)
+        st.dataframe(view_df, width='stretch', hide_index=True)
 
         st.divider()
 
@@ -201,7 +248,7 @@ with tab1:
 
         edited_df = st.data_editor(
             df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             num_rows="dynamic",
             column_config={
@@ -370,14 +417,14 @@ with tab3:
                 st.markdown("##### 年度別 売上高")
                 st.dataframe(
                     df_rev[["決算期", "売上高（百万）"]],
-                    hide_index=True, use_container_width=True
+                    hide_index=True, width='stretch'
                 )
 
                 fig_rev = px.bar(
                     df_rev, x="決算期", y="売上高（百万）",
                     title="年度別 売上高の推移", text="売上高（百万）"
                 )
-                st.plotly_chart(fig_rev, use_container_width=True)
+                st.plotly_chart(fig_rev, width='stretch')
 
                 start_val = df_rev["_raw"].iloc[0]
                 end_val = df_rev["_raw"].iloc[-1]
@@ -459,7 +506,7 @@ with tab4:
                 sector_counts, names="セクター", values="件数",
                 title="セクター別 銘柄数"
             )
-            st.plotly_chart(fig_sector, use_container_width=True)
+            st.plotly_chart(fig_sector, width='stretch')
 
         with col_c2:
             status_counts = df["ステータス"].value_counts().reset_index()
@@ -468,7 +515,7 @@ with tab4:
                 status_counts, x="ステータス", y="件数",
                 title="ステータス別 銘柄数", text="件数"
             )
-            st.plotly_chart(fig_status, use_container_width=True)
+            st.plotly_chart(fig_status, width='stretch')
 
         if per_numeric.notna().sum() > 0:
             per_df = df.copy()
@@ -479,4 +526,101 @@ with tab4:
                 x="銘柄名", y="PER（数値）", color="セクター",
                 title="銘柄別 PER"
             )
-            st.plotly_chart(fig_per, use_container_width=True)
+            st.plotly_chart(fig_per, width='stretch')
+
+# ------------------------------------------
+# タブ5：個別銘柄レポート（Markdown）
+# ------------------------------------------
+with tab5:
+    df = st.session_state.df
+    st.subheader("📑 個別銘柄レポート")
+    st.caption(
+        "銘柄ごとに、Markdown形式の詳細な分析メモ（決算所感、SWOT分析、AIレポートの貼り付けなど）を残せます。"
+    )
+    st.warning(
+        "⚠️ **Streamlit Community Cloudにデプロイしている場合の注意**：このレポートはサーバー上の "
+        "`reports/` フォルダにファイルとして保存されますが、Cloud環境のストレージは再起動・再デプロイで "
+        "**消えることがあります**。大事なメモは下の「📦 全レポートをZIPでダウンロード」で定期的にバックアップしてください。"
+    )
+
+    if df.empty:
+        st.info("ダッシュボードに銘柄が登録されていません。まずは「新規銘柄登録」タブから追加してください。")
+    else:
+        # 表示名 → ティッカー の対応をdictで持つ（銘柄名に" : "が含まれても誤動作しないようにする）
+        ticker_label_map = {
+            f"{row['ティッカー']} : {row['銘柄名']}": str(row["ティッカー"])
+            for _, row in df.iterrows()
+        }
+        selected_label = st.selectbox("レポートを表示する銘柄を選択してください", list(ticker_label_map.keys()))
+        selected_ticker = ticker_label_map[selected_label]
+
+        safe_name = safe_ticker_filename(selected_ticker)
+        report_file_path = os.path.join(REPORT_DIR, f"{safe_name}.md")
+
+        existing_content = ""
+        last_modified_str = None
+        if os.path.exists(report_file_path):
+            with open(report_file_path, "r", encoding="utf-8") as f:
+                existing_content = f.read()
+            mtime = os.path.getmtime(report_file_path)
+            last_modified_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+
+        mode = st.radio("操作を選択", ["📄 閲覧（Markdown表示）", "✍️ 編集・AIレポート入稿"], horizontal=True)
+
+        st.divider()
+
+        if mode == "✍️ 編集・AIレポート入稿":
+            if last_modified_str:
+                st.caption(f"🕒 最終更新: {last_modified_str}")
+
+            new_content = st.text_area(
+                "Markdown形式のレポート本文",
+                value=existing_content,
+                height=500,
+                placeholder="# 銘柄分析レポート\n\nここに分析結果やSWOT分析を貼り付けます..."
+            )
+
+            col_s1, col_s2 = st.columns([1, 3])
+            with col_s1:
+                save_clicked = st.button("💾 レポートを保存する", type="primary")
+            with col_s2:
+                if existing_content:
+                    st.caption("保存すると、上書き前の内容は自動的に `reports/_backup/` に退避されます。")
+
+            if save_clicked:
+                save_report_with_backup(report_file_path, new_content)
+                st.success(f"✅ ティッカー {selected_ticker} のレポートを保存しました！")
+                st.rerun()
+
+        else:
+            if existing_content:
+                if last_modified_str:
+                    st.caption(f"🕒 最終更新: {last_modified_str}")
+                st.markdown(existing_content)
+            else:
+                st.info("まだこの銘柄のレポートは登録されていません。「✍️ 編集・AIレポート入稿」から登録してください。")
+
+        st.divider()
+
+        # --- バックアップ ---
+        st.markdown("##### 📦 バックアップ")
+        col_z1, col_z2 = st.columns(2)
+        with col_z1:
+            if existing_content:
+                st.download_button(
+                    f"⬇️ この銘柄のレポートをダウンロード（{selected_ticker}.md）",
+                    data=existing_content.encode("utf-8"),
+                    file_name=f"{safe_name}.md",
+                    mime="text/markdown"
+                )
+        with col_z2:
+            report_files = [f for f in os.listdir(REPORT_DIR) if f.endswith(".md")]
+            if report_files:
+                st.download_button(
+                    f"📦 全レポートをZIPでダウンロード（{len(report_files)}件）",
+                    data=create_reports_zip(),
+                    file_name=f"reports_backup_{datetime.date.today()}.zip",
+                    mime="application/zip"
+                )
+            else:
+                st.caption("まだ保存されたレポートがありません。")
