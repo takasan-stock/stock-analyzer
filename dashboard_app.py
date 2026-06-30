@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
+import requests
+import base64
 import os
 import io
 import zipfile
@@ -263,6 +265,79 @@ def create_reports_zip() -> io.BytesIO:
                 zf.write(fpath, arcname=fname)
     buf.seek(0)
     return buf
+
+# ==========================================
+# GitHub連携：レポートのMarkdownを自動コミット
+# ==========================================
+def get_github_config():
+    """
+    Streamlit CloudのSecretsからGitHub連携の設定を取得する。
+    未設定の場合は None を返す（GitHub連携機能自体を無効化するため）。
+    """
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo = st.secrets["GITHUB_REPO"]  # 例: "your-name/stock-reports"
+        branch = st.secrets.get("GITHUB_BRANCH", "main")
+        return {"token": token, "repo": repo, "branch": branch}
+    except Exception:
+        return None
+
+def github_upload_report(ticker_code: str, content: str, company_name: str = ""):
+    """
+    GitHubリポジトリにMarkdownレポートをコミットする（新規作成 or 更新）。
+    戻り値: (成功したか: bool, メッセージ: str)
+    """
+    config = get_github_config()
+    if config is None:
+        return False, "GitHub連携が設定されていません（Secretsに GITHUB_TOKEN / GITHUB_REPO が必要です）。"
+
+    safe_name = safe_ticker_filename(ticker_code)
+    file_path_in_repo = f"reports/{safe_name}.md"
+    api_url = f"https://api.github.com/repos/{config['repo']}/contents/{file_path_in_repo}"
+
+    headers = {
+        "Authorization": f"Bearer {config['token']}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    # 既存ファイルがあればSHAを取得（更新の場合に必須）
+    existing_sha = None
+    try:
+        get_resp = requests.get(
+            api_url, headers=headers,
+            params={"ref": config["branch"]}, timeout=10
+        )
+        if get_resp.status_code == 200:
+            existing_sha = get_resp.json().get("sha")
+        elif get_resp.status_code not in (404,):
+            return False, f"既存ファイルの確認に失敗しました（HTTP {get_resp.status_code}）: {get_resp.text[:200]}"
+    except requests.exceptions.RequestException as e:
+        return False, f"GitHubへの接続に失敗しました（{e}）。ネットワーク設定をご確認ください。"
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    commit_message = f"Update report: {ticker_code}（{company_name}）- {timestamp}"
+
+    payload = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "branch": config["branch"],
+    }
+    if existing_sha:
+        payload["sha"] = existing_sha
+
+    try:
+        put_resp = requests.put(api_url, headers=headers, json=payload, timeout=10)
+    except requests.exceptions.RequestException as e:
+        return False, f"GitHubへの接続に失敗しました（{e}）。ネットワーク設定をご確認ください。"
+
+    if put_resp.status_code in (200, 201):
+        return True, f"GitHubに保存しました（{config['repo']} / {file_path_in_repo}）"
+    elif put_resp.status_code == 401:
+        return False, "GitHub認証に失敗しました。Personal Access Tokenが正しいか、有効期限切れでないかご確認ください。"
+    elif put_resp.status_code == 404:
+        return False, f"リポジトリ「{config['repo']}」が見つかりません。Secretsの GITHUB_REPO設定、またはトークンの権限（対象リポジトリ）をご確認ください。"
+    else:
+        return False, f"GitHubへの保存に失敗しました（HTTP {put_resp.status_code}）: {put_resp.text[:200]}"
 
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
@@ -788,6 +863,8 @@ with tab5:
         st.divider()
 
         if mode == "✍️ 編集・AIレポート入稿":
+            github_config = get_github_config()
+
             if last_modified_str:
                 st.caption(f"🕒 最終更新: {last_modified_str}")
 
@@ -802,12 +879,33 @@ with tab5:
             with col_s1:
                 save_clicked = st.button("💾 レポートを保存する", type="primary")
             with col_s2:
-                if existing_content:
+                if github_config:
+                    st.caption(
+                        f"保存時にローカルバックアップに加え、GitHub（`{github_config['repo']}`）にも自動コミットされます。"
+                    )
+                elif existing_content:
                     st.caption("保存すると、上書き前の内容は自動的に `reports/_backup/` に退避されます。")
+
+            if not github_config:
+                st.caption(
+                    "💡 GitHub連携は未設定です。SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると、"
+                    "保存と同時にGitHubへも自動バックアップされるようになります。"
+                )
 
             if save_clicked:
                 save_report_with_backup(report_file_path, new_content)
-                st.success(f"✅ ティッカー {selected_ticker} のレポートを保存しました！")
+                st.success(f"✅ ティッカー {selected_ticker} のレポートをローカルに保存しました！")
+
+                if github_config:
+                    with st.spinner("GitHubにも保存中..."):
+                        gh_ok, gh_message = github_upload_report(selected_ticker, new_content, company_name)
+                    if gh_ok:
+                        st.success(f"✅ {gh_message}")
+                    else:
+                        st.warning(
+                            f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}"
+                        )
+
                 st.rerun()
 
         else:
