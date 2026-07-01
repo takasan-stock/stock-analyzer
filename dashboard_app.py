@@ -115,26 +115,83 @@ def fetch_stock_info(ticker_code: str):
     # 「7974」のような数字だけのコードには .T（東証）を自動付与
     yf_symbol = code if "." in code else f"{code}.T"
 
+    # レート制限（429）対策：リトライ付きセッションとUser-Agentを設定する
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    })
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    retry = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+
     try:
-        ticker_obj = yf.Ticker(yf_symbol)
-        info = ticker_obj.info
+        ticker_obj = yf.Ticker(yf_symbol, session=session)
+
+        # yfinance 1.5.x 以降は ticker.info が429を起こしやすいため、
+        # まず軽量な fast_info で市場データを取得し、
+        # 銘柄名だけ get_info() から取る2段階方式にする
+        try:
+            fast = ticker_obj.fast_info
+            market_cap = getattr(fast, "market_cap", None) or 0
+        except Exception:
+            fast = None
+            market_cap = 0
+
+        # 銘柄名・PERはget_info()から取得（失敗時はフォールバック）
+        try:
+            info = ticker_obj.get_info()
+        except Exception:
+            info = {}
+
     except Exception as e:
         return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
 
-    if not info or not (info.get("longName") or info.get("shortName")):
+    if not info and fast is None:
         return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
-    name = pick_japanese_name(info.get("shortName"), info.get("longName"))
+    name = pick_japanese_name(info.get("shortName"), info.get("longName")) if info else ""
 
-    per = info.get("trailingPE")
+    # PERはget_info()から、取れなければget_valuation_measures()で補完
+    per = info.get("trailingPE") if info else None
+    if per is None:
+        try:
+            vm = ticker_obj.get_valuation_measures()
+            if vm is not None and not vm.empty and "TrailingPE" in vm.columns:
+                per_val = vm["TrailingPE"].dropna()
+                per = float(per_val.iloc[-1]) if not per_val.empty else None
+        except Exception:
+            pass
     per_str = f"{per:.1f}" if isinstance(per, (int, float)) else ""
 
-    # ネットキャッシュの簡易判定（現金 - 負債 を 時価総額 で比較）
+    # ネットキャッシュの簡易判定
+    # fast_infoのmarket_capと、balance_sheetから現金・負債を取得
     net_cash_status = "不明"
     try:
-        cash = info.get("totalCash") or 0
-        debt = info.get("totalDebt") or 0
-        market_cap = info.get("marketCap") or 0
+        cash, debt = 0, 0
+        try:
+            bs = ticker_obj.get_balance_sheet()
+            if bs is not None and not bs.empty:
+                def get_bs_val(labels):
+                    for label in labels:
+                        if label in bs.index:
+                            v = bs.loc[label].dropna()
+                            if not v.empty:
+                                return float(v.iloc[0])
+                    return 0
+                cash = get_bs_val(["Cash And Cash Equivalents", "CashAndCashEquivalents",
+                                   "Cash Cash Equivalents And Short Term Investments"])
+                debt = get_bs_val(["Total Debt", "TotalDebt", "Long Term Debt", "LongTermDebt"])
+        except Exception:
+            # balance_sheetが取れない場合はget_info()の値で代替
+            if info:
+                cash = info.get("totalCash") or 0
+                debt = info.get("totalDebt") or 0
+
         if market_cap > 0:
             ratio = (cash - debt) / market_cap
             if ratio > 0.1:
@@ -145,6 +202,9 @@ def fetch_stock_info(ticker_code: str):
                 net_cash_status = "マイナス"
     except Exception:
         pass
+
+    if not name:
+        return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
     return {
         "name": name,
@@ -169,7 +229,12 @@ def fetch_revenue_history(ticker_code: str):
     yf_symbol = code if "." in code else f"{code}.T"
 
     try:
-        ticker_obj = yf.Ticker(yf_symbol)
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])))
+        ticker_obj = yf.Ticker(yf_symbol, session=session)
         financials = ticker_obj.financials
     except Exception as e:
         return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
@@ -213,7 +278,12 @@ def fetch_next_earnings_date(ticker_code: str):
     yf_symbol = code if "." in code else f"{code}.T"
 
     try:
-        ticker_obj = yf.Ticker(yf_symbol)
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])))
+        ticker_obj = yf.Ticker(yf_symbol, session=session)
         calendar = ticker_obj.calendar
     except Exception as e:
         return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
