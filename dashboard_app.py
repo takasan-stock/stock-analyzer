@@ -7,6 +7,8 @@ import base64
 import os
 import io
 import zipfile
+import re
+import json
 import datetime
 
 # ==========================================
@@ -84,6 +86,22 @@ def save_data(df):
 # ==========================================
 # Yahoo!ファイナンスから銘柄情報を自動取得
 # ==========================================
+def contains_japanese(text) -> bool:
+    """文字列にひらがな・カタカナ・漢字が含まれているか判定する"""
+    if not text:
+        return False
+    return bool(re.search(r"[ぁ-んァ-ヶ一-龠]", text))
+
+def pick_japanese_name(short_name, long_name) -> str:
+    """
+    shortName / longName のうち日本語表記の方を優先して返す。
+    どちらも日本語でない場合（データが英語名しかない銘柄など）は shortName を優先してフォールバックする。
+    """
+    for candidate in (short_name, long_name):
+        if contains_japanese(candidate):
+            return candidate
+    return short_name or long_name or ""
+
 def fetch_stock_info(ticker_code: str):
     """
     日本株のティッカーコードから、銘柄名・PER・ネットキャッシュの簡易判定を取得する。
@@ -106,7 +124,7 @@ def fetch_stock_info(ticker_code: str):
     if not info or not (info.get("longName") or info.get("shortName")):
         return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
-    name = info.get("longName") or info.get("shortName") or ""
+    name = pick_japanese_name(info.get("shortName"), info.get("longName"))
 
     per = info.get("trailingPE")
     per_str = f"{per:.1f}" if isinstance(per, (int, float)) else ""
@@ -235,28 +253,124 @@ def safe_ticker_filename(ticker_code: str) -> str:
     """ファイル名として安全な文字だけに絞る（パス区切り文字などを除去）"""
     return "".join(c for c in str(ticker_code) if c.isalnum() or c in ("-", "_"))
 
-def save_report_with_backup(report_path: str, content: str):
+# ==========================================
+# 日付・四半期ごとの複数エントリ管理（1エントリ=1ファイルのMarkdown方式）
+# ==========================================
+def entry_filepath(ticker_code: str, kind: str, key: str) -> str:
     """
-    上書き保存する前に、既存の内容を _backup フォルダにタイムスタンプ付きで残す。
-    決算メモなど消えると痛いデータなので、念のための保険。
+    エントリ1件分のファイルパスを返す。
+    例: reports/7974_analysis_2026-05-14.md
+        reports/7974_earnings_2026-4Q.md
+    keyに使えない文字（/など）はハイフンに置換する。
     """
-    if os.path.exists(report_path):
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = os.path.splitext(os.path.basename(report_path))[0]
-        backup_path = os.path.join(REPORT_BACKUP_DIR, f"{base_name}_{timestamp}.md")
-        try:
-            with open(report_path, "r", encoding="utf-8") as f_old:
-                old_content = f_old.read()
-            with open(backup_path, "w", encoding="utf-8") as f_backup:
-                f_backup.write(old_content)
-        except Exception:
-            pass  # バックアップに失敗しても保存自体は続行する
+    safe_name = safe_ticker_filename(ticker_code)
+    safe_key = "".join(c if c.isalnum() or c in ("-", "_") else "-" for c in key)
+    return os.path.join(REPORT_DIR, f"{safe_name}_{kind}_{safe_key}.md")
 
-    with open(report_path, "w", encoding="utf-8") as f:
+def load_entries(ticker_code: str, kind: str) -> list:
+    """
+    reports/ フォルダから <ticker>_<kind>_<key>.md を検索して
+    新しい順（key降順）で返す。
+    各エントリは {"key": "2026-05-14", "content": "...", "updated_at": "..."} の形式。
+    """
+    safe_name = safe_ticker_filename(ticker_code)
+    prefix = f"{safe_name}_{kind}_"
+    entries = []
+    for fname in os.listdir(REPORT_DIR):
+        if fname.startswith(prefix) and fname.endswith(".md"):
+            fpath = os.path.join(REPORT_DIR, fname)
+            key = fname[len(prefix):-3]  # プレフィックスと .md を除いた部分
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                mtime = os.path.getmtime(fpath)
+                updated_at = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                entries.append({"key": key, "content": content, "updated_at": updated_at})
+            except OSError:
+                pass
+    entries.sort(key=lambda e: e["key"], reverse=True)
+    return entries
+
+def save_entry(ticker_code: str, kind: str, key: str, content: str) -> None:
+    """
+    1エントリ=1ファイルとして保存する。
+    上書き前に _backup/ にタイムスタンプ付きで退避する。
+    """
+    fpath = entry_filepath(ticker_code, kind, key)
+
+    if os.path.exists(fpath):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        bname = os.path.splitext(os.path.basename(fpath))[0]
+        backup_path = os.path.join(REPORT_BACKUP_DIR, f"{bname}_{timestamp}.md")
+        try:
+            with open(fpath, "r", encoding="utf-8") as f_old:
+                old = f_old.read()
+            with open(backup_path, "w", encoding="utf-8") as f_bk:
+                f_bk.write(old)
+        except Exception:
+            pass
+
+    with open(fpath, "w", encoding="utf-8") as f:
         f.write(content)
 
+def delete_entry(ticker_code: str, kind: str, key: str) -> None:
+    """エントリファイルを削除する（削除前に _backup/ に退避）"""
+    fpath = entry_filepath(ticker_code, kind, key)
+    if not os.path.exists(fpath):
+        return
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    bname = os.path.splitext(os.path.basename(fpath))[0]
+    backup_path = os.path.join(REPORT_BACKUP_DIR, f"{bname}_{timestamp}_deleted.md")
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            content = f.read()
+        with open(backup_path, "w", encoding="utf-8") as f_bk:
+            f_bk.write(content)
+    except Exception:
+        pass
+    os.remove(fpath)
+
+def migrate_legacy_report_if_needed(ticker_code: str) -> None:
+    """
+    旧形式ファイルが残っていれば新形式に自動移行する。
+    - reports/<ticker>.md          → analysis エントリ（ファイル更新日を日付キーに）
+    - reports/<ticker>_analysis.json → 各エントリを個別 .md に展開
+    - reports/<ticker>_earnings.json → 各エントリを個別 .md に展開
+    """
+    safe_name = safe_ticker_filename(ticker_code)
+
+    # 旧①: 単一 .md ファイル
+    legacy_md = os.path.join(REPORT_DIR, f"{safe_name}.md")
+    if os.path.exists(legacy_md):
+        with open(legacy_md, "r", encoding="utf-8") as f:
+            content = f.read()
+        if content.strip():
+            mtime = os.path.getmtime(legacy_md)
+            date_key = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+            dest = entry_filepath(ticker_code, "analysis", date_key)
+            if not os.path.exists(dest):
+                save_entry(ticker_code, "analysis", date_key, content)
+        os.rename(legacy_md, legacy_md + ".migrated")
+
+    # 旧②③: JSON ファイル
+    for kind in ("analysis", "earnings"):
+        json_path = os.path.join(REPORT_DIR, f"{safe_name}_{kind}.json")
+        if not os.path.exists(json_path):
+            continue
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                old_entries = json.load(f)
+            for e in old_entries:
+                key = e.get("key", "unknown")
+                dest = entry_filepath(ticker_code, kind, key)
+                if not os.path.exists(dest):
+                    save_entry(ticker_code, kind, key, e.get("content", ""))
+            os.rename(json_path, json_path + ".migrated")
+        except Exception:
+            pass
+
 def create_reports_zip() -> io.BytesIO:
-    """reportsフォルダ内の.mdファイルをまとめてZIP化する（バックアップフォルダは除く）"""
+    """reports/ 内の .md ファイルをまとめてZIP化する（_backup/ は除く）"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in os.listdir(REPORT_DIR):
@@ -282,17 +396,19 @@ def get_github_config():
     except Exception:
         return None
 
-def github_upload_report(ticker_code: str, content: str, company_name: str = ""):
+def github_upload_report(file_stem: str, content: str, company_name: str = "", extension: str = "md"):
     """
-    GitHubリポジトリにMarkdownレポートをコミットする（新規作成 or 更新）。
+    GitHubリポジトリにレポートをコミットする（新規作成 or 更新）。
+    file_stem: 拡張子なしのファイル名（例: "7974_analysis"）
+    extension: "md" または "json"
     戻り値: (成功したか: bool, メッセージ: str)
     """
     config = get_github_config()
     if config is None:
         return False, "GitHub連携が設定されていません（Secretsに GITHUB_TOKEN / GITHUB_REPO が必要です）。"
 
-    safe_name = safe_ticker_filename(ticker_code)
-    file_path_in_repo = f"reports/{safe_name}.md"
+    safe_name = safe_ticker_filename(file_stem)
+    file_path_in_repo = f"reports/{safe_name}.{extension}"
     api_url = f"https://api.github.com/repos/{config['repo']}/contents/{file_path_in_repo}"
 
     headers = {
@@ -315,7 +431,7 @@ def github_upload_report(ticker_code: str, content: str, company_name: str = "")
         return False, f"GitHubへの接続に失敗しました（{e}）。ネットワーク設定をご確認ください。"
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    commit_message = f"Update report: {ticker_code}（{company_name}）- {timestamp}"
+    commit_message = f"Update report: {file_stem}（{company_name}）- {timestamp}"
 
     payload = {
         "message": commit_message,
@@ -847,96 +963,175 @@ with tab5:
 
         st.divider()
 
-        safe_name = safe_ticker_filename(selected_ticker)
-        report_file_path = os.path.join(REPORT_DIR, f"{safe_name}.md")
+        # GitHub連携の設定（両レポートセクションで共通利用）
+        github_config = get_github_config()
+        if not github_config:
+            st.caption(
+                "💡 GitHub連携は未設定です。SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると、"
+                "保存と同時にGitHubへも自動バックアップされるようになります。"
+            )
 
-        existing_content = ""
-        last_modified_str = None
-        if os.path.exists(report_file_path):
-            with open(report_file_path, "r", encoding="utf-8") as f:
-                existing_content = f.read()
-            mtime = os.path.getmtime(report_file_path)
-            last_modified_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        # 旧形式（1銘柄1ファイル）が残っていれば、新形式（日付ごとの複数エントリ）に自動移行
+        migrate_legacy_report_if_needed(selected_ticker)
 
-        mode = st.radio("操作を選択", ["📄 閲覧（Markdown表示）", "✍️ 編集・AIレポート入稿"], horizontal=True)
+        # ------------------------------------------
+        # 銘柄分析レポート（日付ごと・複数エントリ・折りたたみ）
+        # ------------------------------------------
+        st.markdown("##### 📝 銘柄レポート（日付ごとに記録）")
+        st.caption(
+            "SWOT分析などのAIレポートを、日付ごとに複数貼り付けて記録できます。"
+            "後から見返して『あの時はこう思っていたが…』を振り返るのに使ってください。"
+        )
+
+        analysis_entries = load_entries(selected_ticker, "analysis")
+
+        with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
+            new_analysis_date = st.date_input(
+                "記録する日付",
+                value=datetime.date.today(),
+                key=f"analysis_new_date_{selected_ticker}"
+            )
+            new_analysis_content = st.text_area(
+                "Markdown形式のレポート本文",
+                height=400,
+                placeholder="# 銘柄分析レポート\n\nここに分析結果やSWOT分析を貼り付けます...",
+                key=f"analysis_new_content_{selected_ticker}"
+            )
+
+            if github_config:
+                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
+
+            if st.button("💾 このレポートを保存する", type="primary", key=f"analysis_save_{selected_ticker}"):
+                if not new_analysis_content.strip():
+                    st.error("⚠️ レポート本文が空です。")
+                else:
+                    date_key = new_analysis_date.strftime("%Y-%m-%d")
+                    save_entry(selected_ticker, "analysis", date_key, new_analysis_content)
+                    st.success(f"✅ {date_key} のレポートを保存しました！")
+
+                    if github_config:
+                        with st.spinner("GitHubにも保存中..."):
+                            file_stem = f"{safe_ticker_filename(selected_ticker)}_analysis_{date_key}"
+                            gh_ok, gh_message = github_upload_report(
+                                file_stem, new_analysis_content, company_name
+                            )
+                        if gh_ok:
+                            st.success(f"✅ {gh_message}")
+                        else:
+                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
+
+                    st.rerun()
+
+        if analysis_entries:
+            st.caption(f"📚 記録済み: {len(analysis_entries)} 件（新しい順）")
+            for entry in analysis_entries:
+                with st.expander(f"📅 {entry['key']}（最終更新: {entry.get('updated_at', '不明')}）"):
+                    st.markdown(entry["content"])
+                    col_ae1, col_ae2 = st.columns([1, 1])
+                    with col_ae1:
+                        st.download_button(
+                            "⬇️ ダウンロード",
+                            data=entry["content"].encode("utf-8"),
+                            file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
+                            mime="text/markdown",
+                            key=f"analysis_dl_{selected_ticker}_{entry['key']}"
+                        )
+                    with col_ae2:
+                        if st.button("🗑️ このエントリを削除", key=f"analysis_del_{selected_ticker}_{entry['key']}"):
+                            delete_entry(selected_ticker, "analysis", entry["key"])
+                            st.success(f"{entry['key']} のレポートを削除しました（バックアップに退避済み）。")
+                            st.rerun()
+        else:
+            st.info("まだこの銘柄の銘柄レポートは登録されていません。上の「➕ 新しい銘柄レポートを追加」から登録してください。")
 
         st.divider()
 
-        if mode == "✍️ 編集・AIレポート入稿":
-            github_config = get_github_config()
+        # ------------------------------------------
+        # 決算分析レポート（四半期ごと・複数エントリ・折りたたみ）
+        # ------------------------------------------
+        st.markdown("##### 📈 決算分析レポート（四半期ごとに記録）")
+        st.caption(
+            "決算分析プロンプトの結果（進捗率分析・上方修正予測など）を、四半期ごとに分けて記録できます。"
+        )
 
-            if last_modified_str:
-                st.caption(f"🕒 最終更新: {last_modified_str}")
+        earnings_entries = load_entries(selected_ticker, "earnings")
 
-            new_content = st.text_area(
-                "Markdown形式のレポート本文",
-                value=existing_content,
-                height=500,
-                placeholder="# 銘柄分析レポート\n\nここに分析結果やSWOT分析を貼り付けます..."
+        with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
+            new_earnings_quarter = st.text_input(
+                "対象四半期（例: 2026-4Q）",
+                value=quarter_input,
+                key=f"earnings_new_quarter_{selected_ticker}"
+            )
+            new_earnings_content = st.text_area(
+                "Markdown形式の決算分析レポート本文",
+                height=400,
+                placeholder="# 決算分析レポート\n\n進捗率分析、ポジティブ/ネガティブ要因などを貼り付けます...",
+                key=f"earnings_new_content_{selected_ticker}"
             )
 
-            col_s1, col_s2 = st.columns([1, 3])
-            with col_s1:
-                save_clicked = st.button("💾 レポートを保存する", type="primary")
-            with col_s2:
-                if github_config:
-                    st.caption(
-                        f"保存時にローカルバックアップに加え、GitHub（`{github_config['repo']}`）にも自動コミットされます。"
-                    )
-                elif existing_content:
-                    st.caption("保存すると、上書き前の内容は自動的に `reports/_backup/` に退避されます。")
+            if github_config:
+                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
 
-            if not github_config:
-                st.caption(
-                    "💡 GitHub連携は未設定です。SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると、"
-                    "保存と同時にGitHubへも自動バックアップされるようになります。"
-                )
+            if st.button("💾 この決算分析レポートを保存する", type="primary", key=f"earnings_save_{selected_ticker}"):
+                if not new_earnings_quarter.strip():
+                    st.error("⚠️ 対象四半期を入力してください（例: 2026-4Q）。")
+                elif not new_earnings_content.strip():
+                    st.error("⚠️ レポート本文が空です。")
+                else:
+                    quarter_key = new_earnings_quarter.strip()
+                    save_entry(selected_ticker, "earnings", quarter_key, new_earnings_content)
+                    st.success(f"✅ {quarter_key} の決算分析レポートを保存しました！")
 
-            if save_clicked:
-                save_report_with_backup(report_file_path, new_content)
-                st.success(f"✅ ティッカー {selected_ticker} のレポートをローカルに保存しました！")
+                    if github_config:
+                        with st.spinner("GitHubにも保存中..."):
+                            safe_q = "".join(c if c.isalnum() or c in ("-", "_") else "-" for c in quarter_key)
+                            file_stem = f"{safe_ticker_filename(selected_ticker)}_earnings_{safe_q}"
+                            gh_ok, gh_message = github_upload_report(
+                                file_stem, new_earnings_content, company_name
+                            )
+                        if gh_ok:
+                            st.success(f"✅ {gh_message}")
+                        else:
+                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
 
-                if github_config:
-                    with st.spinner("GitHubにも保存中..."):
-                        gh_ok, gh_message = github_upload_report(selected_ticker, new_content, company_name)
-                    if gh_ok:
-                        st.success(f"✅ {gh_message}")
-                    else:
-                        st.warning(
-                            f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}"
+                    st.rerun()
+
+        if earnings_entries:
+            st.caption(f"📚 記録済み: {len(earnings_entries)} 件（新しい順）")
+            for entry in earnings_entries:
+                with st.expander(f"📊 {entry['key']}（最終更新: {entry.get('updated_at', '不明')}）"):
+                    st.markdown(entry["content"])
+                    col_ee1, col_ee2 = st.columns([1, 1])
+                    with col_ee1:
+                        st.download_button(
+                            "⬇️ ダウンロード",
+                            data=entry["content"].encode("utf-8"),
+                            file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
+                            mime="text/markdown",
+                            key=f"earnings_dl_{selected_ticker}_{entry['key']}"
                         )
-
-                st.rerun()
-
+                    with col_ee2:
+                        if st.button("🗑️ このエントリを削除", key=f"earnings_del_{selected_ticker}_{entry['key']}"):
+                            delete_entry(selected_ticker, "earnings", entry["key"])
+                            st.success(f"{entry['key']} の決算分析レポートを削除しました（バックアップに退避済み）。")
+                            st.rerun()
         else:
-            if existing_content:
-                if last_modified_str:
-                    st.caption(f"🕒 最終更新: {last_modified_str}")
-                st.markdown(existing_content)
-            else:
-                st.info("まだこの銘柄のレポートは登録されていません。「✍️ 編集・AIレポート入稿」から登録してください。")
+            st.info("まだこの銘柄の決算分析レポートは登録されていません。上の「➕ 新しい決算分析レポートを追加」から登録してください。")
 
         st.divider()
 
         # --- バックアップ ---
         st.markdown("##### 📦 バックアップ")
-        col_z1, col_z2 = st.columns(2)
-        with col_z1:
-            if existing_content:
-                st.download_button(
-                    f"⬇️ この銘柄のレポートをダウンロード（{selected_ticker}.md）",
-                    data=existing_content.encode("utf-8"),
-                    file_name=f"{safe_name}.md",
-                    mime="text/markdown"
-                )
-        with col_z2:
-            report_files = [f for f in os.listdir(REPORT_DIR) if f.endswith(".md")]
-            if report_files:
-                st.download_button(
-                    f"📦 全レポートをZIPでダウンロード（{len(report_files)}件）",
-                    data=create_reports_zip(),
-                    file_name=f"reports_backup_{datetime.date.today()}.zip",
-                    mime="application/zip"
-                )
-            else:
-                st.caption("まだ保存されたレポートがありません。")
+        report_files = [
+            f for f in os.listdir(REPORT_DIR)
+            if os.path.isfile(os.path.join(REPORT_DIR, f)) and (f.endswith(".md") or f.endswith(".json"))
+        ]
+        if report_files:
+            st.download_button(
+                f"📦 全レポートをZIPでダウンロード（{len(report_files)}件）",
+                data=create_reports_zip(),
+                file_name=f"reports_backup_{datetime.date.today()}.zip",
+                mime="application/zip"
+            )
+        else:
+            st.caption("まだ保存されたレポートがありません。")
