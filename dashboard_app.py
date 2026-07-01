@@ -396,6 +396,71 @@ def get_github_config():
     except Exception:
         return None
 
+@st.cache_data(ttl=120)
+def github_fetch_entries(token: str, repo: str, branch: str, ticker_code: str, kind: str) -> list:
+    """
+    GitHubのreports/フォルダから <ticker>_<kind>_<key>.md を検索して
+    新しい順で返す。2分キャッシュ付き（保存後はキャッシュをクリアする）。
+    """
+    safe_name = safe_ticker_filename(ticker_code)
+    prefix = f"{safe_name}_{kind}_"
+    url = f"https://api.github.com/repos/{repo}/contents/reports"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        resp = requests.get(url, headers=headers, params={"ref": branch}, timeout=10)
+    except requests.exceptions.RequestException:
+        return []
+
+    if resp.status_code != 200:
+        return []
+
+    entries = []
+    for item in resp.json():
+        fname = item.get("name", "")
+        if not fname.startswith(prefix) or not fname.endswith(".md"):
+            continue
+        key = fname[len(prefix):-3]
+        # download_urlはPrivateリポジトリでも認証なしで取得できる生URLだが
+        # PrivateリポジトリのdownloadはAuthorizationヘッダーが必要なのでAPIで取得
+        entries.append({
+            "key": key,
+            "path": item.get("path", ""),
+            "sha": item.get("sha", ""),
+            "download_url": item.get("download_url", ""),
+        })
+
+    entries.sort(key=lambda e: e["key"], reverse=True)
+    return entries
+
+@st.cache_data(ttl=120)
+def github_fetch_content(token: str, download_url: str) -> str:
+    """GitHubからMarkdownの本文を取得する。Privateリポジトリ対応。"""
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        resp = requests.get(download_url, headers=headers, timeout=10)
+        return resp.text if resp.status_code == 200 else ""
+    except requests.exceptions.RequestException:
+        return ""
+
+def github_delete_file(token: str, repo: str, branch: str, path: str, sha: str, message: str) -> tuple[bool, str]:
+    """GitHubのファイルを削除する（shaが必要）。"""
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    payload = {"message": message, "sha": sha, "branch": branch}
+    try:
+        resp = requests.delete(url, headers=headers, json=payload, timeout=10)
+    except requests.exceptions.RequestException as e:
+        return False, str(e)
+    if resp.status_code in (200, 204):
+        return True, "削除しました"
+    return False, f"HTTP {resp.status_code}"
+
 def github_upload_report(file_stem: str, content: str, company_name: str = "", extension: str = "md"):
     """
     GitHubリポジトリにレポートをコミットする（新規作成 or 更新）。
@@ -799,11 +864,6 @@ with tab5:
     st.caption(
         "銘柄ごとに、Markdown形式の詳細な分析メモ（決算所感、SWOT分析、AIレポートの貼り付けなど）を残せます。"
     )
-    st.warning(
-        "⚠️ **Streamlit Community Cloudにデプロイしている場合の注意**：このレポートはサーバー上の "
-        "`reports/` フォルダにファイルとして保存されますが、Cloud環境のストレージは再起動・再デプロイで "
-        "**消えることがあります**。大事なメモは下の「📦 全レポートをZIPでダウンロード」で定期的にバックアップしてください。"
-    )
 
     if df.empty:
         st.info("ダッシュボードに銘柄が登録されていません。まずは「新規銘柄登録」タブから追加してください。")
@@ -968,11 +1028,45 @@ with tab5:
         if not github_config:
             st.caption(
                 "💡 GitHub連携は未設定です。SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると、"
-                "保存と同時にGitHubへも自動バックアップされるようになります。"
+                "再起動してもレポートが消えなくなります。"
             )
 
         # 旧形式（1銘柄1ファイル）が残っていれば、新形式（日付ごとの複数エントリ）に自動移行
         migrate_legacy_report_if_needed(selected_ticker)
+
+        def load_entries_smart(ticker: str, kind: str) -> list:
+            """
+            GitHub設定があればGitHubから直接読み込む。
+            なければローカルの reports/ フォルダから読み込む（フォールバック）。
+            GitHub読み込み成功時は、ローカルにも同期してキャッシュとして残す。
+            """
+            if github_config:
+                gh_entries = github_fetch_entries(
+                    github_config["token"], github_config["repo"],
+                    github_config["branch"], ticker, kind
+                )
+                # 本文をGitHubから取得してローカルにキャッシュ
+                full_entries = []
+                for e in gh_entries:
+                    content = github_fetch_content(github_config["token"], e["download_url"])
+                    # ローカルにも書き込んで再起動後の一瞬のギャップを埋める
+                    local_path = entry_filepath(ticker, kind, e["key"])
+                    if content and not os.path.exists(local_path):
+                        try:
+                            with open(local_path, "w", encoding="utf-8") as f:
+                                f.write(content)
+                        except OSError:
+                            pass
+                    full_entries.append({
+                        "key": e["key"],
+                        "content": content,
+                        "updated_at": e.get("updated_at", ""),
+                        "_sha": e["sha"],
+                        "_path": e["path"],
+                    })
+                return full_entries
+            else:
+                return load_entries(ticker, kind)
 
         # ------------------------------------------
         # 銘柄分析レポート（日付ごと・複数エントリ・折りたたみ）
@@ -983,7 +1077,7 @@ with tab5:
             "後から見返して『あの時はこう思っていたが…』を振り返るのに使ってください。"
         )
 
-        analysis_entries = load_entries(selected_ticker, "analysis")
+        analysis_entries = load_entries_smart(selected_ticker, "analysis")
 
         with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
             new_analysis_date = st.date_input(
@@ -1017,6 +1111,8 @@ with tab5:
                             )
                         if gh_ok:
                             st.success(f"✅ {gh_message}")
+                            github_fetch_entries.clear()
+                            github_fetch_content.clear()
                         else:
                             st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
 
@@ -1039,7 +1135,19 @@ with tab5:
                     with col_ae2:
                         if st.button("🗑️ このエントリを削除", key=f"analysis_del_{selected_ticker}_{entry['key']}"):
                             delete_entry(selected_ticker, "analysis", entry["key"])
-                            st.success(f"{entry['key']} のレポートを削除しました（バックアップに退避済み）。")
+                            if github_config and entry.get("_sha") and entry.get("_path"):
+                                with st.spinner("GitHubからも削除中..."):
+                                    gh_ok, gh_msg = github_delete_file(
+                                        github_config["token"], github_config["repo"],
+                                        github_config["branch"], entry["_path"], entry["_sha"],
+                                        f"Delete report: {entry['_path']}"
+                                    )
+                                if gh_ok:
+                                    github_fetch_entries.clear()
+                                    github_fetch_content.clear()
+                                else:
+                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
+                            st.success(f"{entry['key']} のレポートを削除しました。")
                             st.rerun()
         else:
             st.info("まだこの銘柄の銘柄レポートは登録されていません。上の「➕ 新しい銘柄レポートを追加」から登録してください。")
@@ -1054,7 +1162,7 @@ with tab5:
             "決算分析プロンプトの結果（進捗率分析・上方修正予測など）を、四半期ごとに分けて記録できます。"
         )
 
-        earnings_entries = load_entries(selected_ticker, "earnings")
+        earnings_entries = load_entries_smart(selected_ticker, "earnings")
 
         with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
             new_earnings_quarter = st.text_input(
@@ -1091,6 +1199,8 @@ with tab5:
                             )
                         if gh_ok:
                             st.success(f"✅ {gh_message}")
+                            github_fetch_entries.clear()
+                            github_fetch_content.clear()
                         else:
                             st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
 
@@ -1113,7 +1223,19 @@ with tab5:
                     with col_ee2:
                         if st.button("🗑️ このエントリを削除", key=f"earnings_del_{selected_ticker}_{entry['key']}"):
                             delete_entry(selected_ticker, "earnings", entry["key"])
-                            st.success(f"{entry['key']} の決算分析レポートを削除しました（バックアップに退避済み）。")
+                            if github_config and entry.get("_sha") and entry.get("_path"):
+                                with st.spinner("GitHubからも削除中..."):
+                                    gh_ok, gh_msg = github_delete_file(
+                                        github_config["token"], github_config["repo"],
+                                        github_config["branch"], entry["_path"], entry["_sha"],
+                                        f"Delete report: {entry['_path']}"
+                                    )
+                                if gh_ok:
+                                    github_fetch_entries.clear()
+                                    github_fetch_content.clear()
+                                else:
+                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
+                            st.success(f"{entry['key']} の決算分析レポートを削除しました。")
                             st.rerun()
         else:
             st.info("まだこの銘柄の決算分析レポートは登録されていません。上の「➕ 新しい決算分析レポートを追加」から登録してください。")
