@@ -66,22 +66,243 @@ EARNINGS_PROMPT_TEMPLATE = """役割：
 7. 投資アナリストとして、この決算を踏まえた次の一手（例：押し目買い、様子見、利確検討など）"""
 
 # ==========================================
-# データの読み込み・保存
+# GitHub永続化レイヤー
+# ==========================================
+class GitHubStorage:
+    """
+    GitHub Contents API を使って、CSVやMarkdownファイルを
+    GitHubリポジトリに永続保存するクラス。
+    GitHub未設定時はローカルファイルにフォールバックする。
+    """
+
+    def __init__(self):
+        self.config = self._load_config()
+
+    def _load_config(self):
+        try:
+            return {
+                "token":  st.secrets["GITHUB_TOKEN"],
+                "repo":   st.secrets["GITHUB_REPO"],
+                "branch": st.secrets.get("GITHUB_BRANCH", "main"),
+            }
+        except Exception:
+            return None
+
+    @property
+    def enabled(self) -> bool:
+        return self.config is not None
+
+    def _headers(self):
+        return {
+            "Authorization": f"Bearer {self.config['token']}",
+            "Accept": "application/vnd.github+json",
+        }
+
+    def _api_url(self, path_in_repo: str) -> str:
+        return f"https://api.github.com/repos/{self.config['repo']}/contents/{path_in_repo}"
+
+    def _get_sha(self, path_in_repo: str) -> str | None:
+        """既存ファイルのSHAを取得する（更新時に必要）。存在しなければNoneを返す。"""
+        try:
+            resp = requests.get(
+                self._api_url(path_in_repo), headers=self._headers(),
+                params={"ref": self.config["branch"]}, timeout=10
+            )
+            if resp.status_code == 200:
+                return resp.json().get("sha")
+        except Exception:
+            pass
+        return None
+
+    def read_text(self, path_in_repo: str) -> str | None:
+        """
+        GitHubからファイルの内容をテキストとして読み込む。
+        失敗時はNoneを返す。
+        """
+        if not self.enabled:
+            return None
+        try:
+            resp = requests.get(
+                self._api_url(path_in_repo), headers=self._headers(),
+                params={"ref": self.config["branch"]}, timeout=10
+            )
+            if resp.status_code == 200:
+                b64 = resp.json().get("content", "").replace("\n", "")
+                return base64.b64decode(b64).decode("utf-8-sig")
+        except Exception:
+            pass
+        return None
+
+    def write_text(self, path_in_repo: str, content: str, commit_message: str) -> tuple[bool, str]:
+        """
+        GitHubにテキストファイルを書き込む（新規作成 or 更新）。
+        戻り値: (成功したか, メッセージ)
+        """
+        if not self.enabled:
+            return False, "GitHub未設定"
+        try:
+            sha = self._get_sha(path_in_repo)
+            payload = {
+                "message": commit_message,
+                "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+                "branch":  self.config["branch"],
+            }
+            if sha:
+                payload["sha"] = sha
+            resp = requests.put(
+                self._api_url(path_in_repo), headers=self._headers(),
+                json=payload, timeout=15
+            )
+            if resp.status_code in (200, 201):
+                return True, f"GitHubに保存しました（{path_in_repo}）"
+            elif resp.status_code == 401:
+                return False, "GitHub認証エラー。Personal Access Tokenを確認してください。"
+            elif resp.status_code == 404:
+                return False, "リポジトリが見つかりません。GITHUB_REPOの設定を確認してください。"
+            else:
+                return False, f"GitHub保存失敗（HTTP {resp.status_code}）"
+        except requests.exceptions.RequestException as e:
+            return False, f"GitHub通信エラー（{e}）"
+
+    def delete_file(self, path_in_repo: str, commit_message: str) -> tuple[bool, str]:
+        """GitHubからファイルを削除する。"""
+        if not self.enabled:
+            return False, "GitHub未設定"
+        try:
+            sha = self._get_sha(path_in_repo)
+            if not sha:
+                return False, "ファイルが見つかりません"
+            resp = requests.delete(
+                self._api_url(path_in_repo), headers=self._headers(),
+                json={"message": commit_message, "sha": sha, "branch": self.config["branch"]},
+                timeout=10
+            )
+            return (True, "削除しました") if resp.status_code in (200, 204) else (False, f"HTTP {resp.status_code}")
+        except requests.exceptions.RequestException as e:
+            return False, str(e)
+
+    def list_files(self, dir_in_repo: str) -> list[dict]:
+        """
+        GitHubのフォルダ内のファイル一覧を返す。
+        戻り値: [{"name", "path", "sha", "download_url"}, ...]
+        """
+        if not self.enabled:
+            return []
+        try:
+            resp = requests.get(
+                self._api_url(dir_in_repo), headers=self._headers(),
+                params={"ref": self.config["branch"]}, timeout=10
+            )
+            if resp.status_code == 200:
+                return resp.json() if isinstance(resp.json(), list) else []
+        except Exception:
+            pass
+        return []
+
+    def read_binary_url(self, download_url: str) -> str | None:
+        """download_urlから直接テキストを取得する（Private対応）。"""
+        if not self.enabled:
+            return None
+        try:
+            resp = requests.get(
+                download_url, headers={"Authorization": f"Bearer {self.config['token']}"},
+                timeout=10
+            )
+            return resp.text if resp.status_code == 200 else None
+        except Exception:
+            return None
+
+# アプリ全体で共有するGitHubStorageインスタンス
+# （毎回インスタンス化すると都度SecretsをパースするためSession stateに保持）
+if "gh_storage" not in st.session_state:
+    st.session_state.gh_storage = GitHubStorage()
+gh = st.session_state.gh_storage
+
+# ==========================================
+# データの読み込み・保存（GitHub永続化対応版）
 # ==========================================
 def load_data():
+    """
+    起動時のデータ読み込み。
+    GitHub設定あり → GitHubから取得してローカルにキャッシュ
+    GitHub設定なし → ローカルCSVから読み込み（従来通り）
+    """
+    global DATA_FILE
+
+    if gh.enabled:
+        csv_text = gh.read_text(DATA_FILE)
+        if csv_text:
+            # GitHubから取得できたらローカルにも書いてキャッシュとして残す
+            with open(DATA_FILE, "w", encoding="utf-8-sig") as f:
+                f.write(csv_text)
+        elif not os.path.exists(DATA_FILE):
+            # GitHubにもローカルにもない → 空データで初期化
+            csv_text = None
+
     if not os.path.exists(DATA_FILE):
         df = pd.DataFrame(columns=COLUMNS)
         df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
         return df
-    df = pd.read_csv(DATA_FILE, dtype={"ティッカー": str}, encoding="utf-8-sig")
-    # 列が足りない場合（旧バージョンのCSVなど）は補完しておく
+
+    df = pd.read_csv(DATA_FILE, dtype={"ティッカー": str, "PER": str}, encoding="utf-8-sig")
     for col in COLUMNS:
         if col not in df.columns:
             df[col] = ""
     return df[COLUMNS]
 
 def save_data(df):
+    """
+    データ保存。ローカルCSVに保存 + GitHub設定ありならGitHubにも保存。
+    エラー時はローカル保存を維持してwarningを返す。
+    """
+    # まずローカルに保存（フォールバックとして常に実施）
     df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+
+    if gh.enabled:
+        with open(DATA_FILE, "r", encoding="utf-8-sig") as f:
+            csv_text = f.read()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        ok, msg = gh.write_text(
+            DATA_FILE, csv_text,
+            f"Update portfolio_data.csv - {timestamp}"
+        )
+        if not ok:
+            st.toast(f"⚠️ GitHub保存失敗（ローカルには保存済み）：{msg}", icon="⚠️")
+
+# ==========================================
+# reports/ の起動時GitHub同期
+# ==========================================
+def sync_reports_from_github():
+    """
+    起動時に一度だけ呼び出して、GitHubのreports/フォルダをローカルに同期する。
+    すでに同期済み（session_stateにフラグあり）なら何もしない。
+    """
+    if st.session_state.get("reports_synced"):
+        return
+    if not gh.enabled:
+        st.session_state.reports_synced = True
+        return
+
+    items = gh.list_files("reports")
+    synced_count = 0
+    for item in items:
+        fname = item.get("name", "")
+        if not fname.endswith(".md") or fname.endswith(".migrated"):
+            continue
+        local_path = os.path.join(REPORT_DIR, fname)
+        if os.path.exists(local_path):
+            continue  # すでにローカルにあればスキップ
+        content = gh.read_binary_url(item.get("download_url", ""))
+        if content:
+            with open(local_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            synced_count += 1
+
+    st.session_state.reports_synced = True
+    if synced_count > 0:
+        st.toast(f"✅ GitHubからレポート {synced_count} 件を同期しました", icon="✅")
+
+
 
 # ==========================================
 # Yahoo!ファイナンスから銘柄情報を自動取得
@@ -454,146 +675,56 @@ def create_reports_zip() -> io.BytesIO:
 # GitHub連携：レポートのMarkdownを自動コミット
 # ==========================================
 def get_github_config():
-    """
-    Streamlit CloudのSecretsからGitHub連携の設定を取得する。
-    未設定の場合は None を返す（GitHub連携機能自体を無効化するため）。
-    """
-    try:
-        token = st.secrets["GITHUB_TOKEN"]
-        repo = st.secrets["GITHUB_REPO"]  # 例: "your-name/stock-reports"
-        branch = st.secrets.get("GITHUB_BRANCH", "main")
-        return {"token": token, "repo": repo, "branch": branch}
-    except Exception:
-        return None
+    """後方互換用ラッパー。gh.config を返す。"""
+    return gh.config
 
 @st.cache_data(ttl=120)
 def github_fetch_entries(token: str, repo: str, branch: str, ticker_code: str, kind: str) -> list:
-    """
-    GitHubのreports/フォルダから <ticker>_<kind>_<key>.md を検索して
-    新しい順で返す。2分キャッシュ付き（保存後はキャッシュをクリアする）。
-    """
+    """GitHubのreports/フォルダから <ticker>_<kind>_<key>.md を検索して新しい順で返す。"""
     safe_name = safe_ticker_filename(ticker_code)
     prefix = f"{safe_name}_{kind}_"
-    url = f"https://api.github.com/repos/{repo}/contents/reports"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-    }
-    try:
-        resp = requests.get(url, headers=headers, params={"ref": branch}, timeout=10)
-    except requests.exceptions.RequestException:
-        return []
-
-    if resp.status_code != 200:
-        return []
-
+    # gh.list_filesを使う（GitHubStorageに集約）
+    items = gh.list_files("reports")
     entries = []
-    for item in resp.json():
+    for item in items:
         fname = item.get("name", "")
         if not fname.startswith(prefix) or not fname.endswith(".md"):
             continue
         key = fname[len(prefix):-3]
-        # download_urlはPrivateリポジトリでも認証なしで取得できる生URLだが
-        # PrivateリポジトリのdownloadはAuthorizationヘッダーが必要なのでAPIで取得
         entries.append({
             "key": key,
             "path": item.get("path", ""),
             "sha": item.get("sha", ""),
             "download_url": item.get("download_url", ""),
         })
-
     entries.sort(key=lambda e: e["key"], reverse=True)
     return entries
 
 @st.cache_data(ttl=120)
 def github_fetch_content(token: str, download_url: str) -> str:
     """GitHubからMarkdownの本文を取得する。Privateリポジトリ対応。"""
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        resp = requests.get(download_url, headers=headers, timeout=10)
-        return resp.text if resp.status_code == 200 else ""
-    except requests.exceptions.RequestException:
-        return ""
+    return gh.read_binary_url(download_url) or ""
 
 def github_delete_file(token: str, repo: str, branch: str, path: str, sha: str, message: str) -> tuple[bool, str]:
-    """GitHubのファイルを削除する（shaが必要）。"""
-    url = f"https://api.github.com/repos/{repo}/contents/{path}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-    }
-    payload = {"message": message, "sha": sha, "branch": branch}
-    try:
-        resp = requests.delete(url, headers=headers, json=payload, timeout=10)
-    except requests.exceptions.RequestException as e:
-        return False, str(e)
-    if resp.status_code in (200, 204):
-        return True, "削除しました"
-    return False, f"HTTP {resp.status_code}"
+    """GitHubのファイルを削除する（GitHubStorageに委譲）。"""
+    return gh.delete_file(path, message)
 
-def github_upload_report(file_stem: str, content: str, company_name: str = "", extension: str = "md"):
-    """
-    GitHubリポジトリにレポートをコミットする（新規作成 or 更新）。
-    file_stem: 拡張子なしのファイル名（例: "7974_analysis"）
-    extension: "md" または "json"
-    戻り値: (成功したか: bool, メッセージ: str)
-    """
-    config = get_github_config()
-    if config is None:
-        return False, "GitHub連携が設定されていません（Secretsに GITHUB_TOKEN / GITHUB_REPO が必要です）。"
-
+def github_upload_report(file_stem: str, content: str, company_name: str = "", extension: str = "md") -> tuple[bool, str]:
+    """レポートをGitHubに保存する（GitHubStorageに委譲）。"""
+    if not gh.enabled:
+        return False, "GitHub未設定"
     safe_name = safe_ticker_filename(file_stem)
-    file_path_in_repo = f"reports/{safe_name}.{extension}"
-    api_url = f"https://api.github.com/repos/{config['repo']}/contents/{file_path_in_repo}"
-
-    headers = {
-        "Authorization": f"Bearer {config['token']}",
-        "Accept": "application/vnd.github+json",
-    }
-
-    # 既存ファイルがあればSHAを取得（更新の場合に必須）
-    existing_sha = None
-    try:
-        get_resp = requests.get(
-            api_url, headers=headers,
-            params={"ref": config["branch"]}, timeout=10
-        )
-        if get_resp.status_code == 200:
-            existing_sha = get_resp.json().get("sha")
-        elif get_resp.status_code not in (404,):
-            return False, f"既存ファイルの確認に失敗しました（HTTP {get_resp.status_code}）: {get_resp.text[:200]}"
-    except requests.exceptions.RequestException as e:
-        return False, f"GitHubへの接続に失敗しました（{e}）。ネットワーク設定をご確認ください。"
-
+    path = f"reports/{safe_name}.{extension}"
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    commit_message = f"Update report: {file_stem}（{company_name}）- {timestamp}"
-
-    payload = {
-        "message": commit_message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-        "branch": config["branch"],
-    }
-    if existing_sha:
-        payload["sha"] = existing_sha
-
-    try:
-        put_resp = requests.put(api_url, headers=headers, json=payload, timeout=10)
-    except requests.exceptions.RequestException as e:
-        return False, f"GitHubへの接続に失敗しました（{e}）。ネットワーク設定をご確認ください。"
-
-    if put_resp.status_code in (200, 201):
-        return True, f"GitHubに保存しました（{config['repo']} / {file_path_in_repo}）"
-    elif put_resp.status_code == 401:
-        return False, "GitHub認証に失敗しました。Personal Access Tokenが正しいか、有効期限切れでないかご確認ください。"
-    elif put_resp.status_code == 404:
-        return False, f"リポジトリ「{config['repo']}」が見つかりません。Secretsの GITHUB_REPO設定、またはトークンの権限（対象リポジトリ）をご確認ください。"
-    else:
-        return False, f"GitHubへの保存に失敗しました（HTTP {put_resp.status_code}）: {put_resp.text[:200]}"
+    return gh.write_text(path, content, f"Update report: {file_stem}（{company_name}）- {timestamp}")
 
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
 if "df" not in st.session_state:
     st.session_state.df = load_data()
+
+# 起動時にGitHubのreports/をローカルに同期（1セッションに1度だけ）
+sync_reports_from_github()
 
 st.title("📊 銘柄管理ダッシュボード")
 st.caption("Obsidian（Dataview / Templater）の代わりに、ブラウザ上で動く株式管理ダッシュボードです。")
