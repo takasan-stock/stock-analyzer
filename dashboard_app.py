@@ -350,6 +350,14 @@ def fetch_stock_info(ticker_code: str):
     retry = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
     session.mount("https://", HTTPAdapter(max_retries=retry))
 
+    # ロケールを日本語に設定することで、Yahoo Finance APIが
+    # displayName（日本語名）を返しやすくなる
+    try:
+        yf.config.locale.lang = "ja-JP"
+        yf.config.locale.region = "JP"
+    except Exception:
+        pass
+
     try:
         ticker_obj = yf.Ticker(yf_symbol, session=session)
 
@@ -375,7 +383,15 @@ def fetch_stock_info(ticker_code: str):
     if not info and fast is None:
         return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
-    name = pick_japanese_name(info.get("shortName"), info.get("longName")) if info else ""
+    name = ""
+    if info:
+        # displayName は日本語名が入る場合がある（ja-JPロケール設定時）
+        # shortName → longName の順でフォールバック
+        display = info.get("displayName", "")
+        name = (
+            display if contains_japanese(display)
+            else pick_japanese_name(info.get("shortName"), info.get("longName"))
+        )
 
     # PERはget_info()から、取れなければget_valuation_measures()で補完
     per = info.get("trailingPE") if info else None
