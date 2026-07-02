@@ -1459,6 +1459,132 @@ with tab5:
 
         st.divider()
 
+        # ------------------------------------------
+        # ニュース・クリップ（Obsidian Web Clipper貼り付け・日付ごと）
+        # ------------------------------------------
+        st.markdown("##### 📰 ニュース・クリップ（1記事=1エントリ）")
+        st.caption(
+            "株探などのニュース記事をObsidian Web Clipperでクリップした.mdをそのまま貼り付けて保存できます。"
+            "1記事=1エントリとして日付ごとに蓄積されます。"
+        )
+
+        news_entries = load_entries_smart(selected_ticker, "news")
+
+        with st.expander("➕ 新しいニュースを追加", expanded=(len(news_entries) == 0)):
+            col_n1, col_n2 = st.columns([1, 1])
+            with col_n1:
+                new_news_date = st.date_input(
+                    "記事の日付",
+                    value=datetime.date.today(),
+                    key=f"news_new_date_{selected_ticker}"
+                )
+            with col_n2:
+                new_news_source = st.text_input(
+                    "ソース（例: 株探、日経、IR）",
+                    key=f"news_new_source_{selected_ticker}"
+                )
+
+            new_news_content = st.text_area(
+                "Obsidian Web Clipperでクリップした内容をここに貼り付け",
+                height=350,
+                placeholder=(
+                    "# 記事タイトル\n\n"
+                    "source:: https://kabutan.jp/...\n\n"
+                    "## 本文\n\nここにクリップした内容が入ります..."
+                ),
+                key=f"news_new_content_{selected_ticker}"
+            )
+
+            if github_config:
+                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
+
+            if st.button("💾 このニュースを保存する", type="primary", key=f"news_save_{selected_ticker}"):
+                if not new_news_content.strip():
+                    st.error("⚠️ 本文が空です。クリップした内容を貼り付けてください。")
+                else:
+                    date_key = new_news_date.strftime("%Y-%m-%d")
+                    # 同じ日付に複数記事がある場合、時刻をサフィックスとして付与して区別する
+                    existing_keys = {e["key"] for e in news_entries}
+                    if date_key in existing_keys:
+                        date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+                    # ソースをメタデータとして先頭行に追加
+                    source_str = new_news_source.strip()
+                    content_to_save = (
+                        f"<!-- source: {source_str} -->\n\n{new_news_content}"
+                        if source_str else new_news_content
+                    )
+
+                    save_entry(selected_ticker, "news", date_key, content_to_save)
+                    st.success(f"✅ {date_key} のニュースを保存しました！")
+
+                    if github_config:
+                        with st.spinner("GitHubにも保存中..."):
+                            file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{date_key}"
+                            gh_ok, gh_message = github_upload_report(
+                                file_stem, content_to_save, company_name
+                            )
+                        if gh_ok:
+                            st.success(f"✅ {gh_message}")
+                            github_fetch_entries.clear()
+                            github_fetch_content.clear()
+                        else:
+                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
+
+                    st.rerun()
+
+        if news_entries:
+            st.caption(f"📚 記録済み: {len(news_entries)} 件（新しい順）")
+            for entry in news_entries:
+                # ソース名をコメントから抽出して表示名に使う
+                source_display = ""
+                first_line = entry["content"].split("\n")[0]
+                if first_line.startswith("<!-- source:") and first_line.endswith("-->"):
+                    source_display = first_line[len("<!-- source:"):][:-len("-->")].strip()
+
+                label = f"📰 {entry['key']}"
+                if source_display:
+                    label += f"　{source_display}"
+                label += f"（{entry.get('updated_at', '')}）"
+
+                with st.expander(label):
+                    # ソースコメント行は表示せず本文だけ表示
+                    display_content = entry["content"]
+                    if display_content.startswith("<!-- source:"):
+                        display_content = "\n".join(display_content.split("\n")[2:])
+                    st.markdown(display_content)
+
+                    col_ne1, col_ne2 = st.columns([1, 1])
+                    with col_ne1:
+                        st.download_button(
+                            "⬇️ ダウンロード",
+                            data=entry["content"].encode("utf-8"),
+                            file_name=f"{safe_ticker_filename(selected_ticker)}_news_{entry['key']}.md",
+                            mime="text/markdown",
+                            key=f"news_dl_{selected_ticker}_{entry['key']}"
+                        )
+                    with col_ne2:
+                        if st.button("🗑️ このエントリを削除", key=f"news_del_{selected_ticker}_{entry['key']}"):
+                            delete_entry(selected_ticker, "news", entry["key"])
+                            if github_config and entry.get("_sha") and entry.get("_path"):
+                                with st.spinner("GitHubからも削除中..."):
+                                    gh_ok, gh_msg = github_delete_file(
+                                        github_config["token"], github_config["repo"],
+                                        github_config["branch"], entry["_path"], entry["_sha"],
+                                        f"Delete news: {entry['_path']}"
+                                    )
+                                if gh_ok:
+                                    github_fetch_entries.clear()
+                                    github_fetch_content.clear()
+                                else:
+                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
+                            st.success(f"{entry['key']} のニュースを削除しました。")
+                            st.rerun()
+        else:
+            st.info("まだこの銘柄のニュースは登録されていません。上の「➕ 新しいニュースを追加」から登録してください。")
+
+        st.divider()
+
         # --- バックアップ ---
         st.markdown("##### 📦 バックアップ")
         report_files = [
