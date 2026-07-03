@@ -554,6 +554,90 @@ def calc_cagr(start_val, end_val, years):
     return (end_val / start_val) ** (1 / years) - 1
 
 # ==========================================
+# カンバンビュー用：株価一括取得 & カードHTML
+# ==========================================
+@st.cache_data(ttl=300)  # 5分キャッシュ
+def fetch_prices_batch(tickers: tuple) -> dict:
+    """
+    複数銘柄の現在株価・前日比をyf.download()で一括取得する。
+    ttl=300なので5分ごとに自動更新。手動更新は fetch_prices_batch.clear() で。
+    戻り値: {ティッカー: {"price": float, "change_pct": float}}
+    """
+    if not tickers:
+        return {}
+
+    symbol_map = {(t if "." in t else f"{t}.T"): t for t in tickers}
+    symbols = list(symbol_map.keys())
+    result = {}
+
+    try:
+        data = yf.download(symbols, period="2d", interval="1d",
+                            auto_adjust=True, progress=False)
+        if data.empty:
+            return {}
+
+        close = data["Close"]
+        if len(symbols) == 1:
+            close = close.to_frame(name=symbols[0])
+
+        for symbol, orig in symbol_map.items():
+            if symbol not in close.columns:
+                continue
+            prices = close[symbol].dropna()
+            if len(prices) >= 1:
+                result[orig] = {
+                    "price": float(prices.iloc[-1]),
+                    "change_pct": float(
+                        (prices.iloc[-1] - prices.iloc[-2]) / prices.iloc[-2] * 100
+                    ) if len(prices) >= 2 else 0.0
+                }
+    except Exception:
+        pass
+
+    return result
+
+def make_card_html(ticker: str, name: str, per: str, cagr: str,
+                   net_cash: str, price=None, change_pct=None, memo: str = "") -> str:
+    """銘柄カード1枚分のHTMLを生成する"""
+    if price is not None:
+        color = "#2ecc71" if change_pct >= 0 else "#e74c3c"
+        sign  = "+" if change_pct >= 0 else ""
+        price_html = (
+            f'<div style="margin:4px 0">'
+            f'<span style="font-size:1.05em;font-weight:bold">¥{price:,.0f}</span>'
+            f'<span style="color:{color};font-size:0.82em;margin-left:6px">'
+            f'{sign}{change_pct:.1f}%</span></div>'
+        )
+    else:
+        price_html = '<div style="color:#888;font-size:0.78em;margin:4px 0">株価未取得</div>'
+
+    badges = "".join(
+        f'<span style="font-size:0.72em;background:#2a2a3e;padding:2px 6px;'
+        f'border-radius:4px;margin-right:4px">{label}</span>'
+        for label, val in [("PER", per), ("CAGR", cagr), ("💰", net_cash)]
+        if val
+    )
+
+    memo_snippet = ""
+    if memo:
+        short = memo[:45] + ("…" if len(memo) > 45 else "")
+        memo_snippet = (
+            f'<div style="font-size:0.73em;color:#888;margin-top:5px;'
+            f'line-height:1.4">{short}</div>'
+        )
+
+    return (
+        f'<div style="background:#1e1e2e;border:1px solid #333;border-radius:8px;'
+        f'padding:10px 12px;margin-bottom:8px">'
+        f'<div style="font-size:0.72em;color:#888">{ticker}</div>'
+        f'<div style="font-weight:bold;font-size:0.92em;margin:2px 0">{name}</div>'
+        f'{price_html}'
+        f'<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px">{badges}</div>'
+        f'{memo_snippet}'
+        f'</div>'
+    )
+
+# ==========================================
 # 個別銘柄レポート（Markdown）の保存・バックアップ
 # ==========================================
 def safe_ticker_filename(ticker_code: str) -> str:
@@ -759,69 +843,158 @@ with tab1:
     if df.empty:
         st.info("現在登録されているデータがありません。「新規銘柄登録」タブから追加してください。")
     else:
-        # --- 検索・絞り込み（表示用） ---
-        col_f1, col_f2 = st.columns([2, 1])
-        with col_f1:
-            keyword = st.text_input("🔎 ティッカー・銘柄名で検索", "")
-        with col_f2:
-            status_options = sorted(df["ステータス"].dropna().astype(str).unique())
-            status_filter = st.multiselect(
-                "ステータスで絞り込み",
-                options=status_options,
-                default=status_options
-            )
-
-        view_df = df[df["ステータス"].isin(status_filter)]
-        if keyword:
-            mask = (
-                view_df["ティッカー"].astype(str).str.contains(keyword, case=False, na=False)
-                | view_df["銘柄名"].astype(str).str.contains(keyword, case=False, na=False)
-            )
-            view_df = view_df[mask]
-
-        st.dataframe(view_df, width='stretch', hide_index=True)
+        # --- ビュー切り替え ---
+        view_mode = st.radio(
+            "表示モード",
+            ["📋 テーブル", "🗂️ カンバン"],
+            horizontal=True,
+            key="view_mode"
+        )
 
         st.divider()
 
-        # --- 編集・削除エリア ---
-        st.markdown("##### ✏️ データの編集・削除")
-        st.caption(
-            "セルをダブルクリックすると直接編集できます。行頭にチェックを入れて削除、"
-            "下に空欄の行が出たら新規行として入力もできます。編集後は必ず「変更を保存」を押してください。"
-        )
+        # ==========================================
+        # カンバンビュー
+        # ==========================================
+        if view_mode == "🗂️ カンバン":
+            col_kb1, col_kb2 = st.columns([3, 1])
+            with col_kb1:
+                st.caption("ステータスごとに銘柄カードを表示します。カード下のボタンでステータスを変更できます。")
+            with col_kb2:
+                if st.button("🔄 株価を更新", key="kanban_refresh"):
+                    fetch_prices_batch.clear()
+                    st.rerun()
 
-        edited_df = st.data_editor(
-            df,
-            width='stretch',
-            hide_index=True,
-            num_rows="dynamic",
-            column_config={
-                "セクター": st.column_config.SelectboxColumn(options=SECTOR_OPTIONS),
-                "ステータス": st.column_config.SelectboxColumn(options=STATUS_OPTIONS),
-                "ネットキャッシュ": st.column_config.SelectboxColumn(options=NETCASH_OPTIONS),
-            },
-            key="full_editor"
-        )
+            # 全銘柄の株価を一括取得（5分キャッシュ）
+            all_tickers = tuple(df["ティッカー"].astype(str).tolist())
+            with st.spinner("株価を取得中..."):
+                prices = fetch_prices_batch(all_tickers)
 
-        col_b1, col_b2, col_b3 = st.columns(3)
-        with col_b1:
-            if st.button("💾 変更を保存", type="primary"):
-                st.session_state.df = edited_df.reset_index(drop=True)
-                save_data(st.session_state.df)
-                st.success("✅ 変更を保存しました！")
-                st.rerun()
-        with col_b2:
-            csv = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                "⬇️ CSVをダウンロード",
-                data=csv,
-                file_name=f"portfolio_data_{datetime.date.today()}.csv",
-                mime="text/csv"
+            # ステータス順に列を並べる
+            kanban_columns = [s for s in STATUS_OPTIONS if s in df["ステータス"].values]
+            cols = st.columns(len(kanban_columns))
+
+            STATUS_COLORS = {
+                "監視中":  "#3498db",
+                "打診買い": "#f39c12",
+                "保有中":  "#2ecc71",
+                "見送り":  "#95a5a6",
+            }
+
+            for col_ui, status in zip(cols, kanban_columns):
+                with col_ui:
+                    color = STATUS_COLORS.get(status, "#888")
+                    status_df = df[df["ステータス"] == status]
+                    st.markdown(
+                        f'<div style="border-top:3px solid {color};padding-top:6px;'
+                        f'margin-bottom:8px;font-weight:bold;font-size:0.95em">'
+                        f'{status} <span style="color:#888;font-size:0.8em">({len(status_df)})</span></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    for _, row in status_df.iterrows():
+                        ticker = str(row["ティッカー"])
+                        p = prices.get(ticker, {})
+
+                        # カードHTML表示
+                        st.markdown(
+                            make_card_html(
+                                ticker=ticker,
+                                name=str(row["銘柄名"]),
+                                per=str(row["PER"]),
+                                cagr=str(row["売上5y CAGR"]),
+                                net_cash=str(row["ネットキャッシュ"]),
+                                price=p.get("price"),
+                                change_pct=p.get("change_pct"),
+                                memo=str(row["投資家メモ"]),
+                            ),
+                            unsafe_allow_html=True
+                        )
+
+                        # ステータス変更ボタン（隣のステータスへ移動）
+                        next_statuses = [s for s in STATUS_OPTIONS if s != status]
+                        btn_cols = st.columns(len(next_statuses))
+                        for bc, next_s in zip(btn_cols, next_statuses):
+                            short = next_s[:3]  # ボタンを短く
+                            if bc.button(f"→{short}", key=f"kanban_mv_{ticker}_{next_s}",
+                                         help=f"{next_s}へ移動"):
+                                idx = st.session_state.df[
+                                    st.session_state.df["ティッカー"].astype(str) == ticker
+                                ].index
+                                if len(idx) > 0:
+                                    st.session_state.df.at[idx[0], "ステータス"] = next_s
+                                    st.session_state.df.at[idx[0], "更新日"] = \
+                                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                                    save_data(st.session_state.df)
+                                    st.rerun()
+
+        # ==========================================
+        # テーブルビュー（従来通り）
+        # ==========================================
+        else:
+            # --- 検索・絞り込み（表示用） ---
+            col_f1, col_f2 = st.columns([2, 1])
+            with col_f1:
+                keyword = st.text_input("🔎 ティッカー・銘柄名で検索", "")
+            with col_f2:
+                status_options = sorted(df["ステータス"].dropna().astype(str).unique())
+                status_filter = st.multiselect(
+                    "ステータスで絞り込み",
+                    options=status_options,
+                    default=status_options
+                )
+
+            view_df = df[df["ステータス"].isin(status_filter)]
+            if keyword:
+                mask = (
+                    view_df["ティッカー"].astype(str).str.contains(keyword, case=False, na=False)
+                    | view_df["銘柄名"].astype(str).str.contains(keyword, case=False, na=False)
+                )
+                view_df = view_df[mask]
+
+            st.dataframe(view_df, width='stretch', hide_index=True)
+
+            st.divider()
+
+            # --- 編集・削除エリア ---
+            st.markdown("##### ✏️ データの編集・削除")
+            st.caption(
+                "セルをダブルクリックすると直接編集できます。行頭にチェックを入れて削除、"
+                "下に空欄の行が出たら新規行として入力もできます。編集後は必ず「変更を保存」を押してください。"
             )
-        with col_b3:
-            if st.button("🔄 保存済みデータを再読込"):
-                st.session_state.df = load_data()
-                st.rerun()
+
+            edited_df = st.data_editor(
+                df,
+                width='stretch',
+                hide_index=True,
+                num_rows="dynamic",
+                column_config={
+                    "セクター": st.column_config.SelectboxColumn(options=SECTOR_OPTIONS),
+                    "ステータス": st.column_config.SelectboxColumn(options=STATUS_OPTIONS),
+                    "ネットキャッシュ": st.column_config.SelectboxColumn(options=NETCASH_OPTIONS),
+                },
+                key="full_editor"
+            )
+
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                if st.button("💾 変更を保存", type="primary"):
+                    st.session_state.df = edited_df.reset_index(drop=True)
+                    save_data(st.session_state.df)
+                    st.success("✅ 変更を保存しました！")
+                    st.rerun()
+            with col_b2:
+                csv = df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "⬇️ CSVをダウンロード",
+                    data=csv,
+                    file_name=f"portfolio_data_{datetime.date.today()}.csv",
+                    mime="text/csv"
+                )
+            with col_b3:
+                if st.button("🔄 保存済みデータを再読込"):
+                    st.session_state.df = load_data()
+                    st.rerun()
 
 # ------------------------------------------
 # タブ2：新規銘柄登録フォーム
@@ -866,28 +1039,29 @@ with tab2:
     st.divider()
     st.markdown("##### ② 内容を確認して登録")
 
-    with st.form("register_form"):
+    with st.container():
         col1, col2 = st.columns(2)
 
         with col1:
             st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True)
-            name = st.text_input("銘柄名", value=st.session_state.get("fetched_name", ""))
-            sector = st.selectbox("セクター", SECTOR_OPTIONS)
-            status = st.selectbox("ステータス", STATUS_OPTIONS)
+            name = st.text_input("銘柄名", value=st.session_state.get("fetched_name", ""), key="reg_name")
+            sector = st.selectbox("セクター", SECTOR_OPTIONS, key="reg_sector")
+            status = st.selectbox("ステータス", STATUS_OPTIONS, key="reg_status")
 
         with col2:
-            cagr = st.text_input("売上5y CAGR (例: 15.2%) ※自動取得対象外")
-            forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外")
-            per = st.text_input("PER (例: 15.5)", value=st.session_state.get("fetched_per", ""))
+            cagr = st.text_input("売上5y CAGR (例: 15.2%) ※自動取得対象外", key="reg_cagr")
+            forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外", key="reg_forecast")
+            per = st.text_input("PER (例: 15.5)", value=st.session_state.get("fetched_per", ""), key="reg_per")
             netcash_default = st.session_state.get("fetched_netcash", "不明")
             net_cash = st.selectbox(
                 "ネットキャッシュ", NETCASH_OPTIONS,
-                index=NETCASH_OPTIONS.index(netcash_default) if netcash_default in NETCASH_OPTIONS else 3
+                index=NETCASH_OPTIONS.index(netcash_default) if netcash_default in NETCASH_OPTIONS else 3,
+                key="reg_netcash"
             )
 
-        memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)")
+        memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)", key="reg_memo")
 
-        submitted = st.form_submit_button("💾 データベースに登録")
+        submitted = st.button("💾 データベースに登録", type="primary", key="reg_submit")
 
         if submitted:
             if ticker == "":
@@ -1020,6 +1194,160 @@ with tab3:
                 st.metric(f"{n_years_manual}年 CAGR", f"{cagr_manual:+.1%}")
                 st.caption("👇 この値を「新規銘柄登録」タブの『売上5y CAGR』欄にコピーして使ってください")
                 st.code(f"{cagr_manual*100:.1f}%", language=None)
+
+    # ------------------------------------------
+    # ネットキャッシュ / NCR / PER(CN) / DPUP 計算
+    # ------------------------------------------
+    st.divider()
+    st.subheader("💰 ネットキャッシュ・DPUP計算")
+    st.caption(
+        "貸借対照表の数値（百万円単位）を入力すると、ネットキャッシュ・NCR・PER(CN)・DPUPを一括計算します。"
+        "ティッカーを入力してyfinanceから自動取得することもできます（精度は保証できません）。"
+    )
+
+    # --- ティッカー自動取得 ---
+    col_nc_t1, col_nc_t2 = st.columns([2, 1])
+    with col_nc_t1:
+        nc_ticker = st.text_input("ティッカーコード（自動取得する場合）", key="nc_ticker",
+                                   placeholder="例: 7974（空欄の場合は手入力）")
+    with col_nc_t2:
+        st.write("")
+        nc_fetch = st.button("🔍 財務データを自動取得", key="nc_fetch_btn")
+
+    if nc_fetch and nc_ticker.strip():
+        yf_sym = nc_ticker.strip()
+        if "." not in yf_sym:
+            yf_sym = f"{yf_sym}.T"
+        with st.spinner("yfinanceから財務データを取得中..."):
+            try:
+                _session = requests.Session()
+                _session.headers.update({"User-Agent": "Mozilla/5.0"})
+                from requests.adapters import HTTPAdapter
+                from urllib3.util.retry import Retry
+                _session.mount("https://", HTTPAdapter(
+                    max_retries=Retry(total=3, backoff_factor=1.5,
+                                      status_forcelist=[429, 500, 502, 503, 504])))
+                _t = yf.Ticker(yf_sym, session=_session)
+
+                _bs = _t.get_balance_sheet()
+                _is = _t.get_income_stmt()
+                _info = _t.get_info() or {}
+
+                def _get(_df, labels):
+                    if _df is None or _df.empty:
+                        return None
+                    for lbl in labels:
+                        if lbl in _df.index:
+                            v = _df.loc[lbl].dropna()
+                            if not v.empty:
+                                return float(v.iloc[0]) / 1e6  # 円→百万円
+                    return None
+
+                _ca  = _get(_bs, ["Current Assets", "TotalCurrentAssets", "CurrentAssets"])
+                _inv = _get(_bs, ["Inventory", "Inventories"])
+                _inv_sec = _get(_bs, [
+                    "Available For Sale Securities", "Long Term Investments",
+                    "LongTermInvestments", "Other Investments", "InvestmentSecurities"])
+                _liab = _get(_bs, [
+                    "Total Liabilities Net Minority Interest",
+                    "TotalLiabilitiesNetMinorityInterest", "Total Liab"])
+                _eq   = _get(_bs, [
+                    "Stockholders Equity", "StockholdersEquity",
+                    "Total Equity Gross Minority Interest"])
+                _debt = _get(_bs, ["Total Debt", "TotalDebt", "Long Term Debt"])
+                _ebit = _get(_is, ["EBIT", "Ebit", "Operating Income", "OperatingIncome"])
+                _mcap = (_info.get("marketCap") or 0) / 1e6
+
+                st.session_state.nc_prefill = {
+                    "ca": _ca, "inv": _inv, "inv_sec": _inv_sec,
+                    "liab": _liab, "eq": _eq, "debt": _debt,
+                    "ebit": _ebit, "mcap": _mcap,
+                }
+                got = [k for k, v in st.session_state.nc_prefill.items() if v is not None]
+                st.success(f"✅ 取得できた項目: {', '.join(got)}（単位: 百万円）")
+                st.caption("⚠️ 投資有価証券はyfinanceのデータが実態と乖離することがあります。IR資料で確認してください。")
+            except Exception as e:
+                st.error(f"⚠️ 取得に失敗しました（{e}）")
+
+    pf = st.session_state.get("nc_prefill", {})
+
+    st.markdown("##### 入力（百万円単位）")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        nc_ca   = st.number_input("流動資産",       value=float(pf.get("ca")   or 0), step=1.0, key="nc_ca")
+        nc_inv  = st.number_input("棚卸資産",       value=float(pf.get("inv")  or 0), step=1.0, key="nc_inv")
+    with col2:
+        nc_isec = st.number_input("投資有価証券",   value=float(pf.get("inv_sec") or 0), step=1.0, key="nc_isec")
+        nc_liab = st.number_input("負債合計",       value=float(pf.get("liab") or 0), step=1.0, key="nc_liab")
+    with col3:
+        nc_mcap = st.number_input("時価総額",       value=float(pf.get("mcap") or 0), step=1.0, key="nc_mcap")
+        nc_per  = st.number_input("PER（倍）",     value=0.0, step=0.1, key="nc_per")
+
+    st.markdown("##### ROIC計算用（yfinance自動取得 or 手入力）")
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        nc_ebit = st.number_input("EBIT（営業利益）",  value=float(pf.get("ebit") or 0), step=1.0, key="nc_ebit")
+    with col5:
+        nc_eq   = st.number_input("純資産",            value=float(pf.get("eq")   or 0), step=1.0, key="nc_eq")
+    with col6:
+        nc_debt = st.number_input("有利子負債",         value=float(pf.get("debt") or 0), step=1.0, key="nc_debt")
+
+    if st.button("🧮 まとめて計算する", type="primary", key="nc_calc"):
+        # ネットキャッシュ
+        net_cash_val = nc_ca - (nc_inv * 0.3 + nc_isec * 0.7) - nc_liab
+
+        # NCR
+        ncr_val = (net_cash_val / nc_mcap * 100) if nc_mcap > 0 else None
+
+        # PER(CN)
+        per_cn_val = None
+        if ncr_val is not None and ncr_val < 100 and nc_per > 0:
+            per_cn_val = nc_per * (100 - ncr_val) / 100
+
+        # ROIC
+        invested_cap = nc_eq + nc_debt
+        roic_val = (nc_ebit / invested_cap * 100) if invested_cap > 0 and nc_ebit > 0 else None
+
+        # DPUP
+        dpup_val = None
+        if roic_val is not None and per_cn_val is not None and per_cn_val != 0:
+            dpup_val = round(roic_val / per_cn_val, 2)
+
+        st.divider()
+        st.markdown("##### 📊 計算結果")
+
+        r1, r2, r3 = st.columns(3)
+        r1.metric("ネットキャッシュ（百万円）", f"{net_cash_val:,.0f}")
+        r2.metric("NCR（%）", f"{ncr_val:.1f}%" if ncr_val is not None else "—")
+        r3.metric("PER(CN)", f"{per_cn_val:.2f}" if per_cn_val is not None else "—")
+
+        r4, r5, r6 = st.columns(3)
+        r4.metric("ROIC（%）", f"{roic_val:.2f}%" if roic_val is not None else "—")
+        r5.metric("DPUP", f"{dpup_val}" if dpup_val is not None else "—")
+        r6.metric("投下資本（百万円）", f"{invested_cap:,.0f}" if invested_cap > 0 else "—")
+
+        # 判定コメント
+        if dpup_val is not None:
+            if dpup_val >= 1.5:
+                st.success(f"✅ DPUP {dpup_val} → 割安圏の目安（1.5以上）")
+            elif dpup_val >= 1.0:
+                st.info(f"ℹ️ DPUP {dpup_val} → やや割安（1.0〜1.5）")
+            else:
+                st.warning(f"⚠️ DPUP {dpup_val} → 割安感は薄い（1.0未満）")
+
+        # コピー用サマリー
+        st.caption("👇 メモ用にコピーできます")
+        summary = (
+            f"ネットキャッシュ: {net_cash_val:,.0f} 百万円\n"
+            f"NCR: {f'{ncr_val:.1f}%' if ncr_val is not None else '—'}\n"
+            f"PER(CN): {f'{per_cn_val:.2f}' if per_cn_val is not None else '—'}\n"
+            f"ROIC: {f'{roic_val:.2f}%' if roic_val is not None else '—'}\n"
+            f"DPUP: {dpup_val if dpup_val is not None else '—'}"
+        )
+        st.code(summary, language=None)
+
+        if ncr_val is not None and ncr_val >= 100:
+            st.info("ℹ️ NCR ≥ 100% のため PER(CN) は計算されません（ネットキャッシュが時価総額を超えています）。")
 
 # ------------------------------------------
 # タブ4：分析
