@@ -1058,7 +1058,7 @@ with tab2:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True, key="reg_ticker_display")
+            st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True)
             name = st.text_input("銘柄名", key="reg_name")
             sector = st.selectbox("セクター", SECTOR_OPTIONS, key="reg_sector")
             status = st.selectbox("ステータス", STATUS_OPTIONS, key="reg_status")
