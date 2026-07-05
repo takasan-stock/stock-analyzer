@@ -820,7 +820,65 @@ if "df" not in st.session_state:
 sync_reports_from_github()
 
 st.title("📊 銘柄管理ダッシュボード")
-st.caption("Obsidian（Dataview / Templater）の代わりに、ブラウザ上で動く株式管理ダッシュボードです。")
+
+# ==========================================
+# カスタムCSS（全体の見た目を整える）
+# ==========================================
+st.markdown("""
+<style>
+/* タブを大きく押しやすく */
+.stTabs [data-baseweb="tab"] {
+    font-size: 0.95rem;
+    padding: 10px 18px;
+}
+/* metricカードに枠線と背景 */
+[data-testid="stMetric"] {
+    background: rgba(128, 128, 128, 0.08);
+    border: 1px solid rgba(128, 128, 128, 0.2);
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+/* expanderのヘッダーを見やすく */
+[data-testid="stExpander"] summary {
+    font-weight: 600;
+}
+/* ボタンの角を丸く */
+.stButton > button {
+    border-radius: 8px;
+}
+/* dividerの余白を詰める */
+hr {
+    margin: 0.8rem 0;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# サイドバー：ポートフォリオサマリー
+# ==========================================
+with st.sidebar:
+    st.markdown("### 📊 ポートフォリオ概況")
+    _sdf = st.session_state.df
+    if not _sdf.empty:
+        st.metric("登録銘柄数", f"{len(_sdf)} 銘柄")
+
+        STATUS_ICONS = {"保有中": "🟢", "打診買い": "🟡", "監視中": "🔵", "見送り": "⚪"}
+        for _s in STATUS_OPTIONS:
+            _cnt = (_sdf["ステータス"] == _s).sum()
+            if _cnt > 0:
+                st.markdown(f"{STATUS_ICONS.get(_s, '▫️')} {_s}：**{_cnt}** 銘柄")
+    else:
+        st.info("まだ銘柄が登録されていません")
+
+    st.divider()
+
+    st.markdown("### 🔗 データ保存先")
+    if gh.enabled:
+        st.success(f"GitHub連携中\n\n`{gh.config['repo']}`", icon="✅")
+        st.caption("再起動してもデータは消えません")
+    else:
+        st.warning("ローカル保存のみ", icon="⚠️")
+        st.caption("SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると永続化できます")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析", "📑 個別銘柄レポート"
@@ -1549,77 +1607,77 @@ with tab5:
 
         st.divider()
 
-        # --- AI分析用プロンプト ---
-        st.markdown("##### 🤖 AI分析用プロンプト")
-        st.caption("下のプロンプトをコピーして、ChatGPT・Gemini・Claudeなどに貼り付けて分析してもらってください。")
-
-        include_context = st.checkbox(
-            "ダッシュボードの登録データ（セクター・PER・売上5y CAGRなど）をプロンプトに含める",
-            value=True,
-            key=f"include_context_{selected_ticker}"
-        )
-
         if selected_row is not None:
             company_name = selected_row["銘柄名"]
         else:
             company_name = ""
 
-        if include_context and selected_row is not None:
-            context_lines = "\n".join(
-                f"- {col}: {selected_row[col]}"
-                for col in ["ティッカー", "銘柄名", "セクター", "ステータス",
-                            "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ", "投資家メモ"]
-            )
-            full_prompt = (
-                f"{ANALYST_PROMPT_TEMPLATE}\n\n"
-                f"【ダッシュボード登録データ】\n{context_lines}\n\n"
-                f"対象企業：{company_name}（{selected_ticker}）\n"
-                f"※上記の登録データはあくまで現時点の記録値です。最新の決算短信・有価証券報告書・IR資料等を"
-                f"自分で調査したうえで分析してください。"
-            )
-        else:
-            full_prompt = f"{ANALYST_PROMPT_TEMPLATE}\n\n対象企業：{company_name}（{selected_ticker}）"
+        # --- AI分析用プロンプト（折りたたみ） ---
+        with st.expander("🤖 AI分析用プロンプト（SWOT・目標株価・Fスコアなど）"):
+            st.caption("下のプロンプトをコピーして、ChatGPT・Gemini・Claudeなどに貼り付けて分析してもらってください。")
 
-        st.code(full_prompt, language=None)
+            include_context = st.checkbox(
+                "ダッシュボードの登録データ（セクター・PER・売上5y CAGRなど）をプロンプトに含める",
+                value=True,
+                key=f"include_context_{selected_ticker}"
+            )
+
+            if include_context and selected_row is not None:
+                context_lines = "\n".join(
+                    f"- {col}: {selected_row[col]}"
+                    for col in ["ティッカー", "銘柄名", "セクター", "ステータス",
+                                "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ", "投資家メモ"]
+                )
+                full_prompt = (
+                    f"{ANALYST_PROMPT_TEMPLATE}\n\n"
+                    f"【ダッシュボード登録データ】\n{context_lines}\n\n"
+                    f"対象企業：{company_name}（{selected_ticker}）\n"
+                    f"※上記の登録データはあくまで現時点の記録値です。最新の決算短信・有価証券報告書・IR資料等を"
+                    f"自分で調査したうえで分析してください。"
+                )
+            else:
+                full_prompt = f"{ANALYST_PROMPT_TEMPLATE}\n\n対象企業：{company_name}（{selected_ticker}）"
+
+            st.code(full_prompt, language=None)
 
         st.divider()
 
-        # --- 決算分析用プロンプト ---
-        st.markdown("##### 📈 決算分析用プロンプト")
-        st.caption(
-            "決算発表のたびに使うプロンプトです。対象四半期・第一印象・メモを入力すると、"
-            "決算データを埋め込んだプロンプトが生成されます。発表されたIR資料（PDFや画像）と一緒にAIへ渡してください。"
-        )
-
-        col_q1, col_q2 = st.columns(2)
-        with col_q1:
-            quarter_input = st.text_input(
-                "対象四半期 (例: 2026-4Q)",
-                key=f"earnings_quarter_{selected_ticker}"
-            )
-        with col_q2:
-            impression_input = st.selectbox(
-                "投資家の第一印象",
-                ["ポジティブ", "中立", "ネガティブ"],
-                index=1,
-                key=f"earnings_impression_{selected_ticker}"
+        # --- 決算分析用プロンプト（折りたたみ） ---
+        with st.expander("📈 決算分析用プロンプト（決算発表時に使用）"):
+            st.caption(
+                "決算発表のたびに使うプロンプトです。対象四半期・第一印象・メモを入力すると、"
+                "決算データを埋め込んだプロンプトが生成されます。発表されたIR資料（PDFや画像）と一緒にAIへ渡してください。"
             )
 
-        memo_input = st.text_area(
-            "メモ（決算を見た直後の所感、印象的だった発言など）",
-            key=f"earnings_memo_{selected_ticker}",
-            height=80
-        )
+            col_q1, col_q2 = st.columns(2)
+            with col_q1:
+                quarter_input = st.text_input(
+                    "対象四半期 (例: 2026-4Q)",
+                    key=f"earnings_quarter_{selected_ticker}"
+                )
+            with col_q2:
+                impression_input = st.selectbox(
+                    "投資家の第一印象",
+                    ["ポジティブ", "中立", "ネガティブ"],
+                    index=1,
+                    key=f"earnings_impression_{selected_ticker}"
+                )
 
-        earnings_prompt = EARNINGS_PROMPT_TEMPLATE.format(
-            company_name=company_name or "（銘柄名未登録）",
-            quarter=quarter_input or "（対象四半期を入力してください）",
-            ticker=selected_ticker,
-            impression=impression_input,
-            memo=memo_input or "（特になし）"
-        )
+            memo_input = st.text_area(
+                "メモ（決算を見た直後の所感、印象的だった発言など）",
+                key=f"earnings_memo_{selected_ticker}",
+                height=80
+            )
 
-        st.code(earnings_prompt, language=None)
+            earnings_prompt = EARNINGS_PROMPT_TEMPLATE.format(
+                company_name=company_name or "（銘柄名未登録）",
+                quarter=quarter_input or "（対象四半期を入力してください）",
+                ticker=selected_ticker,
+                impression=impression_input,
+                memo=memo_input or "（特になし）"
+            )
+
+            st.code(earnings_prompt, language=None)
 
         st.divider()
 
