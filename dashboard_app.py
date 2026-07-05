@@ -307,6 +307,24 @@ def sync_reports_from_github():
 # ==========================================
 # Yahoo!ファイナンスから銘柄情報を自動取得
 # ==========================================
+def make_yf_ticker(yf_symbol: str):
+    """
+    yfinance 1.5.x向けのTicker生成ヘルパー。
+    自前のrequests.Sessionは渡さず session=None にすることで、
+    yfinanceが内部でcurl_cffiベースのセッション（ブラウザTLS偽装付き）を
+    自動生成する。これがYahooのBot検出を回避する正しい方法。
+    レート制限対策として、日本語ロケール設定と短いスリープを入れる。
+    """
+    import time as _time
+    try:
+        yf.config.locale.lang = "ja-JP"
+        yf.config.locale.region = "JP"
+    except Exception:
+        pass
+    # 連続アクセス時のレート制限を避けるため、ごく短い間隔を空ける
+    _time.sleep(0.3)
+    return yf.Ticker(yf_symbol)  # session=None → curl_cffi自動使用
+
 def contains_japanese(text) -> bool:
     """文字列にひらがな・カタカナ・漢字が含まれているか判定する"""
     if not text:
@@ -336,30 +354,8 @@ def fetch_stock_info(ticker_code: str):
     # 「7974」のような数字だけのコードには .T（東証）を自動付与
     yf_symbol = code if "." in code else f"{code}.T"
 
-    # レート制限（429）対策：リトライ付きセッションとUser-Agentを設定する
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        )
-    })
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
-    retry = Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount("https://", HTTPAdapter(max_retries=retry))
-
-    # ロケールを日本語に設定することで、Yahoo Finance APIが
-    # displayName（日本語名）を返しやすくなる
     try:
-        yf.config.locale.lang = "ja-JP"
-        yf.config.locale.region = "JP"
-    except Exception:
-        pass
-
-    try:
-        ticker_obj = yf.Ticker(yf_symbol, session=session)
+        ticker_obj = make_yf_ticker(yf_symbol)
 
         # yfinance 1.5.x 以降は ticker.info が429を起こしやすいため、
         # まず軽量な fast_info で市場データを取得し、
@@ -466,12 +462,7 @@ def fetch_revenue_history(ticker_code: str):
     yf_symbol = code if "." in code else f"{code}.T"
 
     try:
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-        session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])))
-        ticker_obj = yf.Ticker(yf_symbol, session=session)
+        ticker_obj = make_yf_ticker(yf_symbol)
         financials = ticker_obj.financials
     except Exception as e:
         return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
@@ -515,12 +506,7 @@ def fetch_next_earnings_date(ticker_code: str):
     yf_symbol = code if "." in code else f"{code}.T"
 
     try:
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-        session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=1.5, status_forcelist=[429, 500, 502, 503, 504])))
-        ticker_obj = yf.Ticker(yf_symbol, session=session)
+        ticker_obj = make_yf_ticker(yf_symbol)
         calendar = ticker_obj.calendar
     except Exception as e:
         return None, f"取得処理でエラーが発生しました（{e}）。インターネット接続をご確認ください。"
@@ -1220,14 +1206,7 @@ with tab3:
             yf_sym = f"{yf_sym}.T"
         with st.spinner("yfinanceから財務データを取得中..."):
             try:
-                _session = requests.Session()
-                _session.headers.update({"User-Agent": "Mozilla/5.0"})
-                from requests.adapters import HTTPAdapter
-                from urllib3.util.retry import Retry
-                _session.mount("https://", HTTPAdapter(
-                    max_retries=Retry(total=3, backoff_factor=1.5,
-                                      status_forcelist=[429, 500, 502, 503, 504])))
-                _t = yf.Ticker(yf_sym, session=_session)
+                _t = make_yf_ticker(yf_sym)
 
                 _bs = _t.get_balance_sheet()
                 _is = _t.get_income_stmt()
