@@ -416,16 +416,21 @@ def fetch_stock_info(ticker_code: str):
                             if not v.empty:
                                 return float(v.iloc[0])
                     return 0
-                cash = get_bs_val(["Cash And Cash Equivalents", "CashAndCashEquivalents",
-                                   "Cash Cash Equivalents And Short Term Investments"])
-                debt = get_bs_val(["Total Debt", "TotalDebt", "Long Term Debt", "LongTermDebt"])
+                # yfinance 1.5.xの正しいラベル（スペースなし）
+                cash = get_bs_val(["CashAndCashEquivalents",
+                                   "CashCashEquivalentsAndShortTermInvestments",
+                                   "CashFinancial", "CashEquivalents"])
+                debt = get_bs_val(["TotalDebt", "LongTermDebt",
+                                   "LongTermDebtAndCapitalLeaseObligation"])
         except Exception:
-            # balance_sheetが取れない場合はget_info()の値で代替
-            if info:
-                cash = info.get("totalCash") or 0
-                debt = info.get("totalDebt") or 0
+            pass
 
-        if market_cap > 0:
+        # balance_sheetで取れなければget_info()の値で代替
+        if (cash == 0 or debt == 0) and info:
+            cash = cash or (info.get("totalCash") or 0)
+            debt = debt or (info.get("totalDebt") or 0)
+
+        if market_cap > 0 and (cash or debt):
             ratio = (cash - debt) / market_cap
             if ratio > 0.1:
                 net_cash_status = "潤沢"
@@ -436,7 +441,9 @@ def fetch_stock_info(ticker_code: str):
     except Exception:
         pass
 
-    if not name:
+    # 何も取得できなかった場合のみエラーにする
+    # 名前が取れなくてもPERや時価総額が取れていれば成功扱い（名前は手入力してもらう）
+    if not name and per is None and market_cap == 0:
         return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
     return {
@@ -990,10 +997,15 @@ with tab2:
 
     # 自動取得した値をクリアするフラグ処理（ウィジェット生成前に実行する必要がある）
     if st.session_state.get("reset_new_form", False):
-        st.session_state.new_ticker = ""
-        for k in ["fetched_name", "fetched_per", "fetched_netcash"]:
-            st.session_state.pop(k, None)
+        for k in ["new_ticker", "reg_name", "reg_per", "reg_cagr",
+                  "reg_forecast", "reg_memo"]:
+            st.session_state[k] = ""
+        st.session_state.reg_netcash = "不明"
         st.session_state.reset_new_form = False
+
+    # reg_netcashのデフォルト値を初期化（selectboxのkey管理のため）
+    if "reg_netcash" not in st.session_state:
+        st.session_state.reg_netcash = "不明"
 
     st.markdown("##### ① ティッカーコードを入力して自動取得（任意）")
     col_t1, col_t2 = st.columns([2, 1])
@@ -1009,13 +1021,30 @@ with tab2:
         if error:
             st.error(f"⚠️ {error}")
         else:
-            st.session_state.fetched_name = data["name"]
-            st.session_state.fetched_per = data["per"]
-            st.session_state.fetched_netcash = data["net_cash"]
+            # フォームのwidget keyを直接更新（value=引数では反映されないため）
+            st.session_state.reg_name = data["name"]
+            st.session_state.reg_per = data["per"]
+            if data["net_cash"] in NETCASH_OPTIONS:
+                st.session_state.reg_netcash = data["net_cash"]
+            st.session_state.fetch_msg = {
+                "name": data["name"], "has_name": bool(data["name"])
+            }
+            st.rerun()
+
+    # 取得結果メッセージ（rerun後に表示）
+    if "fetch_msg" in st.session_state:
+        _fm = st.session_state.fetch_msg
+        if _fm["has_name"]:
             st.success(
-                f"✅「{data['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを下のフォームに反映しています。"
+                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを下のフォームに反映しています。"
                 "セクターと売上関連の項目は自動取得の対象外なので、ご自身で入力してください。"
             )
+        else:
+            st.warning(
+                "⚠️ 銘柄名は取得できませんでしたが、PER・ネットキャッシュは反映しています。"
+                "銘柄名は下のフォームで手入力してください（yfinanceが日本語名を持っていない銘柄です）。"
+            )
+        del st.session_state.fetch_msg
 
     st.caption(
         "※ 銘柄名・PER・ネットキャッシュ（簡易判定）のみ自動取得します。"
@@ -1029,19 +1058,17 @@ with tab2:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True)
-            name = st.text_input("銘柄名", value=st.session_state.get("fetched_name", ""), key="reg_name")
+            st.text_input("ティッカーコード（①で入力した値）", value=ticker, disabled=True, key="reg_ticker_display")
+            name = st.text_input("銘柄名", key="reg_name")
             sector = st.selectbox("セクター", SECTOR_OPTIONS, key="reg_sector")
             status = st.selectbox("ステータス", STATUS_OPTIONS, key="reg_status")
 
         with col2:
             cagr = st.text_input("売上5y CAGR (例: 15.2%) ※自動取得対象外", key="reg_cagr")
             forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外", key="reg_forecast")
-            per = st.text_input("PER (例: 15.5)", value=st.session_state.get("fetched_per", ""), key="reg_per")
-            netcash_default = st.session_state.get("fetched_netcash", "不明")
+            per = st.text_input("PER (例: 15.5)", key="reg_per")
             net_cash = st.selectbox(
                 "ネットキャッシュ", NETCASH_OPTIONS,
-                index=NETCASH_OPTIONS.index(netcash_default) if netcash_default in NETCASH_OPTIONS else 3,
                 key="reg_netcash"
             )
 
