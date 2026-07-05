@@ -1213,28 +1213,45 @@ with tab3:
                 _info = _t.get_info() or {}
 
                 def _get(_df, labels):
+                    """複数のラベル候補から最初に見つかった値を返す（円→百万円）"""
                     if _df is None or _df.empty:
                         return None
                     for lbl in labels:
                         if lbl in _df.index:
                             v = _df.loc[lbl].dropna()
                             if not v.empty:
-                                return float(v.iloc[0]) / 1e6  # 円→百万円
+                                return float(v.iloc[0]) / 1e6
                     return None
 
-                _ca  = _get(_bs, ["Current Assets", "TotalCurrentAssets", "CurrentAssets"])
-                _inv = _get(_bs, ["Inventory", "Inventories"])
-                _inv_sec = _get(_bs, [
-                    "Available For Sale Securities", "Long Term Investments",
-                    "LongTermInvestments", "Other Investments", "InvestmentSecurities"])
-                _liab = _get(_bs, [
-                    "Total Liabilities Net Minority Interest",
-                    "TotalLiabilitiesNetMinorityInterest", "Total Liab"])
-                _eq   = _get(_bs, [
-                    "Stockholders Equity", "StockholdersEquity",
-                    "Total Equity Gross Minority Interest"])
-                _debt = _get(_bs, ["Total Debt", "TotalDebt", "Long Term Debt"])
-                _ebit = _get(_is, ["EBIT", "Ebit", "Operating Income", "OperatingIncome"])
+                def _sum(_df, labels):
+                    """複数ラベルの値を合算する（投資有価証券のように分散している項目用）"""
+                    if _df is None or _df.empty:
+                        return None
+                    total = 0.0
+                    found = False
+                    for lbl in labels:
+                        if lbl in _df.index:
+                            v = _df.loc[lbl].dropna()
+                            if not v.empty:
+                                total += float(v.iloc[0])
+                                found = True
+                    return total / 1e6 if found else None
+
+                # yfinance 1.5.xの実際のラベルはスペースなし（例: CurrentAssets）
+                _ca  = _get(_bs, ["CurrentAssets", "TotalCurrentAssets"])
+                _inv = _get(_bs, ["Inventory", "OtherInventories"])
+                # 投資有価証券は複数科目に分散するため合算する
+                _inv_sec = _sum(_bs, [
+                    "AvailableForSaleSecurities", "LongTermEquityInvestment",
+                    "HeldToMaturitySecurities", "InvestmentsAndAdvances",
+                    "OtherInvestments", "InvestmentinFinancialAssets"])
+                _liab = _get(_bs, ["TotalLiabilitiesNetMinorityInterest"])
+                _eq   = _get(_bs, ["StockholdersEquity", "CommonStockEquity",
+                                   "TotalEquityGrossMinorityInterest"])
+                _debt = _get(_bs, ["TotalDebt", "LongTermDebt",
+                                   "LongTermDebtAndCapitalLeaseObligation"])
+                _ebit = _get(_is, ["EBIT", "OperatingIncome",
+                                   "TotalOperatingIncomeAsReported"])
                 _mcap = (_info.get("marketCap") or 0) / 1e6
 
                 st.session_state.nc_prefill = {
@@ -1242,34 +1259,66 @@ with tab3:
                     "liab": _liab, "eq": _eq, "debt": _debt,
                     "ebit": _ebit, "mcap": _mcap,
                 }
-                got = [k for k, v in st.session_state.nc_prefill.items() if v is not None]
-                st.success(f"✅ 取得できた項目: {', '.join(got)}（単位: 百万円）")
-                st.caption("⚠️ 投資有価証券はyfinanceのデータが実態と乖離することがあります。IR資料で確認してください。")
+                # number_inputのkeyに直接値を書き込む（既存ウィジェットを上書きするため）
+                key_map = {
+                    "nc_ca": _ca, "nc_inv": _inv, "nc_isec": _inv_sec,
+                    "nc_liab": _liab, "nc_mcap": _mcap,
+                    "nc_ebit": _ebit, "nc_eq": _eq, "nc_debt": _debt,
+                }
+                for wkey, wval in key_map.items():
+                    if wval is not None:
+                        st.session_state[wkey] = float(wval)
+
+                labels_jp = {
+                    "ca": "流動資産", "inv": "棚卸資産", "inv_sec": "投資有価証券",
+                    "liab": "負債合計", "eq": "純資産", "debt": "有利子負債",
+                    "ebit": "EBIT", "mcap": "時価総額",
+                }
+                got = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is not None]
+                missing = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is None]
+                st.session_state.nc_fetch_msg = {"got": got, "missing": missing}
+                st.rerun()
             except Exception as e:
                 st.error(f"⚠️ 取得に失敗しました（{e}）")
 
-    pf = st.session_state.get("nc_prefill", {})
+    # 取得結果メッセージ（rerun後に表示）
+    if "nc_fetch_msg" in st.session_state:
+        _msg = st.session_state.nc_fetch_msg
+        if _msg["got"]:
+            st.success(f"✅ 取得できた項目: {', '.join(_msg['got'])}（単位: 百万円）")
+        if _msg["missing"]:
+            st.warning(
+                f"⚠️ 取得できなかった項目: {', '.join(_msg['missing'])}。"
+                "yfinanceにデータがない項目です。IR資料を見て手入力してください。"
+            )
+        st.caption("⚠️ 特に投資有価証券はyfinanceのデータが実態と乖離しやすいので、IR資料で確認することをおすすめします。")
+        del st.session_state.nc_fetch_msg
+
+    # number_inputの初期値をsession_stateで管理（自動取得時に上書きされる）
+    for _k in ["nc_ca", "nc_inv", "nc_isec", "nc_liab", "nc_mcap", "nc_per", "nc_ebit", "nc_eq", "nc_debt"]:
+        if _k not in st.session_state:
+            st.session_state[_k] = 0.0
 
     st.markdown("##### 入力（百万円単位）")
     col1, col2, col3 = st.columns(3)
     with col1:
-        nc_ca   = st.number_input("流動資産",       value=float(pf.get("ca")   or 0), step=1.0, key="nc_ca")
-        nc_inv  = st.number_input("棚卸資産",       value=float(pf.get("inv")  or 0), step=1.0, key="nc_inv")
+        nc_ca   = st.number_input("流動資産",       step=1.0, key="nc_ca")
+        nc_inv  = st.number_input("棚卸資産",       step=1.0, key="nc_inv")
     with col2:
-        nc_isec = st.number_input("投資有価証券",   value=float(pf.get("inv_sec") or 0), step=1.0, key="nc_isec")
-        nc_liab = st.number_input("負債合計",       value=float(pf.get("liab") or 0), step=1.0, key="nc_liab")
+        nc_isec = st.number_input("投資有価証券",   step=1.0, key="nc_isec")
+        nc_liab = st.number_input("負債合計",       step=1.0, key="nc_liab")
     with col3:
-        nc_mcap = st.number_input("時価総額",       value=float(pf.get("mcap") or 0), step=1.0, key="nc_mcap")
-        nc_per  = st.number_input("PER（倍）",     value=0.0, step=0.1, key="nc_per")
+        nc_mcap = st.number_input("時価総額",       step=1.0, key="nc_mcap")
+        nc_per  = st.number_input("PER（倍）",     step=0.1, key="nc_per")
 
     st.markdown("##### ROIC計算用（yfinance自動取得 or 手入力）")
     col4, col5, col6 = st.columns(3)
     with col4:
-        nc_ebit = st.number_input("EBIT（営業利益）",  value=float(pf.get("ebit") or 0), step=1.0, key="nc_ebit")
+        nc_ebit = st.number_input("EBIT（営業利益）",  step=1.0, key="nc_ebit")
     with col5:
-        nc_eq   = st.number_input("純資産",            value=float(pf.get("eq")   or 0), step=1.0, key="nc_eq")
+        nc_eq   = st.number_input("純資産",            step=1.0, key="nc_eq")
     with col6:
-        nc_debt = st.number_input("有利子負債",         value=float(pf.get("debt") or 0), step=1.0, key="nc_debt")
+        nc_debt = st.number_input("有利子負債",         step=1.0, key="nc_debt")
 
     if st.button("🧮 まとめて計算する", type="primary", key="nc_calc"):
         # ネットキャッシュ
