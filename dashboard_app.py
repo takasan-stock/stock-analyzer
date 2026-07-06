@@ -540,6 +540,18 @@ def fetch_next_earnings_date(ticker_code: str):
 
     return next_date, None
 
+@st.cache_data(ttl=3600)  # 1時間キャッシュ（決算日は頻繁に変わらないため）
+def fetch_earnings_calendar(tickers: tuple) -> dict:
+    """
+    全銘柄の次回決算発表予定日を一括取得する。
+    戻り値: {ティッカー: date または None}
+    """
+    result = {}
+    for t in tickers:
+        next_date, _err = fetch_next_earnings_date(t)
+        result[t] = next_date
+    return result
+
 def calc_cagr(start_val, end_val, years):
     """売上などのCAGR（年平均成長率）を計算する"""
     if start_val is None or end_val is None or start_val <= 0 or years is None or years <= 0:
@@ -592,6 +604,17 @@ def fetch_prices_batch(tickers: tuple) -> dict:
 def make_card_html(ticker: str, name: str, per: str, cagr: str,
                    net_cash: str, price=None, change_pct=None, memo: str = "") -> str:
     """銘柄カード1枚分のHTMLを生成する"""
+    # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
+    alert_icon = ""
+    card_border = "#333"
+    if change_pct is not None:
+        if change_pct >= 5:
+            alert_icon = " 🔥"
+            card_border = "#e67e22"
+        elif change_pct <= -5:
+            alert_icon = " 🧊"
+            card_border = "#3498db"
+
     if price is not None:
         color = "#2ecc71" if change_pct >= 0 else "#e74c3c"
         sign  = "+" if change_pct >= 0 else ""
@@ -599,14 +622,14 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
             f'<div style="margin:4px 0">'
             f'<span style="font-size:1.05em;font-weight:bold">¥{price:,.0f}</span>'
             f'<span style="color:{color};font-size:0.82em;margin-left:6px">'
-            f'{sign}{change_pct:.1f}%</span></div>'
+            f'{sign}{change_pct:.1f}%{alert_icon}</span></div>'
         )
     else:
         price_html = '<div style="color:#888;font-size:0.78em;margin:4px 0">株価未取得</div>'
 
     badges = "".join(
         f'<span style="font-size:0.72em;background:#2a2a3e;padding:2px 6px;'
-        f'border-radius:4px;margin-right:4px">{label}</span>'
+        f'border-radius:4px;margin-right:4px">{label} {val}</span>'
         for label, val in [("PER", per), ("CAGR", cagr), ("💰", net_cash)]
         if val
     )
@@ -620,10 +643,10 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
         )
 
     return (
-        f'<div style="background:#1e1e2e;border:1px solid #333;border-radius:8px;'
+        f'<div style="background:#1e1e2e;border:1px solid {card_border};border-radius:8px;'
         f'padding:10px 12px;margin-bottom:8px">'
         f'<div style="font-size:0.72em;color:#888">{ticker}</div>'
-        f'<div style="font-weight:bold;font-size:0.92em;margin:2px 0">{name}</div>'
+        f'<div style="font-weight:bold;font-size:0.92em;margin:2px 0">{name}{alert_icon}</div>'
         f'{price_html}'
         f'<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px">{badges}</div>'
         f'{memo_snippet}'
@@ -879,6 +902,78 @@ with st.sidebar:
     else:
         st.warning("ローカル保存のみ", icon="⚠️")
         st.caption("SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると永続化できます")
+
+# ==========================================
+# 今月決算の銘柄（ダッシュボードトップに表示）
+# ==========================================
+_cal_df = st.session_state.df
+if not _cal_df.empty:
+    with st.expander("📅 決算カレンダー（全銘柄の決算予定日）", expanded=False):
+        col_cal1, col_cal2 = st.columns([3, 1])
+        with col_cal1:
+            st.caption("登録銘柄の次回決算発表予定日を一覧表示します。取得には数十秒かかることがあります（1時間キャッシュ）。")
+        with col_cal2:
+            if st.button("🔄 決算日を更新", key="cal_refresh"):
+                fetch_earnings_calendar.clear()
+                st.rerun()
+
+        if st.button("📅 決算日を取得する", key="cal_fetch", type="primary") or st.session_state.get("cal_loaded"):
+            st.session_state.cal_loaded = True
+            _tickers = tuple(_cal_df["ティッカー"].astype(str).tolist())
+            with st.spinner(f"{len(_tickers)}銘柄の決算日を取得中..."):
+                _calendar = fetch_earnings_calendar(_tickers)
+
+            _today = datetime.date.today()
+            _rows = []
+            for _, _r in _cal_df.iterrows():
+                _t = str(_r["ティッカー"])
+                _d = _calendar.get(_t)
+                if _d:
+                    _days = (_d - _today).days
+                    _rows.append({
+                        "ティッカー": _t, "銘柄名": _r["銘柄名"],
+                        "ステータス": _r["ステータス"],
+                        "決算予定日": _d.strftime("%Y-%m-%d"),
+                        "残り日数": _days,
+                    })
+                else:
+                    _rows.append({
+                        "ティッカー": _t, "銘柄名": _r["銘柄名"],
+                        "ステータス": _r["ステータス"],
+                        "決算予定日": "取得不可", "残り日数": None,
+                    })
+
+            _cal_result = pd.DataFrame(_rows)
+            # 残り日数が近い順にソート（取得不可は最後）
+            _cal_result = _cal_result.sort_values(
+                "残り日数", key=lambda s: s.fillna(9999)
+            )
+
+            # 今月決算・直近2週間の銘柄をハイライト
+            _soon = _cal_result[
+                _cal_result["残り日数"].notna() & (_cal_result["残り日数"] <= 14) & (_cal_result["残り日数"] >= 0)
+            ]
+            if not _soon.empty:
+                st.markdown("##### 🔔 2週間以内に決算発表")
+                for _, _s in _soon.iterrows():
+                    _d_int = int(_s["残り日数"])
+                    if _d_int == 0:
+                        _label = "🔴 本日！"
+                    elif _d_int <= 7:
+                        _label = f"🟠 残り{_d_int}日"
+                    else:
+                        _label = f"🟡 残り{_d_int}日"
+                    st.markdown(
+                        f"{_label}　**{_s['銘柄名']}**（{_s['ティッカー']}）"
+                        f"　{_s['決算予定日']}　`{_s['ステータス']}`"
+                    )
+                st.divider()
+
+            _display = _cal_result.copy()
+            _display["残り日数"] = _display["残り日数"].apply(
+                lambda v: f"{int(v)} 日" if pd.notna(v) else "—"
+            )
+            st.dataframe(_display, hide_index=True, width='stretch')
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析", "📑 個別銘柄レポート"
