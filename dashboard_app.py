@@ -27,7 +27,7 @@ os.makedirs(REPORT_BACKUP_DIR, exist_ok=True)
 COLUMNS = [
     "ティッカー", "銘柄名", "セクター", "ステータス",
     "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ",
-    "投資家メモ", "更新日"
+    "ROIC", "DPUP", "投資家メモ", "更新日"
 ]
 
 SECTOR_OPTIONS = ["IT・通信", "電気機器", "小売", "サービス", "金融", "その他", "未分類"]
@@ -1151,7 +1151,7 @@ with tab2:
     # 自動取得した値をクリアするフラグ処理（ウィジェット生成前に実行する必要がある）
     if st.session_state.get("reset_new_form", False):
         for k in ["new_ticker", "reg_name", "reg_per", "reg_cagr",
-                  "reg_forecast", "reg_memo"]:
+                  "reg_forecast", "reg_memo", "reg_roic", "reg_dpup"]:
             st.session_state[k] = ""
         st.session_state.reg_netcash = "不明"
         st.session_state.reset_new_form = False
@@ -1159,6 +1159,14 @@ with tab2:
     # reg_netcashのデフォルト値を初期化（selectboxのkey管理のため）
     if "reg_netcash" not in st.session_state:
         st.session_state.reg_netcash = "不明"
+
+    # 計算タブから送られた値を反映（pending_* → widget key）
+    if "pending_cagr" in st.session_state:
+        st.session_state.reg_cagr = st.session_state.pop("pending_cagr")
+    if "pending_roic" in st.session_state:
+        st.session_state.reg_roic = st.session_state.pop("pending_roic")
+    if "pending_dpup" in st.session_state:
+        st.session_state.reg_dpup = st.session_state.pop("pending_dpup")
 
     st.markdown("##### ① ティッカーコードを入力して自動取得（任意）")
     col_t1, col_t2 = st.columns([2, 1])
@@ -1217,13 +1225,23 @@ with tab2:
             status = st.selectbox("ステータス", STATUS_OPTIONS, key="reg_status")
 
         with col2:
-            cagr = st.text_input("売上5y CAGR (例: 15.2%) ※自動取得対象外", key="reg_cagr")
+            cagr = st.text_input("売上5y CAGR (例: 15.2%)", key="reg_cagr",
+                                 help="「売上CAGR計算」タブから送れます")
             forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外", key="reg_forecast")
             per = st.text_input("PER (例: 15.5)", key="reg_per")
             net_cash = st.selectbox(
                 "ネットキャッシュ", NETCASH_OPTIONS,
                 key="reg_netcash"
             )
+
+        # ROIC・DPUP欄（計算タブから送れる）
+        col3, col4 = st.columns(2)
+        with col3:
+            roic = st.text_input("ROIC (例: 8.5%)", key="reg_roic",
+                                help="「ネットキャッシュ・DPUP計算」タブから送れます")
+        with col4:
+            dpup = st.text_input("DPUP (例: 1.25)", key="reg_dpup",
+                                help="「ネットキャッシュ・DPUP計算」タブから送れます")
 
         memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)", key="reg_memo")
 
@@ -1250,6 +1268,8 @@ with tab2:
                     "売上予想": forecast,
                     "PER": per,
                     "ネットキャッシュ": net_cash,
+                    "ROIC": roic,
+                    "DPUP": dpup,
                     "投資家メモ": memo,
                     "更新日": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 }])
@@ -1330,8 +1350,11 @@ with tab3:
                         f"実質 約{years_span:.1f}年 CAGR",
                         f"{cagr_value:+.1%}"
                     )
-                    st.caption("👇 この値を「新規銘柄登録」タブの『売上5y CAGR』欄にコピーして使ってください")
-                    st.code(f"{cagr_value*100:.1f}%", language=None)
+                    _cagr_str = f"{cagr_value*100:.1f}%"
+                    st.code(_cagr_str, language=None)
+                    if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_auto"):
+                        st.session_state.pending_cagr = _cagr_str
+                        st.toast(f"✅ 5y CAGR {_cagr_str} を登録フォームに送りました", icon="📤")
                 else:
                     st.error("CAGRを計算できませんでした（データが不正、または期間が0年です）。")
 
@@ -1358,8 +1381,14 @@ with tab3:
                 st.error("⚠️ 売上高は0より大きい値を入力してください。")
             else:
                 st.metric(f"{n_years_manual}年 CAGR", f"{cagr_manual:+.1%}")
-                st.caption("👇 この値を「新規銘柄登録」タブの『売上5y CAGR』欄にコピーして使ってください")
-                st.code(f"{cagr_manual*100:.1f}%", language=None)
+                _cagr_str_m = f"{cagr_manual*100:.1f}%"
+                st.code(_cagr_str_m, language=None)
+                st.session_state._last_manual_cagr = _cagr_str_m
+
+        if st.session_state.get("_last_manual_cagr"):
+            if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_manual"):
+                st.session_state.pending_cagr = st.session_state._last_manual_cagr
+                st.toast(f"✅ 5y CAGR {st.session_state._last_manual_cagr} を登録フォームに送りました", icon="📤")
 
     # ------------------------------------------
     # ネットキャッシュ / NCR / PER(CN) / DPUP 計算
@@ -1554,8 +1583,23 @@ with tab3:
         )
         st.code(summary, language=None)
 
+        # 計算結果を保存（登録フォーム送信用）
+        st.session_state._last_roic = f"{roic_val:.2f}%" if roic_val is not None else ""
+        st.session_state._last_dpup = f"{dpup_val}" if dpup_val is not None else ""
+
         if ncr_val is not None and ncr_val >= 100:
             st.info("ℹ️ NCR ≥ 100% のため PER(CN) は計算されません（ネットキャッシュが時価総額を超えています）。")
+
+    # DPUP・ROICを登録フォームに送るボタン（計算ブロックの外）
+    if st.session_state.get("_last_dpup") or st.session_state.get("_last_roic"):
+        st.caption(
+            f"直近の計算結果 → ROIC: {st.session_state.get('_last_roic') or '—'}, "
+            f"DPUP: {st.session_state.get('_last_dpup') or '—'}"
+        )
+        if st.button("📤 ROIC・DPUPを新規銘柄登録フォームに送る", key="send_dpup"):
+            st.session_state.pending_roic = st.session_state.get("_last_roic", "")
+            st.session_state.pending_dpup = st.session_state.get("_last_dpup", "")
+            st.toast("✅ ROIC・DPUPを登録フォームに送りました", icon="📤")
 
 # ------------------------------------------
 # タブ4：分析
