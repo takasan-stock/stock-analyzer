@@ -602,53 +602,65 @@ def fetch_prices_batch(tickers: tuple) -> dict:
     return result
 
 def make_card_html(ticker: str, name: str, per: str, cagr: str,
-                   net_cash: str, price=None, change_pct=None, memo: str = "") -> str:
-    """銘柄カード1枚分のHTMLを生成する"""
+                   net_cash: str, price=None, change_pct=None, memo: str = "",
+                   accent: str = "#888", roic: str = "", dpup: str = "") -> str:
+    """銘柄カード1枚分のHTMLを生成する（テーマ追従・情報整理版）"""
     # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
     alert_icon = ""
-    card_border = "#333"
     if change_pct is not None:
         if change_pct >= 5:
-            alert_icon = " 🔥"
-            card_border = "#e67e22"
+            alert_icon = "🔥"
         elif change_pct <= -5:
-            alert_icon = " 🧊"
-            card_border = "#3498db"
+            alert_icon = "🧊"
 
+    # 株価と前日比
     if price is not None:
-        color = "#2ecc71" if change_pct >= 0 else "#e74c3c"
-        sign  = "+" if change_pct >= 0 else ""
+        up = change_pct >= 0
+        color = "#16a34a" if up else "#dc2626"
+        sign = "+" if up else ""
+        arrow = "▲" if up else "▼"
         price_html = (
-            f'<div style="margin:4px 0">'
-            f'<span style="font-size:1.05em;font-weight:bold">¥{price:,.0f}</span>'
-            f'<span style="color:{color};font-size:0.82em;margin-left:6px">'
-            f'{sign}{change_pct:.1f}%{alert_icon}</span></div>'
+            f'<div style="display:flex;align-items:baseline;gap:8px;margin:6px 0">'
+            f'<span style="font-size:1.15em;font-weight:700">¥{price:,.0f}</span>'
+            f'<span style="color:{color};font-size:0.8em;font-weight:600">'
+            f'{arrow}{sign}{change_pct:.1f}%</span>'
+            f'<span style="font-size:0.9em">{alert_icon}</span></div>'
         )
     else:
-        price_html = '<div style="color:#888;font-size:0.78em;margin:4px 0">株価未取得</div>'
+        price_html = ('<div style="color:var(--text-color,#888);opacity:0.5;'
+                      'font-size:0.78em;margin:6px 0">株価未取得</div>')
 
+    # 指標バッジ（値があるものだけ）
+    badge_items = [("PER", per), ("CAGR", cagr), ("ROIC", roic),
+                   ("DPUP", dpup), ("💰", net_cash)]
     badges = "".join(
-        f'<span style="font-size:0.72em;background:#2a2a3e;padding:2px 6px;'
-        f'border-radius:4px;margin-right:4px">{label} {val}</span>'
-        for label, val in [("PER", per), ("CAGR", cagr), ("💰", net_cash)]
-        if val
+        f'<span style="font-size:0.7em;background:rgba(128,128,128,0.15);'
+        f'padding:3px 7px;border-radius:5px;white-space:nowrap">'
+        f'<span style="opacity:0.6">{label}</span> <b>{val}</b></span>'
+        for label, val in badge_items
+        if val and str(val).strip() and str(val) != "nan"
     )
 
+    # メモ
     memo_snippet = ""
-    if memo:
-        short = memo[:45] + ("…" if len(memo) > 45 else "")
+    if memo and str(memo).strip() and str(memo) != "nan":
+        short = memo[:50] + ("…" if len(memo) > 50 else "")
         memo_snippet = (
-            f'<div style="font-size:0.73em;color:#888;margin-top:5px;'
-            f'line-height:1.4">{short}</div>'
+            f'<div style="font-size:0.72em;opacity:0.65;margin-top:6px;'
+            f'line-height:1.4;border-top:1px solid rgba(128,128,128,0.15);'
+            f'padding-top:5px">💬 {short}</div>'
         )
 
     return (
-        f'<div style="background:#1e1e2e;border:1px solid {card_border};border-radius:8px;'
-        f'padding:10px 12px;margin-bottom:8px">'
-        f'<div style="font-size:0.72em;color:#888">{ticker}</div>'
-        f'<div style="font-weight:bold;font-size:0.92em;margin:2px 0">{name}{alert_icon}</div>'
+        f'<div style="background:rgba(128,128,128,0.06);'
+        f'border:1px solid rgba(128,128,128,0.2);border-left:3px solid {accent};'
+        f'border-radius:8px;padding:10px 12px;margin-bottom:6px">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+        f'<span style="font-weight:700;font-size:0.95em">{name}</span>'
+        f'<span style="font-size:0.68em;opacity:0.5;font-family:monospace">{ticker}</span>'
+        f'</div>'
         f'{price_html}'
-        f'<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px">{badges}</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">{badges}</div>'
         f'{memo_snippet}'
         f'</div>'
     )
@@ -1003,11 +1015,16 @@ with tab1:
         # カンバンビュー
         # ==========================================
         if view_mode == "🗂️ カンバン":
-            col_kb1, col_kb2 = st.columns([3, 1])
+            col_kb1, col_kb2, col_kb3 = st.columns([2, 1, 1])
             with col_kb1:
-                st.caption("ステータスごとに銘柄カードを表示します。カード下のボタンでステータスを変更できます。")
+                st.caption("💡 各カード下のメニューでステータスを移動できます。前日比±5%超は🔥🧊で表示。")
             with col_kb2:
-                if st.button("🔄 株価を更新", key="kanban_refresh"):
+                kanban_sort = st.selectbox(
+                    "並び順", ["前日比が大きい順", "PER低い順", "銘柄名順"],
+                    key="kanban_sort", label_visibility="collapsed"
+                )
+            with col_kb3:
+                if st.button("🔄 株価を更新", key="kanban_refresh", width='stretch'):
                     fetch_prices_batch.clear()
                     st.rerun()
 
@@ -1016,33 +1033,68 @@ with tab1:
             with st.spinner("株価を取得中..."):
                 prices = fetch_prices_batch(all_tickers)
 
-            # ステータス順に列を並べる
-            kanban_columns = [s for s in STATUS_OPTIONS if s in df["ステータス"].values]
+            STATUS_COLORS = {
+                "監視中":  "#3b82f6",
+                "打診買い": "#f59e0b",
+                "保有中":  "#22c55e",
+                "見送り":  "#94a3b8",
+            }
+            STATUS_EMOJI = {"監視中": "🔵", "打診買い": "🟡", "保有中": "🟢", "見送り": "⚪"}
+
+            # 全ステータスの列を常に表示（空でも列を出して移動先を分かりやすく）
+            kanban_columns = STATUS_OPTIONS
             cols = st.columns(len(kanban_columns))
 
-            STATUS_COLORS = {
-                "監視中":  "#3498db",
-                "打診買い": "#f39c12",
-                "保有中":  "#2ecc71",
-                "見送り":  "#95a5a6",
-            }
+            def _sort_key(row):
+                t = str(row["ティッカー"])
+                p = prices.get(t, {})
+                if kanban_sort == "前日比が大きい順":
+                    return -(p.get("change_pct") if p.get("change_pct") is not None else -999)
+                elif kanban_sort == "PER低い順":
+                    try:
+                        return float(str(row["PER"]).replace("倍", "").strip())
+                    except (ValueError, AttributeError):
+                        return 9999
+                else:
+                    return str(row["銘柄名"])
 
             for col_ui, status in zip(cols, kanban_columns):
                 with col_ui:
                     color = STATUS_COLORS.get(status, "#888")
+                    emoji = STATUS_EMOJI.get(status, "▫️")
                     status_df = df[df["ステータス"] == status]
+
+                    # カラムヘッダー（色付き背景でしっかり見せる）
                     st.markdown(
-                        f'<div style="border-top:3px solid {color};padding-top:6px;'
-                        f'margin-bottom:8px;font-weight:bold;font-size:0.95em">'
-                        f'{status} <span style="color:#888;font-size:0.8em">({len(status_df)})</span></div>',
+                        f'<div style="background:{color};color:white;border-radius:8px 8px 0 0;'
+                        f'padding:8px 12px;font-weight:700;font-size:0.9em;'
+                        f'display:flex;justify-content:space-between;align-items:center">'
+                        f'<span>{emoji} {status}</span>'
+                        f'<span style="background:rgba(255,255,255,0.25);border-radius:10px;'
+                        f'padding:1px 9px;font-size:0.85em">{len(status_df)}</span></div>',
                         unsafe_allow_html=True
                     )
+                    # カラム本体の枠
+                    st.markdown(
+                        f'<div style="border:1px solid rgba(128,128,128,0.15);'
+                        f'border-top:none;border-radius:0 0 8px 8px;padding:8px;'
+                        f'min-height:60px;margin-bottom:8px">', unsafe_allow_html=True
+                    )
 
-                    for _, row in status_df.iterrows():
+                    if status_df.empty:
+                        st.markdown(
+                            '<div style="text-align:center;opacity:0.35;font-size:0.8em;'
+                            'padding:12px 0">（なし）</div>', unsafe_allow_html=True
+                        )
+
+                    sorted_rows = sorted(
+                        [row for _, row in status_df.iterrows()], key=_sort_key
+                    )
+
+                    for row in sorted_rows:
                         ticker = str(row["ティッカー"])
                         p = prices.get(ticker, {})
 
-                        # カードHTML表示
                         st.markdown(
                             make_card_html(
                                 ticker=ticker,
@@ -1053,26 +1105,33 @@ with tab1:
                                 price=p.get("price"),
                                 change_pct=p.get("change_pct"),
                                 memo=str(row["投資家メモ"]),
+                                accent=color,
+                                roic=str(row.get("ROIC", "")),
+                                dpup=str(row.get("DPUP", "")),
                             ),
                             unsafe_allow_html=True
                         )
 
-                        # ステータス変更ボタン（隣のステータスへ移動）
-                        next_statuses = [s for s in STATUS_OPTIONS if s != status]
-                        btn_cols = st.columns(len(next_statuses))
-                        for bc, next_s in zip(btn_cols, next_statuses):
-                            short = next_s[:3]  # ボタンを短く
-                            if bc.button(f"→{short}", key=f"kanban_mv_{ticker}_{next_s}",
-                                         help=f"{next_s}へ移動"):
-                                idx = st.session_state.df[
-                                    st.session_state.df["ティッカー"].astype(str) == ticker
-                                ].index
-                                if len(idx) > 0:
-                                    st.session_state.df.at[idx[0], "ステータス"] = next_s
-                                    st.session_state.df.at[idx[0], "更新日"] = \
-                                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                                    save_data(st.session_state.df)
-                                    st.rerun()
+                        # ステータス移動（ドロップダウン式でスッキリ）
+                        move_to = st.selectbox(
+                            "移動",
+                            ["　移動 ▾"] + [f"{STATUS_EMOJI.get(s)} {s}" for s in STATUS_OPTIONS if s != status],
+                            key=f"kanban_mv_{ticker}",
+                            label_visibility="collapsed"
+                        )
+                        if move_to != "　移動 ▾":
+                            new_status = move_to.split(" ", 1)[1]
+                            idx = st.session_state.df[
+                                st.session_state.df["ティッカー"].astype(str) == ticker
+                            ].index
+                            if len(idx) > 0:
+                                st.session_state.df.at[idx[0], "ステータス"] = new_status
+                                st.session_state.df.at[idx[0], "更新日"] = \
+                                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                                save_data(st.session_state.df)
+                                st.rerun()
+
+                    st.markdown('</div>', unsafe_allow_html=True)
 
         # ==========================================
         # テーブルビュー（従来通り）
