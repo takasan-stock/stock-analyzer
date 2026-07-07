@@ -1481,17 +1481,21 @@ with tab3:
                 _ebit = _get(_is, ["EBIT", "OperatingIncome",
                                    "TotalOperatingIncomeAsReported"])
                 _mcap = (_info.get("marketCap") or 0) / 1e6
+                # PER（trailingPE）を取得
+                _per = _info.get("trailingPE")
+                _per = float(_per) if isinstance(_per, (int, float)) else None
 
                 st.session_state.nc_prefill = {
                     "ca": _ca, "inv": _inv, "inv_sec": _inv_sec,
                     "liab": _liab, "eq": _eq, "debt": _debt,
-                    "ebit": _ebit, "mcap": _mcap,
+                    "ebit": _ebit, "mcap": _mcap, "per": _per,
                 }
                 # number_inputのkeyに直接値を書き込む（既存ウィジェットを上書きするため）
                 key_map = {
                     "nc_ca": _ca, "nc_inv": _inv, "nc_isec": _inv_sec,
                     "nc_liab": _liab, "nc_mcap": _mcap,
                     "nc_ebit": _ebit, "nc_eq": _eq, "nc_debt": _debt,
+                    "nc_per": _per,
                 }
                 for wkey, wval in key_map.items():
                     if wval is not None:
@@ -1500,7 +1504,7 @@ with tab3:
                 labels_jp = {
                     "ca": "流動資産", "inv": "棚卸資産", "inv_sec": "投資有価証券",
                     "liab": "負債合計", "eq": "純資産", "debt": "有利子負債",
-                    "ebit": "EBIT", "mcap": "時価総額",
+                    "ebit": "EBIT", "mcap": "時価総額", "per": "PER",
                 }
                 got = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is not None]
                 missing = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is None]
