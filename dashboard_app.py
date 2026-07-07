@@ -1354,7 +1354,8 @@ with tab3:
                     st.code(_cagr_str, language=None)
                     if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_auto"):
                         st.session_state.pending_cagr = _cagr_str
-                        st.toast(f"✅ 5y CAGR {_cagr_str} を登録フォームに送りました", icon="📤")
+                        st.session_state.cagr_sent_msg = _cagr_str
+                        st.rerun()
                 else:
                     st.error("CAGRを計算できませんでした（データが不正、または期間が0年です）。")
 
@@ -1388,7 +1389,15 @@ with tab3:
         if st.session_state.get("_last_manual_cagr"):
             if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_manual"):
                 st.session_state.pending_cagr = st.session_state._last_manual_cagr
-                st.toast(f"✅ 5y CAGR {st.session_state._last_manual_cagr} を登録フォームに送りました", icon="📤")
+                st.session_state.cagr_sent_msg = st.session_state._last_manual_cagr
+                st.rerun()
+
+    # 送信完了メッセージ（rerun後に表示）
+    if "cagr_sent_msg" in st.session_state:
+        st.success(
+            f"✅ 5y CAGR {st.session_state.pop('cagr_sent_msg')} を「新規銘柄登録」タブに送りました。"
+            "そちらのタブを開いて確認してください。"
+        )
 
     # ------------------------------------------
     # ネットキャッシュ / NCR / PER(CN) / DPUP 計算
@@ -1599,7 +1608,14 @@ with tab3:
         if st.button("📤 ROIC・DPUPを新規銘柄登録フォームに送る", key="send_dpup"):
             st.session_state.pending_roic = st.session_state.get("_last_roic", "")
             st.session_state.pending_dpup = st.session_state.get("_last_dpup", "")
-            st.toast("✅ ROIC・DPUPを登録フォームに送りました", icon="📤")
+            st.session_state.dpup_sent_msg = True
+            st.rerun()
+
+    # 送信完了メッセージ（rerun後に表示）
+    if st.session_state.pop("dpup_sent_msg", False):
+        st.success(
+            "✅ ROIC・DPUPを「新規銘柄登録」タブに送りました。そちらのタブを開いて確認してください。"
+        )
 
 # ------------------------------------------
 # タブ4：分析
