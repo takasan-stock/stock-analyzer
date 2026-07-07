@@ -1312,52 +1312,62 @@ with tab3:
                 df_rev, error = fetch_revenue_history(cagr_ticker)
 
             if error:
+                st.session_state.pop("cagr_auto_result", None)
                 st.error(f"⚠️ {error}")
                 st.info(
                     "Yahoo!ファイナンスの無料データは小型株や新興企業では取得できない場合があります。"
                     "その場合は「手入力で計算」をお試しください。"
                 )
             else:
-                st.markdown("##### 年度別 売上高")
-                st.dataframe(
-                    df_rev[["決算期", "売上高（百万）"]],
-                    hide_index=True, width='stretch'
-                )
-
-                fig_rev = px.bar(
-                    df_rev, x="決算期", y="売上高（百万）",
-                    title="年度別 売上高の推移", text="売上高（百万）"
-                )
-                st.plotly_chart(fig_rev, width='stretch')
-
+                # 計算結果をsession_stateに保存（送信ボタン押下後も保持するため）
                 start_val = df_rev["_raw"].iloc[0]
                 end_val = df_rev["_raw"].iloc[-1]
                 start_date = df_rev["_date"].iloc[0]
                 end_date = df_rev["_date"].iloc[-1]
                 years_span = (end_date - start_date).days / 365.25
-
                 cagr_value = calc_cagr(start_val, end_val, years_span)
 
-                n_periods = len(df_rev)
-                if n_periods < 6:
-                    st.warning(
-                        f"⚠️ Yahoo!ファイナンスから取得できたのは直近 {n_periods} 期分（約{years_span:.1f}年分）のデータです。"
-                        "「5年」CAGRとしてはやや短いので、ラベルや精度には注意してください。"
-                    )
+                st.session_state.cagr_auto_result = {
+                    "df_rev": df_rev[["決算期", "売上高（百万）"]].to_dict("records"),
+                    "years_span": years_span,
+                    "n_periods": len(df_rev),
+                    "cagr_value": cagr_value,
+                }
 
-                if cagr_value is not None:
-                    st.metric(
-                        f"実質 約{years_span:.1f}年 CAGR",
-                        f"{cagr_value:+.1%}"
-                    )
-                    _cagr_str = f"{cagr_value*100:.1f}%"
-                    st.code(_cagr_str, language=None)
-                    if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_auto"):
-                        st.session_state.pending_cagr = _cagr_str
-                        st.session_state.cagr_sent_msg = _cagr_str
-                        st.rerun()
-                else:
-                    st.error("CAGRを計算できませんでした（データが不正、または期間が0年です）。")
+        # 取得結果の表示（session_stateから読むのでボタン押下後も残る）
+        if "cagr_auto_result" in st.session_state:
+            _res = st.session_state.cagr_auto_result
+            _df_rev = pd.DataFrame(_res["df_rev"])
+
+            st.markdown("##### 年度別 売上高")
+            st.dataframe(_df_rev, hide_index=True, width='stretch')
+
+            fig_rev = px.bar(
+                _df_rev, x="決算期", y="売上高（百万）",
+                title="年度別 売上高の推移", text="売上高（百万）"
+            )
+            st.plotly_chart(fig_rev, width='stretch')
+
+            if _res["n_periods"] < 6:
+                st.warning(
+                    f"⚠️ Yahoo!ファイナンスから取得できたのは直近 {_res['n_periods']} 期分"
+                    f"（約{_res['years_span']:.1f}年分）のデータです。"
+                    "「5年」CAGRとしてはやや短いので、ラベルや精度には注意してください。"
+                )
+
+            if _res["cagr_value"] is not None:
+                st.metric(
+                    f"実質 約{_res['years_span']:.1f}年 CAGR",
+                    f"{_res['cagr_value']:+.1%}"
+                )
+                _cagr_str = f"{_res['cagr_value']*100:.1f}%"
+                st.code(_cagr_str, language=None)
+                if st.button("📤 この値を新規銘柄登録フォームに送る", key="send_cagr_auto"):
+                    st.session_state.pending_cagr = _cagr_str
+                    st.session_state.cagr_sent_msg = _cagr_str
+                    st.rerun()
+            else:
+                st.error("CAGRを計算できませんでした（データが不正、または期間が0年です）。")
 
     else:
         st.markdown("##### IR資料・決算短信などの数値を入力してください")
