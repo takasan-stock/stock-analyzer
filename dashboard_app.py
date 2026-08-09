@@ -1743,8 +1743,8 @@ with tab2:
             st.error(f"⚠️ {error}")
         else:
             # フォームのwidget keyを直接更新（value=引数では反映されないため）
+            # ※PERはyfinanceの日本中小型株データが不正確なため自動反映しない（手入力）
             st.session_state.reg_name = data["name"]
-            st.session_state.reg_per = data["per"]
             if data["net_cash"] in NETCASH_OPTIONS:
                 st.session_state.reg_netcash = data["net_cash"]
             # セクターの自動推定結果を反映（未分類以外が推定できた場合のみ）
@@ -1753,8 +1753,7 @@ with tab2:
                 st.session_state.reg_sector = _sec
             st.session_state.fetch_msg = {
                 "name": data["name"], "has_name": bool(data["name"]),
-                "sector": _sec, "per_kind": data.get("per_kind", ""),
-                "per": data.get("per", ""),
+                "sector": _sec,
             }
             st.rerun()
 
@@ -1767,27 +1766,23 @@ with tab2:
         else:
             _sec_note = "セクターは推定できなかったので手動で選んでください。"
 
-        _per_note = ""
-        if _fm.get("per") and _fm.get("per_kind"):
-            _per_note = (
-                f"　なお取得したPER {_fm['per']} は**{_fm['per_kind']}PER**です"
-                f"（株探などの数値と種別が違う場合があります）。"
-            )
-
         if _fm["has_name"]:
             st.success(
-                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを反映しています。{_sec_note}{_per_note}"
+                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・ネットキャッシュを反映しています。{_sec_note}"
+                "　**PERは株探などを見て手入力してください**（yfinanceの日本株PERは不正確なため自動取得しません）。"
             )
         else:
             st.warning(
-                "⚠️ 銘柄名は取得できませんでしたが、PER・ネットキャッシュは反映しています。"
-                f"銘柄名は手入力してください（yfinanceが日本語名を持っていない銘柄です）。{_sec_note}{_per_note}"
+                "⚠️ 銘柄名は取得できませんでしたが、ネットキャッシュは反映しています。"
+                f"銘柄名は手入力してください（yfinanceが日本語名を持っていない銘柄です）。{_sec_note}"
+                "　PERは株探などを見て手入力してください。"
             )
         del st.session_state.fetch_msg
 
     st.caption(
-        "※ 銘柄名・PER・ネットキャッシュ（簡易判定）・セクター（推定）を自動取得します。"
-        "セクターは東証業種への自動推定なので、ズレることがあります。売上CAGR・売上予想は手動入力です。"
+        "※ 銘柄名・ネットキャッシュ（簡易判定）・セクター（推定）を自動取得します。"
+        "PERはyfinanceの日本株データが不正確なため、株探などを見て手入力してください。"
+        "売上CAGR・売上予想も手動入力です。"
     )
 
     st.divider()
@@ -1806,7 +1801,8 @@ with tab2:
             cagr = st.text_input("売上5y CAGR (例: 15.2%)", key="reg_cagr",
                                  help="「売上CAGR計算」タブから送れます")
             forecast = st.text_input("売上予想 (例: 今期+10%成長) ※自動取得対象外", key="reg_forecast")
-            per = st.text_input("PER (例: 15.5)", key="reg_per")
+            per = st.text_input("PER (例: 15.5) ※株探などから手入力", key="reg_per",
+                                help="yfinanceの日本株PERは不正確なため、株探などの予想PERを手入力してください")
             net_cash = st.selectbox(
                 "ネットキャッシュ", NETCASH_OPTIONS,
                 key="reg_netcash"
