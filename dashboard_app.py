@@ -30,7 +30,16 @@ COLUMNS = [
     "ROIC", "DPUP", "投資家メモ", "更新日"
 ]
 
-SECTOR_OPTIONS = ["IT・通信", "電気機器", "小売", "サービス", "金融", "その他", "未分類"]
+SECTOR_OPTIONS = [
+    "未分類",
+    "水産・農林業", "鉱業", "建設業", "食料品", "繊維製品", "パルプ・紙",
+    "化学", "医薬品", "石油・石炭製品", "ゴム製品", "ガラス・土石製品",
+    "鉄鋼", "非鉄金属", "金属製品", "機械", "電気機器", "輸送用機器",
+    "精密機器", "その他製品", "電気・ガス業", "陸運業", "海運業", "空運業",
+    "倉庫・運輸関連業", "情報・通信業", "卸売業", "小売業",
+    "銀行業", "証券・商品先物取引業", "保険業", "その他金融業",
+    "不動産業", "サービス業", "その他"
+]
 STATUS_OPTIONS = ["監視中", "打診買い", "保有中", "見送り"]
 NETCASH_OPTIONS = ["潤沢", "普通", "マイナス", "不明"]
 
@@ -754,6 +763,59 @@ def pick_japanese_name(short_name, long_name) -> str:
             return candidate
     return short_name or long_name or ""
 
+def map_to_tse_sector(yf_sector: str, yf_industry: str) -> str:
+    """
+    yfinanceのsector/industry（英語）を東証33業種に大まかにマッピングする。
+    完全一致は難しいので、キーワードベースで近い業種を推定する。
+    判定できない場合は「未分類」を返す（手動で選び直せる）。
+    """
+    s = (yf_sector or "").lower()
+    i = (yf_industry or "").lower()
+    text = f"{s} {i}"
+
+    # industryの細かいキーワードを優先的にチェック
+    rules = [
+        (["semiconductor", "electronic component", "electronics"], "電気機器"),
+        (["software", "information technology", "internet", "it services",
+          "telecom", "communication"], "情報・通信業"),
+        (["pharmaceutical", "drug", "biotechnology"], "医薬品"),
+        (["bank", "banking"], "銀行業"),
+        (["insurance"], "保険業"),
+        (["capital markets", "asset management", "brokerage", "securities"], "証券・商品先物取引業"),
+        (["credit", "financial"], "その他金融業"),
+        (["real estate", "reit"], "不動産業"),
+        (["auto", "vehicle", "automobile"], "輸送用機器"),
+        (["machinery", "industrial machinery", "tools"], "機械"),
+        (["chemical"], "化学"),
+        (["steel", "iron"], "鉄鋼"),
+        (["metal", "aluminum", "copper"], "非鉄金属"),
+        (["food", "beverage", "grocery stores"], "食料品"),
+        (["retail", "apparel retail", "specialty retail"], "小売業"),
+        (["wholesale", "distribution", "trading", "conglomerate"], "卸売業"),
+        (["construction", "engineering", "building"], "建設業"),
+        (["shipping", "marine"], "海運業"),
+        (["airline", "air"], "空運業"),
+        (["railroad", "trucking", "logistics"], "陸運業"),
+        (["utilities", "electric", "gas utility"], "電気・ガス業"),
+        (["oil", "petroleum", "gas"], "石油・石炭製品"),
+        (["textile", "apparel manufacturing"], "繊維製品"),
+        (["paper"], "パルプ・紙"),
+        (["rubber", "tire"], "ゴム製品"),
+        (["glass", "cement", "ceramic"], "ガラス・土石製品"),
+        (["precision", "medical instrument", "scientific"], "精密機器"),
+        (["mining"], "鉱業"),
+        (["insurance"], "保険業"),
+        (["restaurant", "leisure", "entertainment", "media",
+          "consulting", "staffing", "education"], "サービス業"),
+        (["agricultur", "fishing", "farm"], "水産・農林業"),
+    ]
+
+    for keywords, tse in rules:
+        if any(kw in text for kw in keywords):
+            return tse
+
+    return "未分類"
+
 def fetch_stock_info(ticker_code: str):
     """
     日本株のティッカーコードから、銘柄名・PER・ネットキャッシュの簡易判定を取得する。
@@ -859,10 +921,16 @@ def fetch_stock_info(ticker_code: str):
     if not name and per is None and market_cap == 0:
         return None, f"「{yf_symbol}」の情報が見つかりませんでした。ティッカーコードをご確認ください。"
 
+    # yfinanceのsector/industryを東証業種にマッピング
+    sector_guess = "未分類"
+    if info:
+        sector_guess = map_to_tse_sector(info.get("sector", ""), info.get("industry", ""))
+
     return {
         "name": name,
         "per": per_str,
         "net_cash": net_cash_status,
+        "sector": sector_guess,
     }, None
 
 # ==========================================
@@ -1626,11 +1694,14 @@ with tab2:
                   "reg_forecast", "reg_memo", "reg_roic", "reg_dpup"]:
             st.session_state[k] = ""
         st.session_state.reg_netcash = "不明"
+        st.session_state.reg_sector = "未分類"
         st.session_state.reset_new_form = False
 
-    # reg_netcashのデフォルト値を初期化（selectboxのkey管理のため）
+    # reg_netcash / reg_sectorのデフォルト値を初期化（selectboxのkey管理のため）
     if "reg_netcash" not in st.session_state:
         st.session_state.reg_netcash = "不明"
+    if "reg_sector" not in st.session_state:
+        st.session_state.reg_sector = "未分類"
 
     # 計算タブから送られた値を反映（pending_* → widget key）
     if "pending_cagr" in st.session_state:
@@ -1659,29 +1730,39 @@ with tab2:
             st.session_state.reg_per = data["per"]
             if data["net_cash"] in NETCASH_OPTIONS:
                 st.session_state.reg_netcash = data["net_cash"]
+            # セクターの自動推定結果を反映（未分類以外が推定できた場合のみ）
+            _sec = data.get("sector", "未分類")
+            if _sec in SECTOR_OPTIONS:
+                st.session_state.reg_sector = _sec
             st.session_state.fetch_msg = {
-                "name": data["name"], "has_name": bool(data["name"])
+                "name": data["name"], "has_name": bool(data["name"]),
+                "sector": _sec,
             }
             st.rerun()
 
     # 取得結果メッセージ（rerun後に表示）
     if "fetch_msg" in st.session_state:
         _fm = st.session_state.fetch_msg
+        _sec_note = ""
+        if _fm.get("sector") and _fm["sector"] != "未分類":
+            _sec_note = f"セクターは「{_fm['sector']}」と推定しました（違う場合は選び直してください）。"
+        else:
+            _sec_note = "セクターは推定できなかったので手動で選んでください。"
+
         if _fm["has_name"]:
             st.success(
-                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを下のフォームに反映しています。"
-                "セクターと売上関連の項目は自動取得の対象外なので、ご自身で入力してください。"
+                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを反映しています。{_sec_note}"
             )
         else:
             st.warning(
                 "⚠️ 銘柄名は取得できませんでしたが、PER・ネットキャッシュは反映しています。"
-                "銘柄名は下のフォームで手入力してください（yfinanceが日本語名を持っていない銘柄です）。"
+                f"銘柄名は手入力してください（yfinanceが日本語名を持っていない銘柄です）。{_sec_note}"
             )
         del st.session_state.fetch_msg
 
     st.caption(
-        "※ 銘柄名・PER・ネットキャッシュ（簡易判定）のみ自動取得します。"
-        "セクター分類や売上CAGR・売上予想はWeb上の単純な数値取得では精度が出ないため、手動入力のままにしています。"
+        "※ 銘柄名・PER・ネットキャッシュ（簡易判定）・セクター（推定）を自動取得します。"
+        "セクターは東証業種への自動推定なので、ズレることがあります。売上CAGR・売上予想は手動入力です。"
     )
 
     st.divider()
