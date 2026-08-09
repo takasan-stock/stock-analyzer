@@ -864,14 +864,30 @@ def fetch_stock_info(ticker_code: str):
             else pick_japanese_name(info.get("shortName"), info.get("longName"))
         )
 
-    # PERはget_info()から、取れなければget_valuation_measures()で補完
-    per = info.get("trailingPE") if info else None
+    # PERは予想PER(forwardPE)を優先し、なければ実績PER(trailingPE)を使う
+    # （株探など日本のサイトは予想PERを主に表示するため、そちらに合わせる）
+    per = None
+    per_kind = ""
+    if info:
+        fwd = info.get("forwardPE")
+        trl = info.get("trailingPE")
+        if isinstance(fwd, (int, float)) and fwd > 0:
+            per = fwd
+            per_kind = "予想"
+        elif isinstance(trl, (int, float)) and trl > 0:
+            per = trl
+            per_kind = "実績"
     if per is None:
         try:
             vm = ticker_obj.get_valuation_measures()
-            if vm is not None and not vm.empty and "TrailingPE" in vm.columns:
-                per_val = vm["TrailingPE"].dropna()
-                per = float(per_val.iloc[-1]) if not per_val.empty else None
+            if vm is not None and not vm.empty:
+                for _col, _kind in [("ForwardPE", "予想"), ("TrailingPE", "実績")]:
+                    if _col in vm.columns:
+                        _v = vm[_col].dropna()
+                        if not _v.empty and float(_v.iloc[-1]) > 0:
+                            per = float(_v.iloc[-1])
+                            per_kind = _kind
+                            break
         except Exception:
             pass
     per_str = f"{per:.1f}" if isinstance(per, (int, float)) else ""
@@ -929,6 +945,7 @@ def fetch_stock_info(ticker_code: str):
     return {
         "name": name,
         "per": per_str,
+        "per_kind": per_kind,
         "net_cash": net_cash_status,
         "sector": sector_guess,
     }, None
@@ -1736,7 +1753,8 @@ with tab2:
                 st.session_state.reg_sector = _sec
             st.session_state.fetch_msg = {
                 "name": data["name"], "has_name": bool(data["name"]),
-                "sector": _sec,
+                "sector": _sec, "per_kind": data.get("per_kind", ""),
+                "per": data.get("per", ""),
             }
             st.rerun()
 
@@ -1749,14 +1767,21 @@ with tab2:
         else:
             _sec_note = "セクターは推定できなかったので手動で選んでください。"
 
+        _per_note = ""
+        if _fm.get("per") and _fm.get("per_kind"):
+            _per_note = (
+                f"　なお取得したPER {_fm['per']} は**{_fm['per_kind']}PER**です"
+                f"（株探などの数値と種別が違う場合があります）。"
+            )
+
         if _fm["has_name"]:
             st.success(
-                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを反映しています。{_sec_note}"
+                f"✅「{_fm['name']}」の情報を取得しました。銘柄名・PER・ネットキャッシュを反映しています。{_sec_note}{_per_note}"
             )
         else:
             st.warning(
                 "⚠️ 銘柄名は取得できませんでしたが、PER・ネットキャッシュは反映しています。"
-                f"銘柄名は手入力してください（yfinanceが日本語名を持っていない銘柄です）。{_sec_note}"
+                f"銘柄名は手入力してください（yfinanceが日本語名を持っていない銘柄です）。{_sec_note}{_per_note}"
             )
         del st.session_state.fetch_msg
 
