@@ -2154,6 +2154,13 @@ with tab3:
     with col6:
         nc_debt = st.number_input("有利子負債",         step=1.0, key="nc_debt")
 
+    # 実効税率（NOPAT計算用）。デフォルトは日本の標準実効税率30.6%
+    nc_tax = st.number_input(
+        "実効税率（%）※NOPAT計算用",
+        value=30.6, min_value=0.0, max_value=100.0, step=0.1, key="nc_tax",
+        help="ROIC = NOPAT ÷ 投下資本。NOPAT = EBIT ×（1 − 実効税率）。日本の標準実効税率は約30.6%です。"
+    )
+
     if st.button("🧮 まとめて計算する", type="primary", key="nc_calc"):
         # ネットキャッシュ
         net_cash_val = nc_ca - (nc_inv * 0.3 + nc_isec * 0.7) - nc_liab
@@ -2166,9 +2173,11 @@ with tab3:
         if ncr_val is not None and ncr_val < 100 and nc_per > 0:
             per_cn_val = nc_per * (100 - ncr_val) / 100
 
-        # ROIC
+        # ROIC = NOPAT ÷ 投下資本
+        # NOPAT = EBIT ×（1 − 実効税率）、投下資本 = 純資産 + 有利子負債
         invested_cap = nc_eq + nc_debt
-        roic_val = (nc_ebit / invested_cap * 100) if invested_cap > 0 and nc_ebit > 0 else None
+        nopat = nc_ebit * (1 - nc_tax / 100)
+        roic_val = (nopat / invested_cap * 100) if invested_cap > 0 and nc_ebit > 0 else None
 
         # DPUP
         dpup_val = None
@@ -2184,7 +2193,11 @@ with tab3:
         r3.metric("PER(CN)", f"{per_cn_val:.2f}" if per_cn_val is not None else "—")
 
         r4, r5, r6 = st.columns(3)
-        r4.metric("ROIC（%）", f"{roic_val:.2f}%" if roic_val is not None else "—")
+        r4.metric(
+            "ROIC（%）", f"{roic_val:.2f}%" if roic_val is not None else "—",
+            help=f"NOPAT {nopat:,.0f} 百万円 ÷ 投下資本 {invested_cap:,.0f} 百万円（税率{nc_tax:.1f}%）"
+            if roic_val is not None else None
+        )
         r5.metric("DPUP", f"{dpup_val}" if dpup_val is not None else "—")
         r6.metric("投下資本（百万円）", f"{invested_cap:,.0f}" if invested_cap > 0 else "—")
 
