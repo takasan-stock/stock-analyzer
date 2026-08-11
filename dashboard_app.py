@@ -2055,9 +2055,26 @@ with tab3:
                 _ebit = _get(_is, ["EBIT", "OperatingIncome",
                                    "TotalOperatingIncomeAsReported"])
                 _mcap = (_info.get("marketCap") or 0) / 1e6
-                # PER（trailingPE）を取得
-                _per = _info.get("trailingPE")
-                _per = float(_per) if isinstance(_per, (int, float)) else None
+
+                # PERの決定：新規登録タブで同じティッカーのPERを手入力済みならそれを優先
+                _per = None
+                _per_source = ""
+                _reg_ticker = str(st.session_state.get("new_ticker", "")).strip()
+                _reg_per = str(st.session_state.get("reg_per", "")).strip()
+                # ティッカーが一致（.T の有無を吸収して比較）
+                _nc_code = nc_ticker.strip().replace(".T", "")
+                if _reg_ticker.replace(".T", "") == _nc_code and _reg_per:
+                    try:
+                        _per = float(_reg_per.replace("倍", "").replace("%", "").strip())
+                        _per_source = "manual"
+                    except ValueError:
+                        _per = None
+                # 手入力PERがなければyfinanceのtrailingPEを使う（参考値）
+                if _per is None:
+                    _yf_per = _info.get("trailingPE")
+                    if isinstance(_yf_per, (int, float)):
+                        _per = float(_yf_per)
+                        _per_source = "yfinance"
 
                 st.session_state.nc_prefill = {
                     "ca": _ca, "inv": _inv, "inv_sec": _inv_sec,
@@ -2082,7 +2099,9 @@ with tab3:
                 }
                 got = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is not None]
                 missing = [labels_jp[k] for k, v in st.session_state.nc_prefill.items() if v is None]
-                st.session_state.nc_fetch_msg = {"got": got, "missing": missing}
+                st.session_state.nc_fetch_msg = {
+                    "got": got, "missing": missing, "per_source": _per_source
+                }
                 st.rerun()
             except Exception as e:
                 st.error(f"⚠️ 取得に失敗しました（{e}）")
@@ -2096,6 +2115,15 @@ with tab3:
             st.warning(
                 f"⚠️ 取得できなかった項目: {', '.join(_msg['missing'])}。"
                 "yfinanceにデータがない項目です。IR資料を見て手入力してください。"
+            )
+        # PERの出所を案内
+        _psrc = _msg.get("per_source", "")
+        if _psrc == "manual":
+            st.info("ℹ️ PERは「新規銘柄登録」タブで手入力した値を引き継ぎました。")
+        elif _psrc == "yfinance":
+            st.warning(
+                "⚠️ PERはyfinanceの実績値です（日本株では不正確なことがあります）。"
+                "正確な値は「新規銘柄登録」タブでPERを手入力してから再取得すると引き継がれます。"
             )
         st.caption("⚠️ 特に投資有価証券はyfinanceのデータが実態と乖離しやすいので、IR資料で確認することをおすすめします。")
         del st.session_state.nc_fetch_msg
