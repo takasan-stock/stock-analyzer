@@ -1485,9 +1485,23 @@ if not _cal_df.empty:
             )
             st.dataframe(_display, hide_index=True, width='stretch')
 
+# タブ切り替え位置へのアンカー（「↑上に戻る」ボタンの戻り先）
+st.markdown('<div id="tabs-top"></div>', unsafe_allow_html=True)
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 一覧・編集", "📝 新規銘柄登録", "🧮 売上CAGR計算", "📊 分析", "📑 個別銘柄レポート"
 ])
+
+def back_to_top():
+    """各タブの末尾に置く「↑ タブ選択に戻る」リンク"""
+    st.markdown(
+        '<div style="text-align:center;margin:24px 0 8px">'
+        '<a href="#tabs-top" style="display:inline-block;padding:8px 20px;'
+        'background:rgba(128,128,128,0.12);border:1px solid rgba(128,128,128,0.25);'
+        'border-radius:8px;text-decoration:none;font-size:0.88em;font-weight:600">'
+        '⬆️ タブ選択に戻る</a></div>',
+        unsafe_allow_html=True
+    )
 
 # ------------------------------------------
 # タブ1：一覧表示 ＋ 編集・削除
@@ -1699,6 +1713,8 @@ with tab1:
                     st.session_state.df = load_data()
                     st.rerun()
 
+    back_to_top()
+
 # ------------------------------------------
 # タブ2：新規銘柄登録フォーム
 # ------------------------------------------
@@ -1854,6 +1870,8 @@ with tab2:
                 st.success(f"✅ {ticker} ({name}) を登録しました！")
                 st.session_state.reset_new_form = True
                 st.rerun()
+
+    back_to_top()
 
 # ------------------------------------------
 # タブ3：売上CAGR計算
@@ -2246,6 +2264,8 @@ with tab3:
             "✅ ROIC・DPUPを「新規銘柄登録」タブに送りました。そちらのタブを開いて確認してください。"
         )
 
+    back_to_top()
+
 # ------------------------------------------
 # タブ4：分析
 # ------------------------------------------
@@ -2296,6 +2316,8 @@ with tab4:
                 title="銘柄別 PER"
             )
             st.plotly_chart(fig_per, width='stretch')
+
+    back_to_top()
 
 # ------------------------------------------
 # タブ5：個別銘柄レポート（Markdown）
@@ -2601,6 +2623,7 @@ with tab5:
         else:
             st.info("まだこの銘柄の銘柄レポートは登録されていません。上の「➕ 新しい銘柄レポートを追加」から登録してください。")
 
+        back_to_top()
         st.divider()
 
         # ------------------------------------------
@@ -2689,6 +2712,7 @@ with tab5:
         else:
             st.info("まだこの銘柄の決算分析レポートは登録されていません。上の「➕ 新しい決算分析レポートを追加」から登録してください。")
 
+        back_to_top()
         st.divider()
 
         # ------------------------------------------
@@ -2832,3 +2856,5 @@ with tab5:
             )
         else:
             st.caption("まだ保存されたレポートがありません。")
+
+    back_to_top()
