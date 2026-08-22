@@ -27,7 +27,9 @@ os.makedirs(REPORT_BACKUP_DIR, exist_ok=True)
 COLUMNS = [
     "ティッカー", "銘柄名", "セクター", "ステータス",
     "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ",
-    "ROIC", "DPUP", "投資家メモ", "更新日"
+    "ROIC", "DPUP",
+    "材料発生日", "材料時株価", "材料メモ",
+    "投資家メモ", "更新日"
 ]
 
 SECTOR_OPTIONS = [
@@ -1062,9 +1064,10 @@ def calc_cagr(start_val, end_val, years):
 @st.cache_data(ttl=300)  # 5分キャッシュ
 def fetch_prices_batch(tickers: tuple) -> dict:
     """
-    複数銘柄の現在株価・前日比をyf.download()で一括取得する。
+    複数銘柄の現在株価・前日比・出来高比率をyf.download()で一括取得する。
+    出来高比率＝直近出来高 ÷ 過去20日平均出来高（急増検知用）。
     ttl=300なので5分ごとに自動更新。手動更新は fetch_prices_batch.clear() で。
-    戻り値: {ティッカー: {"price": float, "change_pct": float}}
+    戻り値: {ティッカー: {"price", "change_pct", "vol_ratio", "volume"}}
     """
     if not tickers:
         return {}
@@ -1074,34 +1077,85 @@ def fetch_prices_batch(tickers: tuple) -> dict:
     result = {}
 
     try:
-        data = yf.download(symbols, period="2d", interval="1d",
+        # 出来高の20日平均を取るため、期間を2日→2ヶ月に延長
+        data = yf.download(symbols, period="2mo", interval="1d",
                             auto_adjust=True, progress=False)
         if data.empty:
             return {}
 
         close = data["Close"]
-        if len(symbols) == 1:
+        volume = data["Volume"] if "Volume" in data else None
+        # 単一銘柄の場合、yfinanceのバージョンによってSeriesが返ることがある
+        # 既にDataFrameならそのまま使う（to_frameはSeriesにしかない）
+        if isinstance(close, pd.Series):
             close = close.to_frame(name=symbols[0])
+        if volume is not None and isinstance(volume, pd.Series):
+            volume = volume.to_frame(name=symbols[0])
 
         for symbol, orig in symbol_map.items():
             if symbol not in close.columns:
                 continue
             prices = close[symbol].dropna()
-            if len(prices) >= 1:
-                result[orig] = {
-                    "price": float(prices.iloc[-1]),
-                    "change_pct": float(
-                        (prices.iloc[-1] - prices.iloc[-2]) / prices.iloc[-2] * 100
-                    ) if len(prices) >= 2 else 0.0
-                }
+            if len(prices) < 1:
+                continue
+
+            entry = {
+                "price": float(prices.iloc[-1]),
+                "change_pct": float(
+                    (prices.iloc[-1] - prices.iloc[-2]) / prices.iloc[-2] * 100
+                ) if len(prices) >= 2 else 0.0,
+                "vol_ratio": None,
+                "volume": None,
+            }
+
+            # 出来高比率（直近 ÷ 過去20日平均）
+            if volume is not None and symbol in volume.columns:
+                v = volume[symbol].dropna()
+                if len(v) >= 6:
+                    latest_v = float(v.iloc[-1])
+                    past = v.iloc[:-1].tail(20)
+                    if not past.empty:
+                        avg = float(past.mean())
+                        if avg > 0:
+                            entry["vol_ratio"] = latest_v / avg
+                            entry["volume"] = latest_v
+
+            result[orig] = entry
     except Exception:
         pass
 
     return result
 
+def calc_catalyst_info(catalyst_date_str, catalyst_price_str, current_price):
+    """
+    材料発生日からの経過日数と、材料時株価からの騰落率を計算する。
+    戻り値: (経過日数 or None, 騰落率% or None)
+    """
+    days = None
+    change = None
+
+    if catalyst_date_str and str(catalyst_date_str).strip() not in ("", "nan", "NaT", "None"):
+        try:
+            d = datetime.datetime.strptime(str(catalyst_date_str).strip()[:10], "%Y-%m-%d").date()
+            days = (datetime.date.today() - d).days
+        except ValueError:
+            pass
+
+    if current_price and catalyst_price_str and str(catalyst_price_str).strip() not in ("", "nan", "None"):
+        try:
+            base = float(str(catalyst_price_str).replace(",", "").replace("円", "").strip())
+            if base > 0:
+                change = (current_price - base) / base * 100
+        except ValueError:
+            pass
+
+    return days, change
+
 def make_card_html(ticker: str, name: str, per: str, cagr: str,
                    net_cash: str, price=None, change_pct=None, memo: str = "",
-                   accent: str = "#888", roic: str = "", dpup: str = "") -> str:
+                   accent: str = "#888", roic: str = "", dpup: str = "",
+                   catalyst_days=None, catalyst_change=None, catalyst_memo: str = "",
+                   vol_ratio=None) -> str:
     """銘柄カード1枚分のHTMLを生成する（テーマ追従・情報整理版）"""
     # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
     alert_icon = ""
@@ -1139,6 +1193,23 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
         if val and str(val).strip() and str(val) != "nan"
     )
 
+    # 出来高バッジ（急増時は目立たせる）
+    if vol_ratio is not None:
+        if vol_ratio >= 3:
+            v_bg, v_color, v_icon = "rgba(239,68,68,0.18)", "#ef4444", "🚨"
+        elif vol_ratio >= 2:
+            v_bg, v_color, v_icon = "rgba(245,158,11,0.18)", "#f59e0b", "📊"
+        elif vol_ratio >= 1.5:
+            v_bg, v_color, v_icon = "rgba(59,130,246,0.15)", "#3b82f6", "📈"
+        else:
+            v_bg, v_color, v_icon = "rgba(128,128,128,0.15)", "", "　"
+        _vc = f"color:{v_color};font-weight:700;" if v_color else ""
+        badges += (
+            f'<span style="font-size:0.7em;background:{v_bg};'
+            f'padding:3px 7px;border-radius:5px;white-space:nowrap;{_vc}">'
+            f'{v_icon}出来高 <b>{vol_ratio:.1f}倍</b></span>'
+        )
+
     # メモ
     memo_snippet = ""
     if memo and str(memo).strip() and str(memo) != "nan":
@@ -1147,6 +1218,41 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
             f'<div style="font-size:0.72em;opacity:0.65;margin-top:6px;'
             f'line-height:1.4;border-top:1px solid rgba(128,128,128,0.15);'
             f'padding-top:5px">💬 {short}</div>'
+        )
+
+    # 材料情報バー（発生日からの経過日数・材料時株価からの騰落率）
+    catalyst_html = ""
+    if catalyst_days is not None or catalyst_change is not None:
+        parts = []
+        if catalyst_days is not None:
+            # 鮮度：7日以内=ホット, 30日以内=有効, それ以降=鮮度落ち
+            if catalyst_days <= 7:
+                d_color, d_icon = "#ef4444", "🔴"
+            elif catalyst_days <= 30:
+                d_color, d_icon = "#f59e0b", "🟠"
+            else:
+                d_color, d_icon = "#94a3b8", "⚪"
+            parts.append(
+                f'<span style="color:{d_color};font-weight:600">'
+                f'{d_icon} 材料から{catalyst_days}日</span>'
+            )
+        if catalyst_change is not None:
+            c_up = catalyst_change >= 0
+            c_color = "#16a34a" if c_up else "#dc2626"
+            c_sign = "+" if c_up else ""
+            parts.append(
+                f'<span style="color:{c_color};font-weight:600">'
+                f'材料後 {c_sign}{catalyst_change:.1f}%</span>'
+            )
+        cm = ""
+        if catalyst_memo and str(catalyst_memo).strip() and str(catalyst_memo) != "nan":
+            cm_short = str(catalyst_memo)[:30] + ("…" if len(str(catalyst_memo)) > 30 else "")
+            cm = f'<div style="opacity:0.7;margin-top:2px">📌 {cm_short}</div>'
+        catalyst_html = (
+            f'<div style="font-size:0.72em;margin-top:6px;padding:5px 7px;'
+            f'background:rgba(251,191,36,0.1);border-radius:5px;'
+            f'border-left:2px solid rgba(251,191,36,0.5)">'
+            f'{"　".join(parts)}{cm}</div>'
         )
 
     return (
@@ -1159,6 +1265,7 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
         f'</div>'
         f'{price_html}'
         f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">{badges}</div>'
+        f'{catalyst_html}'
         f'{memo_snippet}'
         f'</div>'
     )
@@ -1529,10 +1636,13 @@ with tab1:
         if view_mode == "🗂️ カンバン":
             col_kb1, col_kb2, col_kb3 = st.columns([2, 1, 1])
             with col_kb1:
-                st.caption("💡 各カード下のメニューでステータスを移動できます。前日比±5%超は🔥🧊で表示。")
+                st.caption(
+                    "💡 前日比±5%超は🔥🧊　出来高は🚨3倍以上 / 📊2倍以上 / 📈1.5倍以上　"
+                    "材料の鮮度は🔴7日以内 / 🟠30日以内 / ⚪それ以降"
+                )
             with col_kb2:
                 kanban_sort = st.selectbox(
-                    "並び順", ["前日比が大きい順", "PER低い順", "銘柄名順"],
+                    "並び順", ["出来高急増順", "材料が新しい順", "前日比が大きい順", "PER低い順", "銘柄名順"],
                     key="kanban_sort", label_visibility="collapsed"
                 )
             with col_kb3:
@@ -1560,7 +1670,15 @@ with tab1:
             def _sort_key(row):
                 t = str(row["ティッカー"])
                 p = prices.get(t, {})
-                if kanban_sort == "前日比が大きい順":
+                if kanban_sort == "出来高急増順":
+                    # 出来高比率が大きい順（未取得は最後）
+                    vr = p.get("vol_ratio")
+                    return -vr if vr is not None else 999
+                elif kanban_sort == "材料が新しい順":
+                    # 材料発生日が新しい順（未設定は最後）
+                    _d, _ = calc_catalyst_info(row.get("材料発生日", ""), "", None)
+                    return _d if _d is not None else 99999
+                elif kanban_sort == "前日比が大きい順":
                     return -(p.get("change_pct") if p.get("change_pct") is not None else -999)
                 elif kanban_sort == "PER低い順":
                     try:
@@ -1607,6 +1725,13 @@ with tab1:
                         ticker = str(row["ティッカー"])
                         p = prices.get(ticker, {})
 
+                        # 材料発生日からの経過日数・材料時株価からの騰落率
+                        _c_days, _c_change = calc_catalyst_info(
+                            row.get("材料発生日", ""),
+                            row.get("材料時株価", ""),
+                            p.get("price")
+                        )
+
                         st.markdown(
                             make_card_html(
                                 ticker=ticker,
@@ -1620,6 +1745,10 @@ with tab1:
                                 accent=color,
                                 roic=str(row.get("ROIC", "")),
                                 dpup=str(row.get("DPUP", "")),
+                                catalyst_days=_c_days,
+                                catalyst_change=_c_change,
+                                catalyst_memo=str(row.get("材料メモ", "")),
+                                vol_ratio=p.get("vol_ratio"),
                             ),
                             unsafe_allow_html=True
                         )
@@ -1724,7 +1853,8 @@ with tab2:
     # 自動取得した値をクリアするフラグ処理（ウィジェット生成前に実行する必要がある）
     if st.session_state.get("reset_new_form", False):
         for k in ["new_ticker", "reg_name", "reg_per", "reg_cagr",
-                  "reg_forecast", "reg_memo", "reg_roic", "reg_dpup"]:
+                  "reg_forecast", "reg_memo", "reg_roic", "reg_dpup",
+                  "reg_catalyst_price", "reg_catalyst_memo"]:
             st.session_state[k] = ""
         st.session_state.reg_netcash = "不明"
         st.session_state.reg_sector = "未分類"
@@ -1833,6 +1963,24 @@ with tab2:
             dpup = st.text_input("DPUP (例: 1.25)", key="reg_dpup",
                                 help="「ネットキャッシュ・DPUP計算」タブから送れます")
 
+        # 材料情報（好決算・好材料が出た日と、その時の株価）
+        st.markdown("###### 📌 材料情報（好決算・好材料の記録）")
+        col5, col6, col7 = st.columns([1, 1, 2])
+        with col5:
+            catalyst_date = st.date_input(
+                "材料発生日", value=None, key="reg_catalyst_date",
+                help="決算発表日や材料が出た日。カンバンで経過日数を表示します"
+            )
+        with col6:
+            catalyst_price = st.text_input(
+                "材料時の株価", key="reg_catalyst_price",
+                help="材料が出た時の株価。ここからの騰落率をカンバンで表示します"
+            )
+        with col7:
+            catalyst_memo = st.text_input(
+                "材料メモ (例: 上方修正、大型受注)", key="reg_catalyst_memo"
+            )
+
         memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)", key="reg_memo")
 
         submitted = st.button("💾 データベースに登録", type="primary", key="reg_submit")
@@ -1860,6 +2008,9 @@ with tab2:
                     "ネットキャッシュ": net_cash,
                     "ROIC": roic,
                     "DPUP": dpup,
+                    "材料発生日": catalyst_date.strftime("%Y-%m-%d") if catalyst_date else "",
+                    "材料時株価": catalyst_price,
+                    "材料メモ": catalyst_memo,
                     "投資家メモ": memo,
                     "更新日": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 }])
