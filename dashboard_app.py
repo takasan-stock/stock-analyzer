@@ -10,6 +10,10 @@ import zipfile
 import re
 import json
 import datetime
+import time
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+from urllib.parse import quote
 
 # ==========================================
 # ページ設定
@@ -725,6 +729,59 @@ def sync_reports_from_github():
     st.session_state.reports_synced = True
     if synced_count > 0:
         st.toast(f"✅ GitHubからレポート {synced_count} 件を同期しました", icon="✅")
+
+# ==========================================
+# 登録銘柄の最新ニュース（Google News RSS）
+# ==========================================
+@st.cache_data(ttl=1800)  # 30分キャッシュ（ニュースは鮮度が大事なので短め）
+def fetch_news_batch(companies: tuple, max_items: int = 5) -> dict:
+    """
+    Google News RSS（会社名で検索）から、銘柄ごとの最新ニュースを一括取得する。
+    companies: ((ティッカー, 銘柄名), ...) のタプル
+    戻り値: {ティッカー: [{"title","link","source","hours_ago"}, ...]}
+    スクレイピングではなく、Googleが公式に提供するRSS配信フィードを利用する。
+    """
+    result = {}
+    for ticker, name in companies:
+        name = (name or "").strip()
+        if not name or name == "nan":
+            result[ticker] = []
+            continue
+        try:
+            query = quote(name)
+            url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            items = []
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                for item in root.findall(".//item")[:max_items]:
+                    title = (item.findtext("title") or "").strip()
+                    link = (item.findtext("link") or "").strip()
+                    pub_date_str = (item.findtext("pubDate") or "").strip()
+                    source_el = item.find("source")
+                    source = source_el.text.strip() if source_el is not None and source_el.text else ""
+
+                    hours_ago = None
+                    date_str = None
+                    if pub_date_str:
+                        try:
+                            dt = parsedate_to_datetime(pub_date_str)
+                            now = datetime.datetime.now(dt.tzinfo) if dt.tzinfo else datetime.datetime.now()
+                            hours_ago = (now - dt).total_seconds() / 3600
+                            date_str = dt.strftime("%Y-%m-%d")
+                        except Exception:
+                            pass
+
+                    items.append({
+                        "title": title, "link": link,
+                        "source": source, "hours_ago": hours_ago,
+                        "date_str": date_str,
+                    })
+            result[ticker] = items
+        except Exception:
+            result[ticker] = []
+        time.sleep(0.15)  # 連続アクセスの間隔を空ける
+    return result
 
 
 
@@ -1451,6 +1508,40 @@ def github_upload_report(file_stem: str, content: str, company_name: str = "", e
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     return gh.write_text(path, content, f"Update report: {file_stem}（{company_name}）- {timestamp}")
 
+def load_entries_smart(ticker: str, kind: str, github_config: dict | None) -> list:
+    """
+    GitHub設定があればGitHubから直接読み込む。
+    なければローカルの reports/ フォルダから読み込む（フォールバック）。
+    GitHub読み込み成功時は、ローカルにも同期してキャッシュとして残す。
+    """
+    if github_config:
+        gh_entries = github_fetch_entries(
+            github_config["token"], github_config["repo"],
+            github_config["branch"], ticker, kind
+        )
+        # 本文をGitHubから取得してローカルにキャッシュ
+        full_entries = []
+        for e in gh_entries:
+            content = github_fetch_content(github_config["token"], e["download_url"])
+            # ローカルにも書き込んで再起動後の一瞬のギャップを埋める
+            local_path = entry_filepath(ticker, kind, e["key"])
+            if content and not os.path.exists(local_path):
+                try:
+                    with open(local_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                except OSError:
+                    pass
+            full_entries.append({
+                "key": e["key"],
+                "content": content,
+                "updated_at": e.get("updated_at", ""),
+                "_sha": e["sha"],
+                "_path": e["path"],
+            })
+        return full_entries
+    else:
+        return load_entries(ticker, kind)
+
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
 if "df" not in st.session_state:
@@ -1519,6 +1610,20 @@ with st.sidebar:
     else:
         st.warning("ローカル保存のみ", icon="⚠️")
         st.caption("SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると永続化できます")
+
+# ==========================================
+# 起動時に全銘柄の最新ニュースを一括取得（Google News RSS、30分キャッシュ）
+# ==========================================
+_news_df = st.session_state.df
+if not _news_df.empty:
+    _news_targets = tuple(
+        (str(r["ティッカー"]), str(r["銘柄名"]))
+        for _, r in _news_df.iterrows()
+    )
+    with st.spinner(f"登録銘柄 {len(_news_targets)}件の最新ニュースを取得中..."):
+        st.session_state.news_batch = fetch_news_batch(_news_targets)
+else:
+    st.session_state.news_batch = {}
 
 # ==========================================
 # 今月決算の銘柄（ダッシュボードトップに表示）
@@ -2493,6 +2598,78 @@ with tab5:
 
         matched_rows = df[df["ティッカー"].astype(str) == selected_ticker]
         selected_row = matched_rows.iloc[0] if not matched_rows.empty else None
+        company_name = selected_row["銘柄名"] if selected_row is not None else ""
+
+        # GitHub連携の設定（レポート・ニュースクリップ関連セクションで共通利用）
+        github_config = get_github_config()
+
+        st.divider()
+
+        # --- 最新ニュース一覧（Google News RSS、起動時に一括取得済み） ---
+        col_n1, col_n2 = st.columns([3, 1])
+        with col_n1:
+            st.markdown("##### 📰 最新ニュース一覧")
+        with col_n2:
+            if st.button("🔄 更新", key=f"news_refresh_{selected_ticker}", help="ニュースキャッシュをクリアして再取得"):
+                fetch_news_batch.clear()
+                st.rerun()
+
+        news_items = st.session_state.get("news_batch", {}).get(selected_ticker, [])
+        if news_items:
+            for _idx, _n in enumerate(news_items):
+                if _n["hours_ago"] is not None:
+                    if _n["hours_ago"] <= 24:
+                        _fresh = f'<span style="color:#ef4444;font-weight:700">🔴 {int(_n["hours_ago"])}時間前</span>'
+                    elif _n["hours_ago"] <= 72:
+                        _fresh = f'<span style="color:#f59e0b;font-weight:600">{int(_n["hours_ago"]/24)}日前</span>'
+                    else:
+                        _fresh = f'<span style="opacity:0.55">{int(_n["hours_ago"]/24)}日前</span>'
+                else:
+                    _fresh = ""
+
+                _col_item, _col_clip = st.columns([6, 1])
+                with _col_item:
+                    st.markdown(
+                        f'<div style="padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.15)">'
+                        f'<a href="{_n["link"]}" target="_blank" style="text-decoration:none;'
+                        f'font-weight:600;font-size:0.92em">{_n["title"]}</a><br>'
+                        f'<span style="font-size:0.78em;opacity:0.7">{_n["source"]}</span>'
+                        f'　{_fresh}</div>',
+                        unsafe_allow_html=True
+                    )
+                with _col_clip:
+                    if st.button("📌 保存", key=f"clip_save_{selected_ticker}_{_idx}",
+                                 help="この記事をニュース・クリップに保存"):
+                        # クリップの日付キー：記事の実際の日付（分からなければ今日の日付）
+                        _date_key = _n.get("date_str") or datetime.date.today().strftime("%Y-%m-%d")
+                        _existing = load_entries_smart(selected_ticker, "news", github_config)
+                        _existing_keys = {e["key"] for e in _existing}
+                        if _date_key in _existing_keys:
+                            _date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+                        _body = (
+                            f"# {_n['title']}\n\n"
+                            f"**ソース:** {_n['source']}\n\n"
+                            f"**URL:** {_n['link']}\n"
+                        )
+                        _content = f"<!-- source: {_n['source']} -->\n\n{_body}"
+
+                        save_entry(selected_ticker, "news", _date_key, _content)
+
+                        if github_config:
+                            _file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{_date_key}"
+                            _gh_ok, _gh_msg = github_upload_report(_file_stem, _content, company_name)
+                            if _gh_ok:
+                                github_fetch_entries.clear()
+                                github_fetch_content.clear()
+
+                        st.toast(f"✅ ニュース・クリップに保存しました（{_date_key}）", icon="📌")
+                        st.rerun()
+        else:
+            st.caption(
+                "ニュースが見つかりませんでした。会社名でGoogle Newsを検索していますが、"
+                "銘柄名の表記や報道量によってはヒットしないことがあります。"
+            )
 
         st.divider()
 
@@ -2563,11 +2740,6 @@ with tab5:
                     st.caption(f"💬 投資家メモ：{selected_row['投資家メモ']}")
 
         st.divider()
-
-        if selected_row is not None:
-            company_name = selected_row["銘柄名"]
-        else:
-            company_name = ""
 
         # --- AI分析用プロンプト（折りたたみ） ---
         with st.expander("🤖 AI分析用プロンプト（ヘッジファンド級・爆弾チェック付き）"):
@@ -2645,8 +2817,7 @@ with tab5:
 
         st.divider()
 
-        # GitHub連携の設定（両レポートセクションで共通利用）
-        github_config = get_github_config()
+        # GitHub連携が未設定の場合の案内（レポートセクション向け）
         if not github_config:
             st.caption(
                 "💡 GitHub連携は未設定です。SecretsにGITHUB_TOKEN / GITHUB_REPOを設定すると、"
@@ -2655,40 +2826,6 @@ with tab5:
 
         # 旧形式（1銘柄1ファイル）が残っていれば、新形式（日付ごとの複数エントリ）に自動移行
         migrate_legacy_report_if_needed(selected_ticker)
-
-        def load_entries_smart(ticker: str, kind: str) -> list:
-            """
-            GitHub設定があればGitHubから直接読み込む。
-            なければローカルの reports/ フォルダから読み込む（フォールバック）。
-            GitHub読み込み成功時は、ローカルにも同期してキャッシュとして残す。
-            """
-            if github_config:
-                gh_entries = github_fetch_entries(
-                    github_config["token"], github_config["repo"],
-                    github_config["branch"], ticker, kind
-                )
-                # 本文をGitHubから取得してローカルにキャッシュ
-                full_entries = []
-                for e in gh_entries:
-                    content = github_fetch_content(github_config["token"], e["download_url"])
-                    # ローカルにも書き込んで再起動後の一瞬のギャップを埋める
-                    local_path = entry_filepath(ticker, kind, e["key"])
-                    if content and not os.path.exists(local_path):
-                        try:
-                            with open(local_path, "w", encoding="utf-8") as f:
-                                f.write(content)
-                        except OSError:
-                            pass
-                    full_entries.append({
-                        "key": e["key"],
-                        "content": content,
-                        "updated_at": e.get("updated_at", ""),
-                        "_sha": e["sha"],
-                        "_path": e["path"],
-                    })
-                return full_entries
-            else:
-                return load_entries(ticker, kind)
 
         # ------------------------------------------
         # 銘柄分析レポート（日付ごと・複数エントリ・折りたたみ）
@@ -2699,7 +2836,7 @@ with tab5:
             "後から見返して『あの時はこう思っていたが…』を振り返るのに使ってください。"
         )
 
-        analysis_entries = load_entries_smart(selected_ticker, "analysis")
+        analysis_entries = load_entries_smart(selected_ticker, "analysis", github_config)
 
         with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
             new_analysis_date = st.date_input(
@@ -2785,7 +2922,7 @@ with tab5:
             "決算分析プロンプトの結果（進捗率分析・上方修正予測など）を、四半期ごとに分けて記録できます。"
         )
 
-        earnings_entries = load_entries_smart(selected_ticker, "earnings")
+        earnings_entries = load_entries_smart(selected_ticker, "earnings", github_config)
 
         with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
             new_earnings_quarter = st.text_input(
@@ -2875,7 +3012,7 @@ with tab5:
             "1記事=1エントリとして日付ごとに蓄積されます。"
         )
 
-        news_entries = load_entries_smart(selected_ticker, "news")
+        news_entries = load_entries_smart(selected_ticker, "news", github_config)
 
         with st.expander("➕ 新しいニュースを追加", expanded=(len(news_entries) == 0)):
             col_n1, col_n2 = st.columns([1, 1])
