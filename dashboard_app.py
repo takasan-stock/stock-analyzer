@@ -33,6 +33,7 @@ COLUMNS = [
     "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ",
     "ROIC", "DPUP",
     "材料発生日", "材料時株価", "材料メモ",
+    "目標株価", "損切りライン",
     "投資家メモ", "更新日"
 ]
 
@@ -1223,11 +1224,113 @@ def calc_catalyst_info(catalyst_date_str, catalyst_price_str, current_price):
 
     return days, change
 
+def calc_target_gap(current_price, target_str, stop_str):
+    """
+    目標株価・損切りラインと現在株価の差を計算する。
+    戻り値: (目標までの騰落率% or None, 損切りまでの騰落率% or None)
+    """
+    def _parse_price(s):
+        if not s or str(s).strip() in ("", "nan", "None"):
+            return None
+        try:
+            return float(str(s).replace(",", "").replace("円", "").strip())
+        except ValueError:
+            return None
+
+    target_gap = None
+    stop_gap = None
+
+    target = _parse_price(target_str)
+    if target is not None and current_price:
+        target_gap = (target - current_price) / current_price * 100
+
+    stop = _parse_price(stop_str)
+    if stop is not None and current_price:
+        stop_gap = (stop - current_price) / current_price * 100
+
+    return target_gap, stop_gap
+
+def build_daily_summary_md(df, news_batch: dict, prices: dict) -> str:
+    """
+    登録銘柄全体の「本日のサマリー」をMarkdownとして生成する。
+    直近24時間のニュース・出来高急増・大きな値動きをまとめる。
+    Obsidianの日誌にそのまま貼れる形式。
+    """
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    lines = [f"# 本日のサマリー（{today_str}）", ""]
+
+    rows = [
+        {"ticker": str(r["ティッカー"]), "name": str(r["銘柄名"]), "status": str(r["ステータス"])}
+        for _, r in df.iterrows()
+    ]
+
+    # 1. 直近24時間のニュース
+    news_hits = []
+    for r in rows:
+        items = news_batch.get(r["ticker"], [])
+        fresh = [n for n in items if n.get("hours_ago") is not None and n["hours_ago"] <= 24]
+        if fresh:
+            news_hits.append((r, fresh))
+
+    if news_hits:
+        lines.append("## 📰 直近24時間のニュース")
+        lines.append("")
+        for r, items in news_hits:
+            lines.append(f"### {r['name']}（{r['ticker']}）　`{r['status']}`")
+            for n in items:
+                lines.append(f"- [{n['title']}]({n['link']})　{n.get('source', '')}")
+            lines.append("")
+
+    # 2. 出来高急増銘柄（1.5倍以上）
+    vol_hits = []
+    for r in rows:
+        p = prices.get(r["ticker"], {})
+        vr = p.get("vol_ratio")
+        if vr and vr >= 1.5:
+            vol_hits.append((r, p))
+
+    if vol_hits:
+        vol_hits.sort(key=lambda x: -x[1]["vol_ratio"])
+        lines.append("## 📊 出来高急増銘柄")
+        lines.append("")
+        for r, p in vol_hits:
+            lines.append(
+                f"- **{r['name']}**（{r['ticker']}）出来高 {p['vol_ratio']:.1f}倍　"
+                f"株価 ¥{p['price']:,.0f}（{p['change_pct']:+.1f}%）"
+            )
+        lines.append("")
+
+    # 3. 値動きが大きい銘柄（±3%以上）
+    movers = [
+        (r, prices.get(r["ticker"], {})) for r in rows
+        if prices.get(r["ticker"], {}).get("change_pct") is not None
+    ]
+    movers.sort(key=lambda x: -abs(x[1]["change_pct"]))
+    big_movers = [m for m in movers if abs(m[1]["change_pct"]) >= 3]
+
+    if big_movers:
+        lines.append("## 📈 値動きが大きい銘柄（±3%以上）")
+        lines.append("")
+        for r, p in big_movers:
+            icon = "🔥" if p["change_pct"] >= 5 else ("🧊" if p["change_pct"] <= -5 else "")
+            lines.append(f"- {icon}**{r['name']}**（{r['ticker']}）¥{p['price']:,.0f}（{p['change_pct']:+.1f}%）")
+        lines.append("")
+
+    if not news_hits and not vol_hits and not big_movers:
+        lines.append("本日は特筆すべき動きのある銘柄はありませんでした。")
+        lines.append("")
+
+    lines.append("---")
+    lines.append(f"*銘柄管理ダッシュボードより自動生成（{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}）*")
+
+    return "\n".join(lines)
+
 def make_card_html(ticker: str, name: str, per: str, cagr: str,
                    net_cash: str, price=None, change_pct=None, memo: str = "",
                    accent: str = "#888", roic: str = "", dpup: str = "",
                    catalyst_days=None, catalyst_change=None, catalyst_memo: str = "",
-                   vol_ratio=None, news_count: int = 0) -> str:
+                   vol_ratio=None, news_count: int = 0,
+                   target_gap=None, stop_gap=None) -> str:
     """銘柄カード1枚分のHTMLを生成する（テーマ追従・情報整理版）"""
     # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
     alert_icon = ""
@@ -1336,6 +1439,33 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
             f'font-weight:700;vertical-align:middle">NEW {news_count}</span>'
         )
 
+    # 目標株価・損切りラインまでの距離バー
+    target_html = ""
+    if target_gap is not None or stop_gap is not None:
+        _parts = []
+        if target_gap is not None:
+            _t_color = "#16a34a" if target_gap >= 0 else "#94a3b8"
+            _t_sign = "+" if target_gap >= 0 else ""
+            _parts.append(
+                f'<span style="color:{_t_color};font-weight:600">'
+                f'🎯目標まで {_t_sign}{target_gap:.1f}%</span>'
+            )
+        if stop_gap is not None:
+            # 損切りラインに5%以内まで近づいたら赤で警告
+            _s_color = "#dc2626" if stop_gap <= 5 else "#f59e0b"
+            _s_sign = "+" if stop_gap >= 0 else ""
+            _s_icon = "🚨" if stop_gap <= 5 else "🛑"
+            _parts.append(
+                f'<span style="color:{_s_color};font-weight:600">'
+                f'{_s_icon}損切りまで {_s_sign}{stop_gap:.1f}%</span>'
+            )
+        target_html = (
+            f'<div style="font-size:0.72em;margin-top:5px;padding:5px 7px;'
+            f'background:rgba(99,102,241,0.08);border-radius:5px;'
+            f'border-left:2px solid rgba(99,102,241,0.4)">'
+            f'{"　".join(_parts)}</div>'
+        )
+
     return (
         f'<div style="background:rgba(128,128,128,0.06);'
         f'border:1px solid rgba(128,128,128,0.2);border-left:3px solid {accent};'
@@ -1347,6 +1477,7 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
         f'{price_html}'
         f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">{badges}</div>'
         f'{catalyst_html}'
+        f'{target_html}'
         f'{memo_snippet}'
         f'</div>'
     )
@@ -1758,6 +1889,32 @@ with tab1:
         )
 
         # ==========================================
+        # 本日のサマリー出力（ニュース・出来高急増・値動きをMarkdownでまとめる）
+        # ==========================================
+        col_sum1, col_sum2 = st.columns([3, 1])
+        with col_sum1:
+            st.caption("📝 本日のニュース・出来高急増・値動きをまとめてMarkdownで書き出せます（Obsidianの日誌にそのまま貼れます）。")
+        with col_sum2:
+            if st.button("📝 本日のサマリーを作成", key="daily_summary_btn", width='stretch'):
+                _all_tickers = tuple(df["ティッカー"].astype(str).tolist())
+                with st.spinner("サマリーを作成中..."):
+                    _sum_prices = fetch_prices_batch(_all_tickers)
+                    st.session_state.daily_summary_md = build_daily_summary_md(
+                        df, st.session_state.get("news_batch", {}), _sum_prices
+                    )
+
+        if "daily_summary_md" in st.session_state:
+            with st.expander("📝 本日のサマリー（プレビュー）", expanded=True):
+                st.markdown(st.session_state.daily_summary_md)
+                st.download_button(
+                    "⬇️ Markdownをダウンロード",
+                    data=st.session_state.daily_summary_md.encode("utf-8"),
+                    file_name=f"daily_summary_{datetime.date.today()}.md",
+                    mime="text/markdown",
+                    key="daily_summary_download"
+                )
+
+        # ==========================================
         # 本日ニュースが出た銘柄（速報サマリー）
         # ==========================================
         _nb = st.session_state.get("news_batch", {})
@@ -1900,6 +2057,12 @@ with tab1:
                             row.get("材料時株価", ""),
                             p.get("price")
                         )
+                        # 目標株価・損切りラインまでの距離
+                        _t_gap, _s_gap = calc_target_gap(
+                            p.get("price"),
+                            row.get("目標株価", ""),
+                            row.get("損切りライン", "")
+                        )
 
                         st.markdown(
                             make_card_html(
@@ -1921,6 +2084,8 @@ with tab1:
                                 news_count=count_fresh_news(
                                     st.session_state.get("news_batch", {}).get(ticker, [])
                                 ),
+                                target_gap=_t_gap,
+                                stop_gap=_s_gap,
                             ),
                             unsafe_allow_html=True
                         )
@@ -2038,7 +2203,8 @@ with tab2:
     if st.session_state.get("reset_new_form", False):
         for k in ["new_ticker", "reg_name", "reg_per", "reg_cagr",
                   "reg_forecast", "reg_memo", "reg_roic", "reg_dpup",
-                  "reg_catalyst_price", "reg_catalyst_memo"]:
+                  "reg_catalyst_price", "reg_catalyst_memo",
+                  "reg_target_price", "reg_stop_price"]:
             st.session_state[k] = ""
         st.session_state.reg_netcash = "不明"
         st.session_state.reg_sector = "未分類"
@@ -2165,6 +2331,20 @@ with tab2:
                 "材料メモ (例: 上方修正、大型受注)", key="reg_catalyst_memo"
             )
 
+        # 目標株価・損切りライン（トレードの執行判断用）
+        st.markdown("###### 🎯 目標株価・損切りライン")
+        col8, col9 = st.columns(2)
+        with col8:
+            target_price = st.text_input(
+                "目標株価", key="reg_target_price",
+                help="ここに到達したら利確を検討する株価。カンバンで現在株価との差を表示します"
+            )
+        with col9:
+            stop_price = st.text_input(
+                "損切りライン", key="reg_stop_price",
+                help="ここに達したら損切りを検討する株価。5%以内に近づくとカンバンで警告表示します"
+            )
+
         memo = st.text_area("投資家メモ (決算の所感、チャートの形状、カタリストなど)", key="reg_memo")
 
         submitted = st.button("💾 データベースに登録", type="primary", key="reg_submit")
@@ -2195,6 +2375,8 @@ with tab2:
                     "材料発生日": catalyst_date.strftime("%Y-%m-%d") if catalyst_date else "",
                     "材料時株価": catalyst_price,
                     "材料メモ": catalyst_memo,
+                    "目標株価": target_price,
+                    "損切りライン": stop_price,
                     "投資家メモ": memo,
                     "更新日": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 }])
