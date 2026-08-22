@@ -783,6 +783,21 @@ def fetch_news_batch(companies: tuple, max_items: int = 5) -> dict:
         time.sleep(0.15)  # 連続アクセスの間隔を空ける
     return result
 
+def count_fresh_news(news_items: list, hours: int = 24) -> int:
+    """指定時間以内（デフォルト24時間）のニュース件数を数える"""
+    if not news_items:
+        return 0
+    return sum(
+        1 for n in news_items
+        if n.get("hours_ago") is not None and n["hours_ago"] <= hours
+    )
+
+def latest_news_title(news_items: list) -> str:
+    """最新ニュースのタイトルを返す（なければ空文字）"""
+    if not news_items:
+        return ""
+    return news_items[0].get("title", "")
+
 
 
 # ==========================================
@@ -1212,7 +1227,7 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
                    net_cash: str, price=None, change_pct=None, memo: str = "",
                    accent: str = "#888", roic: str = "", dpup: str = "",
                    catalyst_days=None, catalyst_change=None, catalyst_memo: str = "",
-                   vol_ratio=None) -> str:
+                   vol_ratio=None, news_count: int = 0) -> str:
     """銘柄カード1枚分のHTMLを生成する（テーマ追従・情報整理版）"""
     # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
     alert_icon = ""
@@ -1312,12 +1327,21 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
             f'{"　".join(parts)}{cm}</div>'
         )
 
+    # 直近24時間のニュースバッジ
+    news_badge = ""
+    if news_count > 0:
+        news_badge = (
+            f'<span style="background:#ef4444;color:white;font-size:0.62em;'
+            f'padding:1px 6px;border-radius:8px;margin-left:5px;'
+            f'font-weight:700;vertical-align:middle">NEW {news_count}</span>'
+        )
+
     return (
         f'<div style="background:rgba(128,128,128,0.06);'
         f'border:1px solid rgba(128,128,128,0.2);border-left:3px solid {accent};'
         f'border-radius:8px;padding:10px 12px;margin-bottom:6px">'
         f'<div style="display:flex;justify-content:space-between;align-items:center">'
-        f'<span style="font-weight:700;font-size:0.95em">{name}</span>'
+        f'<span style="font-weight:700;font-size:0.95em">{name}{news_badge}</span>'
         f'<span style="font-size:0.68em;opacity:0.5;font-family:monospace">{ticker}</span>'
         f'</div>'
         f'{price_html}'
@@ -1733,6 +1757,46 @@ with tab1:
             key="view_mode"
         )
 
+        # ==========================================
+        # 本日ニュースが出た銘柄（速報サマリー）
+        # ==========================================
+        _nb = st.session_state.get("news_batch", {})
+        _today_news = []
+        for _, _r in df.iterrows():
+            _t = str(_r["ティッカー"])
+            _items = _nb.get(_t, [])
+            _cnt = count_fresh_news(_items, hours=24)
+            if _cnt > 0:
+                _today_news.append({
+                    "ticker": _t,
+                    "name": str(_r["銘柄名"]),
+                    "status": str(_r["ステータス"]),
+                    "count": _cnt,
+                    "title": latest_news_title(_items),
+                    "link": _items[0].get("link", "") if _items else "",
+                })
+
+        if _today_news:
+            _today_news.sort(key=lambda x: -x["count"])
+            with st.expander(
+                f"📰 直近24時間にニュースが出た銘柄（{len(_today_news)}銘柄）", expanded=True
+            ):
+                for _tn in _today_news:
+                    st.markdown(
+                        f'<div style="padding:6px 0;border-bottom:1px solid rgba(128,128,128,0.12)">'
+                        f'<span style="background:#ef4444;color:white;font-size:0.7em;'
+                        f'padding:2px 7px;border-radius:9px;font-weight:700">NEW {_tn["count"]}</span>'
+                        f'　<b style="font-size:0.92em">{_tn["name"]}</b>'
+                        f'<span style="font-size:0.72em;opacity:0.5;font-family:monospace">'
+                        f'　{_tn["ticker"]}</span>'
+                        f'<span style="font-size:0.72em;opacity:0.6">　{_tn["status"]}</span><br>'
+                        f'<a href="{_tn["link"]}" target="_blank" '
+                        f'style="font-size:0.82em;text-decoration:none;opacity:0.85">'
+                        f'{_tn["title"]}</a></div>',
+                        unsafe_allow_html=True
+                    )
+                st.caption("💡 詳しいニュースは「📑 個別銘柄レポート」タブで銘柄を選ぶと一覧で見られます。")
+
         st.divider()
 
         # ==========================================
@@ -1854,6 +1918,9 @@ with tab1:
                                 catalyst_change=_c_change,
                                 catalyst_memo=str(row.get("材料メモ", "")),
                                 vol_ratio=p.get("vol_ratio"),
+                                news_count=count_fresh_news(
+                                    st.session_state.get("news_batch", {}).get(ticker, [])
+                                ),
                             ),
                             unsafe_allow_html=True
                         )
@@ -1903,7 +1970,19 @@ with tab1:
                 )
                 view_df = view_df[mask]
 
-            st.dataframe(view_df, width='stretch', hide_index=True)
+            # 直近24時間のニュース件数を先頭列として追加（閲覧用のみ、CSVには保存しない）
+            _nb_t = st.session_state.get("news_batch", {})
+            _display_df = view_df.copy()
+            _display_df.insert(
+                0, "📰",
+                [
+                    ("🔴" + str(count_fresh_news(_nb_t.get(str(t), []))))
+                    if count_fresh_news(_nb_t.get(str(t), [])) > 0 else ""
+                    for t in view_df["ティッカー"]
+                ]
+            )
+            st.dataframe(_display_df, width='stretch', hide_index=True)
+            st.caption("💡 📰列は直近24時間のニュース件数です（🔴の数字が件数）。")
 
             st.divider()
 
