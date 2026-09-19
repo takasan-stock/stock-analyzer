@@ -63,14 +63,45 @@ def load_detail_price(ticker: str) -> pd.DataFrame:
 
 
 def load_watchlist_codes() -> list[str]:
+    """Load portfolio tickers even when this Streamlit page is opened directly."""
     path = "portfolio_data.csv"
+    config = _github_history_config()
+
+    # Multipage pages can be opened before dashboard_app.py synchronizes the CSV.
+    # In that case, fetch the same persistent portfolio file directly from GitHub.
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{path}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(content).decode("utf-8-sig")
+                df = pd.read_csv(io.StringIO(text), dtype=str)
+                if "ティッカー" in df.columns:
+                    return [
+                        normalize_ticker(x)
+                        for x in df["ティッカー"].dropna().tolist()
+                        if normalize_ticker(x)
+                    ]
+        except Exception:
+            pass
+
     if not os.path.exists(path):
         return []
     try:
         df = pd.read_csv(path, dtype=str)
         if "ティッカー" not in df.columns:
             return []
-        return [normalize_ticker(x) for x in df["ティッカー"].dropna().tolist() if normalize_ticker(x)]
+        return [
+            normalize_ticker(x)
+            for x in df["ティッカー"].dropna().tolist()
+            if normalize_ticker(x)
+        ]
     except Exception:
         return []
 
