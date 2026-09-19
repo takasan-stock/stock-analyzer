@@ -1100,6 +1100,228 @@ def summarize_backtest(backtest: pd.DataFrame, group_col: str = "phase") -> pd.D
     ).reset_index(drop=True)
 
 
+
+def _condition_stats(df: pd.DataFrame, return_col: str) -> dict:
+    """Compact outcome statistics for one threshold condition."""
+    s = pd.to_numeric(df.get(return_col), errors="coerce").dropna()
+    mfe = pd.to_numeric(df.get("mfe_10d"), errors="coerce").dropna()
+    mae = pd.to_numeric(df.get("mae_10d"), errors="coerce").dropna()
+    if s.empty:
+        return {
+            "n": 0, "win": None, "avg": None, "median": None,
+            "mfe": None, "mae": None,
+        }
+    return {
+        "n": int(len(s)),
+        "win": float((s > 0).mean() * 100.0),
+        "avg": float(s.mean()),
+        "median": float(s.median()),
+        "mfe": float(mfe.mean()) if not mfe.empty else None,
+        "mae": float(mae.mean()) if not mae.empty else None,
+    }
+
+
+def optimize_short_cover_thresholds(
+    backtest: pd.DataFrame,
+    horizon: int = 5,
+    train_fraction: float = 0.65,
+    min_train_signals: int = 8,
+    min_test_signals: int = 4,
+    top_train_candidates: int = 30,
+) -> pd.DataFrame:
+    """Search robust score thresholds with chronological train/holdout validation.
+
+    Workflow:
+    1. Split unique signal dates chronologically.
+    2. Search threshold combinations on the earlier training period only.
+    3. Keep only the best training candidates.
+    4. Evaluate those candidates on the later holdout period.
+
+    This deliberately avoids choosing thresholds from the entire dataset at once.
+    """
+    columns = [
+        "cover_min", "ignition_min", "long_min", "pressure_min", "confidence_min",
+        "train_signals", "train_win", "train_avg", "train_median",
+        "test_signals", "test_win", "test_avg", "test_median",
+        "test_mfe", "test_mae", "train_score", "stability_score",
+        "robustness", "train_start", "train_end", "test_start", "test_end",
+    ]
+    if backtest is None or backtest.empty:
+        return pd.DataFrame(columns=columns)
+
+    horizon = int(horizon)
+    if horizon not in (1, 3, 5, 10):
+        horizon = 5
+    return_col = f"ret_{horizon}d"
+    if return_col not in backtest.columns:
+        return pd.DataFrame(columns=columns)
+
+    bt = backtest.copy()
+    bt["signal_date"] = pd.to_datetime(bt["signal_date"], errors="coerce").dt.normalize()
+    bt = bt.dropna(subset=["signal_date", return_col]).sort_values("signal_date")
+    if bt.empty:
+        return pd.DataFrame(columns=columns)
+
+    unique_dates = sorted(bt["signal_date"].dropna().unique())
+    if len(unique_dates) < 8:
+        return pd.DataFrame(columns=columns)
+
+    split_idx = int(len(unique_dates) * float(train_fraction))
+    split_idx = max(4, min(len(unique_dates) - 3, split_idx))
+    train_dates = set(unique_dates[:split_idx])
+    test_dates = set(unique_dates[split_idx:])
+    train = bt[bt["signal_date"].isin(train_dates)].copy()
+    test = bt[bt["signal_date"].isin(test_dates)].copy()
+    if train.empty or test.empty:
+        return pd.DataFrame(columns=columns)
+
+    cover_grid = [50, 55, 60, 65, 70, 75, 80]
+    ignition_grid = [0, 50, 60, 70, 80]
+    long_grid = [0, 50, 60, 70, 80]
+    pressure_grid = [0, 40, 50, 60, 70]
+    confidence_grid = [0, 40, 60]
+
+    train_candidates = []
+    seen_masks: set[tuple[int, ...]] = set()
+
+    for cover_min in cover_grid:
+        for ignition_min in ignition_grid:
+            for long_min in long_grid:
+                for pressure_min in pressure_grid:
+                    for confidence_min in confidence_grid:
+                        mask = (
+                            (pd.to_numeric(train["cover_score"], errors="coerce") >= cover_min)
+                            & (pd.to_numeric(train["ignition_score"], errors="coerce") >= ignition_min)
+                            & (pd.to_numeric(train["long_demand_score"], errors="coerce") >= long_min)
+                            & (pd.to_numeric(train["short_pressure"], errors="coerce") >= pressure_min)
+                            & (pd.to_numeric(train["confidence"], errors="coerce") >= confidence_min)
+                        )
+                        idx_key = tuple(train.index[mask].tolist())
+                        if idx_key in seen_masks:
+                            continue
+                        seen_masks.add(idx_key)
+
+                        subset = train.loc[mask]
+                        stats = _condition_stats(subset, return_col)
+                        if stats["n"] < int(min_train_signals):
+                            continue
+
+                        avg = stats["avg"] or 0.0
+                        median = stats["median"] or 0.0
+                        win = stats["win"] or 0.0
+                        mae = abs(stats["mae"] or 0.0)
+
+                        # Reward positive expectancy and consistency, penalize adverse excursion.
+                        train_score = (
+                            avg
+                            + 0.03 * (win - 50.0)
+                            + 0.20 * median
+                            - 0.12 * mae
+                        )
+                        train_candidates.append({
+                            "cover_min": cover_min,
+                            "ignition_min": ignition_min,
+                            "long_min": long_min,
+                            "pressure_min": pressure_min,
+                            "confidence_min": confidence_min,
+                            "train_stats": stats,
+                            "train_score": float(train_score),
+                        })
+
+    if not train_candidates:
+        return pd.DataFrame(columns=columns)
+
+    train_candidates.sort(
+        key=lambda x: (x["train_score"], x["train_stats"]["n"]),
+        reverse=True,
+    )
+    train_candidates = train_candidates[: max(1, int(top_train_candidates))]
+
+    rows = []
+    for candidate in train_candidates:
+        mask = (
+            (pd.to_numeric(test["cover_score"], errors="coerce") >= candidate["cover_min"])
+            & (pd.to_numeric(test["ignition_score"], errors="coerce") >= candidate["ignition_min"])
+            & (pd.to_numeric(test["long_demand_score"], errors="coerce") >= candidate["long_min"])
+            & (pd.to_numeric(test["short_pressure"], errors="coerce") >= candidate["pressure_min"])
+            & (pd.to_numeric(test["confidence"], errors="coerce") >= candidate["confidence_min"])
+        )
+        test_stats = _condition_stats(test.loc[mask], return_col)
+        train_stats = candidate["train_stats"]
+
+        test_n = test_stats["n"]
+        test_avg = test_stats["avg"]
+        test_win = test_stats["win"]
+        train_avg = train_stats["avg"] or 0.0
+
+        enough_test = test_n >= int(min_test_signals)
+        positive_holdout = enough_test and test_avg is not None and test_avg > 0
+        win_holdout = enough_test and test_win is not None and test_win >= 50.0
+
+        if not enough_test:
+            robustness = "⚪ サンプル不足"
+            stability = 0.0
+        else:
+            avg_component = max(0.0, min(40.0, (test_avg or 0.0) * 8.0))
+            win_component = max(0.0, min(30.0, ((test_win or 0.0) - 45.0) * 1.5))
+            sample_component = min(20.0, test_n / max(1, min_test_signals) * 10.0)
+            degradation = abs((test_avg or 0.0) - train_avg)
+            stability_component = max(0.0, 10.0 - degradation * 2.0)
+            stability = min(
+                100.0,
+                avg_component + win_component + sample_component + stability_component,
+            )
+
+            if positive_holdout and win_holdout and stability >= 60:
+                robustness = "🟢 ROBUST"
+            elif positive_holdout and stability >= 35:
+                robustness = "🟡 PROMISING"
+            else:
+                robustness = "🔴 UNSTABLE"
+
+        rows.append({
+            "cover_min": candidate["cover_min"],
+            "ignition_min": candidate["ignition_min"],
+            "long_min": candidate["long_min"],
+            "pressure_min": candidate["pressure_min"],
+            "confidence_min": candidate["confidence_min"],
+            "train_signals": train_stats["n"],
+            "train_win": train_stats["win"],
+            "train_avg": train_stats["avg"],
+            "train_median": train_stats["median"],
+            "test_signals": test_stats["n"],
+            "test_win": test_stats["win"],
+            "test_avg": test_stats["avg"],
+            "test_median": test_stats["median"],
+            "test_mfe": test_stats["mfe"],
+            "test_mae": test_stats["mae"],
+            "train_score": candidate["train_score"],
+            "stability_score": round(float(stability), 1),
+            "robustness": robustness,
+            "train_start": pd.Timestamp(min(train_dates)),
+            "train_end": pd.Timestamp(max(train_dates)),
+            "test_start": pd.Timestamp(min(test_dates)),
+            "test_end": pd.Timestamp(max(test_dates)),
+        })
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(columns=columns)
+
+    robustness_rank = {
+        "🟢 ROBUST": 3,
+        "🟡 PROMISING": 2,
+        "🔴 UNSTABLE": 1,
+        "⚪ サンプル不足": 0,
+    }
+    out["_robust_rank"] = out["robustness"].map(robustness_rank).fillna(0)
+    out = out.sort_values(
+        ["_robust_rank", "stability_score", "test_avg", "train_score"],
+        ascending=False,
+    ).drop(columns="_robust_rank")
+    return out.reset_index(drop=True)
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
