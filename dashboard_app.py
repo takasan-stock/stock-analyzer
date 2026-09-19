@@ -1224,31 +1224,186 @@ def calc_catalyst_info(catalyst_date_str, catalyst_price_str, current_price):
 
     return days, change
 
+def _parse_price_value(value):
+    """株価入力（カンマ・円表記を含む）をfloatへ安全に変換する。"""
+    if value is None or str(value).strip() in ("", "nan", "None", "NaN"):
+        return None
+    try:
+        return float(str(value).replace(",", "").replace("円", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def calc_target_gap(current_price, target_str, stop_str):
     """
     目標株価・損切りラインと現在株価の差を計算する。
-    戻り値: (目標までの騰落率% or None, 損切りまでの騰落率% or None)
+    戻り値: (目標までの騰落率% or None, 損切りラインの現在値比% or None)
     """
-    def _parse_price(s):
-        if not s or str(s).strip() in ("", "nan", "None"):
-            return None
-        try:
-            return float(str(s).replace(",", "").replace("円", "").strip())
-        except ValueError:
-            return None
+    if not current_price or current_price <= 0:
+        return None, None
 
-    target_gap = None
-    stop_gap = None
+    target = _parse_price_value(target_str)
+    stop = _parse_price_value(stop_str)
 
-    target = _parse_price(target_str)
-    if target is not None and current_price:
-        target_gap = (target - current_price) / current_price * 100
-
-    stop = _parse_price(stop_str)
-    if stop is not None and current_price:
-        stop_gap = (stop - current_price) / current_price * 100
-
+    target_gap = (
+        (target - current_price) / current_price * 100
+        if target is not None else None
+    )
+    stop_gap = (
+        (stop - current_price) / current_price * 100
+        if stop is not None else None
+    )
     return target_gap, stop_gap
+
+
+def calc_risk_reward(current_price, target_str, stop_str):
+    """
+    現在株価・目標株価・損切りラインからリスクリワードを計算する。
+    有効条件は「目標株価 > 現在株価 > 損切りライン」。
+    戻り値: (RR倍率, 利益余地%, 損失リスク%)。
+    """
+    if not current_price or current_price <= 0:
+        return None, None, None
+
+    target = _parse_price_value(target_str)
+    stop = _parse_price_value(stop_str)
+
+    reward_pct = (
+        (target - current_price) / current_price * 100
+        if target is not None else None
+    )
+    risk_pct = (
+        (current_price - stop) / current_price * 100
+        if stop is not None else None
+    )
+
+    if (
+        reward_pct is None or risk_pct is None
+        or reward_pct <= 0 or risk_pct <= 0
+    ):
+        return None, reward_pct, risk_pct
+
+    return reward_pct / risk_pct, reward_pct, risk_pct
+
+
+def build_today_focus(df, prices: dict, news_batch: dict, limit: int = 5) -> list:
+    """
+    今日チェックする優先度を、注意喚起とチャンスの両面から算出する。
+    スコアは売買推奨ではなく、確認順を決めるための内部値。
+    """
+    focus = []
+
+    for _, row in df.iterrows():
+        ticker = str(row.get("ティッカー", ""))
+        p = prices.get(ticker, {})
+        price = p.get("price")
+        if price is None:
+            continue
+
+        score = 0
+        reasons = []
+        tags = []
+
+        vr = p.get("vol_ratio")
+        if vr is not None:
+            if vr >= 3:
+                score += 4
+                reasons.append(f"出来高 {vr:.1f}倍")
+                tags.append("出来高急増")
+            elif vr >= 2:
+                score += 3
+                reasons.append(f"出来高 {vr:.1f}倍")
+                tags.append("出来高増")
+            elif vr >= 1.5:
+                score += 2
+                reasons.append(f"出来高 {vr:.1f}倍")
+
+        chg = p.get("change_pct")
+        if chg is not None and abs(chg) >= 5:
+            score += 3
+            reasons.append(f"前日比 {chg:+.1f}%")
+            tags.append("急騰" if chg > 0 else "急落")
+        elif chg is not None and abs(chg) >= 3:
+            score += 1
+            reasons.append(f"前日比 {chg:+.1f}%")
+
+        news_count = count_fresh_news(news_batch.get(ticker, []), hours=24)
+        if news_count >= 3:
+            score += 3
+            reasons.append(f"24hニュース {news_count}件")
+            tags.append("材料確認")
+        elif news_count >= 1:
+            score += 2
+            reasons.append(f"24hニュース {news_count}件")
+
+        catalyst_days, _ = calc_catalyst_info(
+            row.get("材料発生日", ""), row.get("材料時株価", ""), price
+        )
+        if catalyst_days is not None and 0 <= catalyst_days <= 7:
+            score += 3
+            reasons.append(f"材料から {catalyst_days}日")
+            tags.append("材料ホット")
+        elif catalyst_days is not None and 0 <= catalyst_days <= 30:
+            score += 1
+            reasons.append(f"材料から {catalyst_days}日")
+
+        rr, reward_pct, risk_pct = calc_risk_reward(
+            price, row.get("目標株価", ""), row.get("損切りライン", "")
+        )
+        stop = _parse_price_value(row.get("損切りライン", ""))
+
+        if stop is not None:
+            if price <= stop:
+                score += 6
+                reasons.append("損切りライン到達")
+                tags.append("要注意")
+            elif risk_pct is not None and 0 < risk_pct <= 5:
+                score += 4
+                reasons.append(f"損切りまで {risk_pct:.1f}%")
+                tags.append("損切り接近")
+
+        if rr is not None:
+            if rr >= 3:
+                score += 3
+                reasons.append(f"RR 1:{rr:.1f}")
+                tags.append("RR良好")
+            elif rr >= 2:
+                score += 2
+                reasons.append(f"RR 1:{rr:.1f}")
+            elif rr < 1:
+                score += 1
+                reasons.append(f"RR 1:{rr:.1f}")
+                tags.append("RR低め")
+
+        status = str(row.get("ステータス", ""))
+        if status == "保有中":
+            score += 1
+        elif status == "打診買い":
+            score += 0.5
+
+        if score >= 2:
+            focus.append({
+                "ticker": ticker,
+                "name": str(row.get("銘柄名", "")),
+                "status": status,
+                "price": price,
+                "change_pct": chg,
+                "score": score,
+                "reasons": reasons,
+                "tags": list(dict.fromkeys(tags)),
+                "rr": rr,
+                "reward_pct": reward_pct,
+                "risk_pct": risk_pct,
+            })
+
+    focus.sort(
+        key=lambda x: (
+            -x["score"],
+            -(x["rr"] if x["rr"] is not None else -1),
+            -abs(x["change_pct"] or 0),
+        )
+    )
+    return focus[:limit]
 
 def build_daily_summary_md(df, news_batch: dict, prices: dict) -> str:
     """
@@ -1330,7 +1485,8 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
                    accent: str = "#888", roic: str = "", dpup: str = "",
                    catalyst_days=None, catalyst_change=None, catalyst_memo: str = "",
                    vol_ratio=None, news_count: int = 0,
-                   target_gap=None, stop_gap=None) -> str:
+                   target_gap=None, stop_gap=None,
+                   rr_ratio=None, reward_pct=None, risk_pct=None) -> str:
     """銘柄カード1枚分のHTMLを生成する（テーマ追従・情報整理版）"""
     # 前日比±5%超は🔥（急騰）/ 🧊（急落）で目立たせる
     alert_icon = ""
@@ -1439,9 +1595,9 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
             f'font-weight:700;vertical-align:middle">NEW {news_count}</span>'
         )
 
-    # 目標株価・損切りラインまでの距離バー
+    # 目標株価・損切りライン・RR
     target_html = ""
-    if target_gap is not None or stop_gap is not None:
+    if target_gap is not None or stop_gap is not None or rr_ratio is not None:
         _parts = []
         if target_gap is not None:
             _t_color = "#16a34a" if target_gap >= 0 else "#94a3b8"
@@ -1450,15 +1606,34 @@ def make_card_html(ticker: str, name: str, per: str, cagr: str,
                 f'<span style="color:{_t_color};font-weight:600">'
                 f'🎯目標まで {_t_sign}{target_gap:.1f}%</span>'
             )
-        if stop_gap is not None:
-            # 損切りラインに5%以内まで近づいたら赤で警告
-            _s_color = "#dc2626" if stop_gap <= 5 else "#f59e0b"
-            _s_sign = "+" if stop_gap >= 0 else ""
-            _s_icon = "🚨" if stop_gap <= 5 else "🛑"
+
+        if risk_pct is not None:
+            if risk_pct <= 0:
+                _parts.append(
+                    '<span style="color:#dc2626;font-weight:700">🚨損切りライン到達</span>'
+                )
+            else:
+                _s_color = "#dc2626" if risk_pct <= 5 else "#f59e0b"
+                _s_icon = "🚨" if risk_pct <= 5 else "🛑"
+                _parts.append(
+                    f'<span style="color:{_s_color};font-weight:600">'
+                    f'{_s_icon}損切りまで {risk_pct:.1f}%</span>'
+                )
+
+        if rr_ratio is not None:
+            if rr_ratio >= 3:
+                _rr_color, _rr_icon = "#16a34a", "🟢"
+            elif rr_ratio >= 2:
+                _rr_color, _rr_icon = "#2563eb", "🔵"
+            elif rr_ratio >= 1:
+                _rr_color, _rr_icon = "#f59e0b", "🟡"
+            else:
+                _rr_color, _rr_icon = "#dc2626", "🔴"
             _parts.append(
-                f'<span style="color:{_s_color};font-weight:600">'
-                f'{_s_icon}損切りまで {_s_sign}{stop_gap:.1f}%</span>'
+                f'<span style="color:{_rr_color};font-weight:700">'
+                f'{_rr_icon} RR 1:{rr_ratio:.1f}</span>'
             )
+
         target_html = (
             f'<div style="font-size:0.72em;margin-top:5px;padding:5px 7px;'
             f'background:rgba(99,102,241,0.08);border-radius:5px;'
@@ -1781,6 +1956,59 @@ else:
     st.session_state.news_batch = {}
 
 # ==========================================
+# 今日見るべき銘柄（出来高・値動き・ニュース・材料・RRを統合）
+# ==========================================
+_focus_df = st.session_state.df
+if not _focus_df.empty:
+    _focus_tickers = tuple(_focus_df["ティッカー"].astype(str).tolist())
+    with st.spinner("今日見るべき銘柄をチェック中..."):
+        _focus_prices = fetch_prices_batch(_focus_tickers)
+
+    _focus_items = build_today_focus(
+        _focus_df,
+        _focus_prices,
+        st.session_state.get("news_batch", {}),
+        limit=5,
+    )
+
+    if _focus_items:
+        with st.expander(
+            f"👀 今日見るべき銘柄 TOP{len(_focus_items)}",
+            expanded=True,
+        ):
+            st.caption(
+                "出来高・値動き・24時間ニュース・材料の鮮度・損切り接近・RRを統合。"
+                "順位は『今日チェックする優先度』で、売買推奨ではありません。"
+            )
+            for _rank, _item in enumerate(_focus_items, start=1):
+                _chg = _item.get("change_pct")
+                _chg_text = f"{_chg:+.1f}%" if _chg is not None else "—"
+                _tag_text = "　".join(
+                    f"【{tag}】" for tag in _item.get("tags", [])[:3]
+                )
+                _reason_text = " / ".join(_item.get("reasons", [])[:5])
+
+                _rr = _item.get("rr")
+                if _rr is not None:
+                    _rr_icon = "🟢" if _rr >= 3 else ("🔵" if _rr >= 2 else ("🟡" if _rr >= 1 else "🔴"))
+                    _rr_text = f"{_rr_icon} RR 1:{_rr:.1f}"
+                else:
+                    _rr_text = "RR —"
+
+                st.markdown(
+                    f"**{_rank}. {_item['name']}（{_item['ticker']}）**　"
+                    f"¥{_item['price']:,.0f}（{_chg_text}）　"
+                    f"{_item['status']}　**{_rr_text}**  "
+                    + (f"\n{_tag_text}  " if _tag_text else "")
+                    + f"\n↳ {_reason_text}"
+                )
+    else:
+        st.info(
+            "👀 今日見るべき銘柄：現在、強い注意シグナルはありません。",
+            icon="✅",
+        )
+
+# ==========================================
 # 今月決算の銘柄（ダッシュボードトップに表示）
 # ==========================================
 _cal_df = st.session_state.df
@@ -2063,6 +2291,11 @@ with tab1:
                             row.get("目標株価", ""),
                             row.get("損切りライン", "")
                         )
+                        _rr, _reward_pct, _risk_pct = calc_risk_reward(
+                            p.get("price"),
+                            row.get("目標株価", ""),
+                            row.get("損切りライン", "")
+                        )
 
                         st.markdown(
                             make_card_html(
@@ -2086,6 +2319,9 @@ with tab1:
                                 ),
                                 target_gap=_t_gap,
                                 stop_gap=_s_gap,
+                                rr_ratio=_rr,
+                                reward_pct=_reward_pct,
+                                risk_pct=_risk_pct,
                             ),
                             unsafe_allow_html=True
                         )
