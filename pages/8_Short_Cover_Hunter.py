@@ -17,13 +17,17 @@ from short_cover import (
     build_price_feature_snapshots,
     build_priority_alerts,
     build_reoptimization_comparison,
+    append_condition_version,
+    activate_condition_version,
     build_promotion_table,
     build_short_metrics,
     candidate_tickers,
     compare_live_vs_backtest,
     load_jpx_events,
     load_uploaded_workbooks,
+    get_active_condition_version,
     normalize_alert_history,
+    normalize_condition_versions,
     normalize_ticker,
     apply_optimizer_condition,
     optimize_short_cover_thresholds,
@@ -73,6 +77,7 @@ def load_watchlist_codes() -> list[str]:
 
 
 ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
+CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 
 
 def _github_history_config():
@@ -153,6 +158,78 @@ def save_alert_history(history: pd.DataFrame) -> tuple[bool, str]:
 
         payload = {
             "message": f"Update Short Cover alert history - {pd.Timestamp.now():%Y-%m-%d %H:%M}",
+            "content": base64.b64encode(csv_text.encode("utf-8")).decode("utf-8"),
+            "branch": config["branch"],
+        }
+        if sha:
+            payload["sha"] = sha
+
+        put_resp = requests.put(url, headers=headers, json=payload, timeout=15)
+        if put_resp.status_code in (200, 201):
+            return True, "GitHubへ保存"
+        return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
+    except requests.exceptions.RequestException as e:
+        return False, f"GitHub通信エラー: {e}"
+
+
+def load_condition_versions() -> pd.DataFrame:
+    config = _github_history_config()
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{CONDITION_HISTORY_FILE}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(content).decode("utf-8-sig")
+                return normalize_condition_versions(pd.read_csv(io.StringIO(text)))
+        except Exception:
+            pass
+
+    if os.path.exists(CONDITION_HISTORY_FILE):
+        try:
+            return normalize_condition_versions(
+                pd.read_csv(CONDITION_HISTORY_FILE, encoding="utf-8-sig")
+            )
+        except Exception:
+            pass
+    return normalize_condition_versions(None)
+
+
+def save_condition_versions(versions: pd.DataFrame) -> tuple[bool, str]:
+    versions = normalize_condition_versions(versions)
+    os.makedirs(os.path.dirname(CONDITION_HISTORY_FILE), exist_ok=True)
+
+    export = versions.copy()
+    for col in ["created_at", "activated_at"]:
+        export[col] = pd.to_datetime(export[col], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
+    csv_text = export.to_csv(index=False, encoding="utf-8-sig")
+    with open(CONDITION_HISTORY_FILE, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(csv_text)
+
+    config = _github_history_config()
+    if not config:
+        return True, "ローカル保存（GitHub未設定）"
+
+    url = f"https://api.github.com/repos/{config['repo']}/contents/{CONDITION_HISTORY_FILE}"
+    headers = _github_headers(config)
+    sha = None
+    try:
+        get_resp = requests.get(
+            url,
+            headers=headers,
+            params={"ref": config["branch"]},
+            timeout=10,
+        )
+        if get_resp.status_code == 200:
+            sha = get_resp.json().get("sha")
+
+        payload = {
+            "message": f"Update Short Cover condition versions - {pd.Timestamp.now():%Y-%m-%d %H:%M}",
             "content": base64.b64encode(csv_text.encode("utf-8")).decode("utf-8"),
             "branch": config["branch"],
         }
@@ -285,9 +362,15 @@ st.info(
     icon="ℹ️",
 )
 
+if "short_cover_condition_versions" not in st.session_state:
+    st.session_state.short_cover_condition_versions = load_condition_versions()
+
+_versions = st.session_state.short_cover_condition_versions
+_saved_active = get_active_condition_version(_versions)
+
 optimizer_live = st.session_state.get("short_cover_optimizer")
-active_condition = None
-if optimizer_live is not None and not optimizer_live.empty:
+active_condition = _saved_active
+if active_condition is None and optimizer_live is not None and not optimizer_live.empty:
     preferred = optimizer_live[
         optimizer_live["robustness"].isin(["🟢 ROBUST", "🟡 PROMISING"])
     ]
@@ -493,6 +576,126 @@ if _health is not None:
             f"{_reopt['message']}{_period}｜"
             "採用判断は追加サンプル確認後に行う前提です。"
         )
+
+        if _reopt.get("candidate") is not None:
+            _note = st.text_input(
+                "この再最適化候補のメモ",
+                value="再最適化候補",
+                key="short_cover_reopt_note",
+            )
+            if st.button("💾 この候補を新バージョンとして保存", key="save_reopt_version"):
+                _versions, _version_id = append_condition_version(
+                    st.session_state.short_cover_condition_versions,
+                    _reopt["candidate"],
+                    source="reoptimization",
+                    horizon=opt_horizon,
+                    note=_note,
+                    activate=False,
+                )
+                st.session_state.short_cover_condition_versions = _versions
+                _ok, _msg = save_condition_versions(_versions)
+                if _ok:
+                    st.success(f"{_version_id} として保存しました。まだ有効化していません。")
+                else:
+                    st.warning(f"保存に失敗しました：{_msg}")
+
+st.markdown("### 🧾 条件バージョン管理")
+_versions = st.session_state.short_cover_condition_versions
+
+if active_condition is not None:
+    _active_version_label = "一時条件"
+    if _saved_active is not None:
+        _active_version_label = str(_saved_active.get("version_id", "保存済み条件"))
+    st.caption(
+        f"現在適用中：{_active_version_label}｜"
+        f"{active_condition.get('condition_text', '') or 'C/I/L/P/Q条件'}"
+    )
+
+if optimizer_live is not None and not optimizer_live.empty:
+    _preferred_for_save = optimizer_live[
+        optimizer_live["robustness"].isin(["🟢 ROBUST", "🟡 PROMISING"])
+    ]
+    if not _preferred_for_save.empty:
+        _best_for_save = _preferred_for_save.iloc[0]
+        if st.button("💾 現在の最適条件を新バージョン保存", key="save_current_condition_version"):
+            _versions, _version_id = append_condition_version(
+                _versions,
+                _best_for_save,
+                source="optimizer",
+                horizon=opt_horizon,
+                note="最適条件ファインダーから保存",
+                activate=False,
+            )
+            st.session_state.short_cover_condition_versions = _versions
+            _ok, _msg = save_condition_versions(_versions)
+            if _ok:
+                st.success(f"{_version_id} として保存しました。")
+                st.rerun()
+            else:
+                st.warning(f"保存に失敗しました：{_msg}")
+
+if _versions.empty:
+    st.info("保存済みの条件バージョンはまだありません。")
+else:
+    _version_labels = _versions.apply(
+        lambda r: f"{r['version_id']}｜{r['condition_text']}｜{r['source']}",
+        axis=1,
+    ).tolist()
+    _selected_version_label = st.selectbox(
+        "保存済み条件",
+        _version_labels,
+        key="short_cover_condition_version_select",
+    )
+    _selected_idx = _version_labels.index(_selected_version_label)
+    _selected_version = _versions.iloc[_selected_idx]
+
+    _vc1, _vc2 = st.columns([1, 2])
+    with _vc1:
+        if st.button("✅ このバージョンを有効化", key="activate_condition_version_btn"):
+            _versions = activate_condition_version(
+                _versions,
+                str(_selected_version["version_id"]),
+            )
+            st.session_state.short_cover_condition_versions = _versions
+            _ok, _msg = save_condition_versions(_versions)
+            if _ok:
+                st.success(f"{_selected_version['version_id']} を有効化しました。")
+                st.rerun()
+            else:
+                st.warning(f"保存に失敗しました：{_msg}")
+    with _vc2:
+        st.caption(
+            f"{_selected_version['robustness']}｜安定度 "
+            f"{fmt_num(_selected_version['stability_score'], 0)}/100｜"
+            f"検証 {_selected_version['test_signals'] if pd.notna(_selected_version['test_signals']) else '—'}件｜"
+            f"メモ：{_selected_version['note'] or '—'}"
+        )
+
+    _version_show = _versions.copy()
+    _version_show["状態"] = _version_show["is_active"].map(lambda x: "✅ ACTIVE" if bool(x) else "—")
+    _version_show["created_at"] = pd.to_datetime(_version_show["created_at"], errors="coerce").dt.strftime("%Y-%m-%d")
+    for _col in ["test_win", "test_avg", "test_mfe", "test_mae"]:
+        _version_show[_col] = _version_show[_col].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%"
+        )
+    _vcols = [
+        "状態", "version_id", "created_at", "condition_text", "source",
+        "robustness", "stability_score", "test_signals",
+        "test_win", "test_avg", "note",
+    ]
+    _vlabels = {
+        "version_id": "Version", "created_at": "作成日",
+        "condition_text": "C/I/L/P/Q", "source": "作成元",
+        "robustness": "判定", "stability_score": "安定度",
+        "test_signals": "検証件数", "test_win": "検証勝率",
+        "test_avg": "検証平均", "note": "メモ",
+    }
+    st.dataframe(
+        _version_show[_vcols].rename(columns=_vlabels),
+        hide_index=True,
+        use_container_width=True,
+        height=min(360, 80 + 35 * len(_version_show)),
+    )
 
 _h1, _h2, _h3, _h4 = st.columns(4)
 _h1.metric("累計アラート", f"{_hsum['alerts']}件")
@@ -998,6 +1201,14 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 条件バージョン管理
+
+- 最適条件や再最適化候補を v1.0 / v1.1 / v1.2... として保存
+- 保存時点のC/I/L/P/Q・検証成績・安定度・メモを保持
+- 保存しただけでは有効化しません
+- **「このバージョンを有効化」操作をしたときだけ**現在条件を切替
+- GitHub Secretsがあれば条件履歴も永続保存
 
 ### 再最適化候補パネル
 
