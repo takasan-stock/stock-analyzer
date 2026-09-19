@@ -19,6 +19,7 @@ from short_cover import (
     build_promotion_table,
     build_short_metrics,
     candidate_tickers,
+    compare_live_vs_backtest,
     load_jpx_events,
     load_uploaded_workbooks,
     normalize_alert_history,
@@ -370,6 +371,51 @@ if _new_alerts > 0:
 st.markdown("## 🗂️ アラート履歴・追跡")
 _history = st.session_state.short_cover_alert_history
 _hsum = summarize_alert_history(_history)
+
+_bt_for_health = st.session_state.get("short_cover_backtest")
+_health = None
+if _bt_for_health is not None and not _bt_for_health.empty and active_condition is not None:
+    _health = compare_live_vs_backtest(
+        _bt_for_health,
+        _history,
+        condition=active_condition,
+        horizon=opt_horizon,
+        recent_live_n=20,
+        min_live_signals=5,
+    )
+
+if _health is not None:
+    st.markdown("### 🩺 ロジック健全性")
+    _hc1, _hc2, _hc3, _hc4 = st.columns(4)
+    _hc1.metric(
+        "状態",
+        _health["status"],
+    )
+    _hc2.metric(
+        "Health",
+        "—" if _health["health_score"] is None else f"{_health['health_score']:.0f}/100",
+    )
+    _hc3.metric(
+        f"実運用{opt_horizon}日平均",
+        "—" if _health["live_avg"] is None else f"{_health['live_avg']:+.2f}%",
+        delta=(
+            None if _health["avg_drift"] is None
+            else f"BT比 {_health['avg_drift']:+.2f}pt"
+        ),
+    )
+    _hc4.metric(
+        f"実運用{opt_horizon}日勝率",
+        "—" if _health["live_win"] is None else f"{_health['live_win']:.1f}%",
+        delta=(
+            None if _health["win_drift"] is None
+            else f"BT比 {_health['win_drift']:+.1f}pt"
+        ),
+    )
+    st.caption(
+        f"条件 {_health['condition_text']}｜"
+        f"BT {_health['backtest_n']}件 / 実運用 {_health['live_n']}件｜"
+        f"{_health['message']}"
+    )
 
 _h1, _h2, _h3, _h4 = st.columns(4)
 _h1.metric("累計アラート", f"{_hsum['alerts']}件")
@@ -875,6 +921,15 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### ロジック健全性
+
+- 現在採用中の C/I/L/P/Q 条件だけでバックテストと実運用を比較
+- 直近20件までの実運用を対象に平均リターン・勝率の乖離を監視
+- **🟢 STABLE**：想定レンジ内
+- **🟡 WATCH**：弱含み。再検証を優先
+- **🔴 DEGRADED**：バックテストから大きく悪化
+- 実運用5件未満は **⚪ DATA BUILDING** として判定保留
 
 ### アラート履歴・追跡
 
