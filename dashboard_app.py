@@ -1494,6 +1494,7 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
                     "warning" if warning_score > opportunity_score
                     else "opportunity"
                 ),
+                "priority_score": max(opportunity_score, warning_score),
                 "reasons": reasons,
                 "tags": list(dict.fromkeys(tags)),
                 "rr": rr,
@@ -1513,6 +1514,13 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
     )
     focus = focus[:limit]
     for item in focus:
+        priority_score = item.get("priority_score", 0)
+        if priority_score >= 6:
+            item["priority_rank"] = "A"
+        elif priority_score >= 3:
+            item["priority_rank"] = "B"
+        else:
+            item["priority_rank"] = "C"
         item["summary"] = summarize_focus_reason(item)
     return focus
 
@@ -2091,8 +2099,8 @@ if not _focus_df.empty:
         ):
             st.caption(
                 "出来高・値動き・24時間ニュース・材料の鮮度・決算接近・損切り接近・RRを統合。"
-                "チャンス候補と警戒候補を分け、各銘柄に『なぜ今見るか』の一言要約を表示します。"
-                "売買推奨ではなく確認優先度です。"
+                "チャンス候補と警戒候補を分け、A/B/Cの確認優先度と『なぜ今見るか』を表示します。"
+                "Aランクから確認すると朝のチェックを短くできます。売買推奨ではありません。"
             )
 
             _opportunity_items = [
@@ -2101,6 +2109,17 @@ if not _focus_df.empty:
             _warning_items = [
                 x for x in _focus_items if x.get("focus_type") == "warning"
             ]
+
+            _rank_counts = {
+                rank: sum(1 for x in _focus_items if x.get("priority_rank") == rank)
+                for rank in ("A", "B", "C")
+            }
+            st.markdown(
+                f"**優先度：** 🔴 A {_rank_counts['A']}銘柄　"
+                f"🟡 B {_rank_counts['B']}銘柄　"
+                f"⚪ C {_rank_counts['C']}銘柄"
+            )
+            st.caption("A＝最優先チェック / B＝次に確認 / C＝時間があれば確認")
 
             def _render_focus_item(_item, _rank):
                 _chg = _item.get("change_pct")
@@ -2111,6 +2130,13 @@ if not _focus_df.empty:
                 _reason_text = " / ".join(_item.get("reasons", [])[:5])
                 _summary_text = _item.get("summary", "")
 
+                _priority_rank = _item.get("priority_rank", "C")
+                _priority_badge = {
+                    "A": "🔴 A",
+                    "B": "🟡 B",
+                    "C": "⚪ C",
+                }.get(_priority_rank, "⚪ C")
+
                 _rr = _item.get("rr")
                 if _rr is not None:
                     _rr_icon = "🟢" if _rr >= 3 else ("🔵" if _rr >= 2 else ("🟡" if _rr >= 1 else "🔴"))
@@ -2119,7 +2145,7 @@ if not _focus_df.empty:
                     _rr_text = "RR —"
 
                 st.markdown(
-                    f"**{_rank}. {_item['name']}（{_item['ticker']}）**　"
+                    f"**{_priority_badge}｜{_rank}. {_item['name']}（{_item['ticker']}）**　"
                     f"¥{_item['price']:,.0f}（{_chg_text}）　"
                     f"{_item['status']}　**{_rr_text}**  "
                     + (f"\n{_tag_text}  " if _tag_text else "")
