@@ -17,6 +17,7 @@ from short_cover import (
     load_jpx_events,
     load_uploaded_workbooks,
     normalize_ticker,
+    apply_optimizer_condition,
     optimize_short_cover_thresholds,
     score_short_cover,
     summarize_backtest,
@@ -179,8 +180,52 @@ st.info(
     icon="ℹ️",
 )
 
+optimizer_live = st.session_state.get("short_cover_optimizer")
+active_condition = None
+if optimizer_live is not None and not optimizer_live.empty:
+    preferred = optimizer_live[
+        optimizer_live["robustness"].isin(["🟢 ROBUST", "🟡 PROMISING"])
+    ]
+    if not preferred.empty:
+        active_condition = preferred.iloc[0]
+
+scored = apply_optimizer_condition(scored, active_condition)
+promotions = promotions.merge(
+    scored[["ticker", "optimizer_match", "optimizer_label", "match_strength", "condition_text"]],
+    on="ticker",
+    how="left",
+) if not promotions.empty else promotions
+
 filtered = scored[scored["cover_score"] >= min_score].copy()
 filtered.insert(0, "順位", range(1, len(filtered) + 1))
+
+if active_condition is not None:
+    _label = str(active_condition.get("robustness", ""))
+    _cond = (
+        f"C{int(active_condition.get('cover_min', 0))}/"
+        f"I{int(active_condition.get('ignition_min', 0))}/"
+        f"L{int(active_condition.get('long_min', 0))}/"
+        f"P{int(active_condition.get('pressure_min', 0))}/"
+        f"Q{int(active_condition.get('confidence_min', 0))}"
+    )
+    _matches = scored[scored["optimizer_match"] == True].copy()
+    st.markdown("## ⭐ 検証済み条件マッチ")
+    st.caption(f"{_label} 条件 {_cond} を現在ランキングへ自動適用しています。")
+    if _matches.empty:
+        st.info("現在、この検証済み条件をすべて満たす銘柄はありません。")
+    else:
+        _matches = _matches.sort_values(
+            ["match_strength", "cover_score", "ignition_score"],
+            ascending=False,
+        )
+        for _, _r in _matches.head(8).iterrows():
+            st.markdown(
+                f"**{_r['optimizer_label']}｜{_r['name']}（{_r['ticker']}）**　"
+                f"Match **{_r['match_strength']:.0f}** / Cover **{_r['cover_score']:.0f}** / "
+                f"Ignition **{_r['ignition_score']:.0f}** / Long **{_r['long_demand_score']:.0f}** / "
+                f"Pressure **{_r['short_pressure']:.0f}** / Confidence **{_r['confidence']:.0f}**"
+            )
+    st.divider()
 
 st.markdown("## ⚡ 初動昇格ランキング")
 st.caption(
@@ -202,12 +247,13 @@ else:
     promo_cols = [
         "順位", "ticker", "name", "prev_phase", "phase", "promotion_reason",
         "前Cover", "現Cover", "ΔCover", "前Ignition", "現Ignition", "ΔIgnition",
-        "regime", "出来高", "RS", "confidence",
+        "regime", "optimizer_label", "match_strength", "出来高", "RS", "confidence",
     ]
     promo_labels = {
         "ticker": "コード", "name": "銘柄", "prev_phase": "前回Phase",
         "phase": "今回Phase", "promotion_reason": "昇格理由",
-        "regime": "資金フロー", "confidence": "信頼度",
+        "regime": "資金フロー", "optimizer_label": "検証条件",
+        "match_strength": "Match", "confidence": "信頼度",
     }
     st.dataframe(
         promo[promo_cols].rename(columns=promo_labels),
@@ -243,11 +289,16 @@ else:
     display["RS"] = display["rs_watch"].map(lambda x: fmt_num(x, 0))
     display["Ignition"] = display["ignition_score"].map(lambda x: fmt_num(x, 0))
     display["信頼度"] = display["confidence"].map(lambda x: f"{int(x)}")
+    display["検証条件"] = display["optimizer_label"].replace("", "—")
+    display["Match"] = display["match_strength"].map(
+        lambda x: "—" if pd.isna(x) or float(x) <= 0 else f"{float(x):.0f}"
+    )
 
     cols = [
-        "順位", "ticker", "name", "phase", "regime", "cover_score", "short_pressure",
-        "Ignition", "long_demand_score", "空売り%", "Δ空売り", "institution_count",
-        "買戻Breadth", "DTC", "出来高", "AVWAP", "5日高値", "RS", "信頼度",
+        "順位", "ticker", "name", "phase", "検証条件", "Match", "regime",
+        "cover_score", "short_pressure", "Ignition", "long_demand_score", "空売り%",
+        "Δ空売り", "institution_count", "買戻Breadth", "DTC", "出来高",
+        "AVWAP", "5日高値", "RS", "信頼度",
     ]
     labels = {
         "ticker": "コード", "name": "銘柄", "phase": "Phase", "regime": "資金フロー",
@@ -400,6 +451,7 @@ else:
                 min_test_signals=4,
                 top_train_candidates=30,
             )
+            st.session_state.short_cover_optimizer = optimizer
 
             if optimizer.empty:
                 st.info("最適化に必要なシグナル数がまだ不足しています。検証営業日数や対象銘柄数を増やしてください。")
@@ -560,6 +612,15 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 検証済み条件マッチ
+
+最適条件ファインダーで ROBUST / PROMISING と判定された上位条件を、現在のランキングへ自動適用します。
+
+- 5つの閾値をすべて満たした銘柄だけに **⭐ ROBUST MATCH** / **🟡 PROMISING MATCH**
+- Match Strength は各閾値をどれだけ上回ったかを0〜100で表示
+- 最適化をまだ実行していない場合は表示しません
+- 過去成績を保証するものではなく、「検証済み条件との一致」を示します
 
 ### 最適条件ファインダー
 
