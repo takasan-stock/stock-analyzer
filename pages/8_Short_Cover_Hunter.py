@@ -333,13 +333,23 @@ if not _bt_targets:
 else:
     if st.button("▶️ バックテストを実行", key="short_cover_backtest_btn", use_container_width=False):
         with st.spinner("過去シグナルを再構成して検証中..."):
-            st.session_state.short_cover_backtest = backtest_short_cover(
+            _new_bt = backtest_short_cover(
                 events=events,
                 tickers=_bt_targets,
                 sessions=bt_sessions,
                 max_tickers=bt_tickers,
                 min_cover_score=bt_min_score,
             )
+            st.session_state.short_cover_backtest = _new_bt
+            st.session_state.short_cover_optimizer = optimize_short_cover_thresholds(
+                _new_bt,
+                horizon=opt_horizon,
+                train_fraction=opt_train_fraction,
+                min_train_signals=8,
+                min_test_signals=4,
+                top_train_candidates=30,
+            )
+        st.rerun()
 
     bt = st.session_state.get("short_cover_backtest")
     if bt is not None:
@@ -443,15 +453,17 @@ else:
                 "時系列を前半の学習期間と後半の検証期間に分けます。"
                 "閾値は学習期間だけで探索し、その後の検証期間で再現した条件を上位に表示します。"
             )
-            optimizer = optimize_short_cover_thresholds(
-                bt,
-                horizon=opt_horizon,
-                train_fraction=opt_train_fraction,
-                min_train_signals=8,
-                min_test_signals=4,
-                top_train_candidates=30,
-            )
-            st.session_state.short_cover_optimizer = optimizer
+            optimizer = st.session_state.get("short_cover_optimizer")
+            if optimizer is None:
+                optimizer = optimize_short_cover_thresholds(
+                    bt,
+                    horizon=opt_horizon,
+                    train_fraction=opt_train_fraction,
+                    min_train_signals=8,
+                    min_test_signals=4,
+                    top_train_candidates=30,
+                )
+                st.session_state.short_cover_optimizer = optimizer
 
             if optimizer.empty:
                 st.info("最適化に必要なシグナル数がまだ不足しています。検証営業日数や対象銘柄数を増やしてください。")
