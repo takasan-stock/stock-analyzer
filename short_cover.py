@@ -1553,6 +1553,223 @@ def build_priority_alerts(
     return result
 
 
+
+ALERT_HISTORY_COLUMNS = [
+    "alert_date", "ticker", "name", "alert_tier", "alert_score",
+    "phase", "regime", "optimizer_label", "match_strength",
+    "cover_score", "ignition_score", "long_demand_score",
+    "short_pressure", "confidence", "vol_ratio", "rs_watch",
+    "alert_price", "alert_reason", "promotion_reason",
+    "entry_date", "entry_price", "ret_1d", "ret_3d",
+    "ret_5d", "ret_10d", "mfe_10d", "mae_10d",
+    "outcome_status", "last_updated",
+]
+
+
+def normalize_alert_history(history: pd.DataFrame | None) -> pd.DataFrame:
+    """Return a stable alert-history schema suitable for CSV persistence."""
+    if history is None or history.empty:
+        return pd.DataFrame(columns=ALERT_HISTORY_COLUMNS)
+
+    out = history.copy()
+    for col in ALERT_HISTORY_COLUMNS:
+        if col not in out.columns:
+            out[col] = None
+
+    for col in ["alert_date", "entry_date", "last_updated"]:
+        out[col] = pd.to_datetime(out[col], errors="coerce")
+
+    numeric_cols = [
+        "alert_score", "match_strength", "cover_score", "ignition_score",
+        "long_demand_score", "short_pressure", "confidence", "vol_ratio",
+        "rs_watch", "alert_price", "entry_price", "ret_1d", "ret_3d",
+        "ret_5d", "ret_10d", "mfe_10d", "mae_10d",
+    ]
+    for col in numeric_cols:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    out["ticker"] = out["ticker"].map(normalize_ticker)
+    out = out[out["ticker"] != ""].copy()
+    out = out.sort_values(["alert_date", "alert_score"], ascending=[False, False])
+    out = out.drop_duplicates(subset=["alert_date", "ticker"], keep="last")
+    return out[ALERT_HISTORY_COLUMNS].reset_index(drop=True)
+
+
+def append_priority_alert_history(
+    history: pd.DataFrame | None,
+    priority_alerts: pd.DataFrame,
+    min_tiers: tuple[str, ...] = ("🚨 A+ 最優先確認", "🔥 A 優先確認"),
+) -> tuple[pd.DataFrame, int]:
+    """Append today's actionable alerts once per alert-date/ticker.
+
+    ROBUST/PROMISING matches are also stored even if their priority tier is below A.
+    """
+    base = normalize_alert_history(history)
+    if priority_alerts is None or priority_alerts.empty:
+        return base, 0
+
+    new_rows = []
+    for _, r in priority_alerts.iterrows():
+        tier = str(r.get("alert_tier", "") or "")
+        optimizer_label = str(r.get("optimizer_label", "") or "")
+        should_store = tier in min_tiers or optimizer_label in {
+            "⭐ ROBUST MATCH",
+            "🟡 PROMISING MATCH",
+        }
+        if not should_store:
+            continue
+
+        alert_date = r.get("snapshot_date")
+        if pd.isna(alert_date):
+            alert_date = pd.Timestamp(datetime.now().date())
+        alert_date = pd.Timestamp(alert_date).normalize()
+
+        price = _to_float(r.get("price"))
+        new_rows.append({
+            "alert_date": alert_date,
+            "ticker": normalize_ticker(r.get("ticker")),
+            "name": str(r.get("name", "") or ""),
+            "alert_tier": tier,
+            "alert_score": r.get("alert_score"),
+            "phase": r.get("phase"),
+            "regime": r.get("regime"),
+            "optimizer_label": optimizer_label,
+            "match_strength": r.get("match_strength"),
+            "cover_score": r.get("cover_score"),
+            "ignition_score": r.get("ignition_score"),
+            "long_demand_score": r.get("long_demand_score"),
+            "short_pressure": r.get("short_pressure"),
+            "confidence": r.get("confidence"),
+            "vol_ratio": r.get("vol_ratio"),
+            "rs_watch": r.get("rs_watch"),
+            "alert_price": price,
+            "alert_reason": r.get("alert_reason", ""),
+            "promotion_reason": r.get("promotion_reason", ""),
+            "entry_date": pd.NaT,
+            "entry_price": None,
+            "ret_1d": None,
+            "ret_3d": None,
+            "ret_5d": None,
+            "ret_10d": None,
+            "mfe_10d": None,
+            "mae_10d": None,
+            "outcome_status": "⏳ 追跡中",
+            "last_updated": pd.Timestamp.now(),
+        })
+
+    if not new_rows:
+        return base, 0
+
+    incoming = pd.DataFrame(new_rows)
+    incoming = normalize_alert_history(incoming)
+
+    existing_keys = set(
+        zip(
+            pd.to_datetime(base["alert_date"], errors="coerce").dt.normalize(),
+            base["ticker"].astype(str),
+        )
+    ) if not base.empty else set()
+
+    fresh = incoming[
+        ~incoming.apply(
+            lambda r: (pd.Timestamp(r["alert_date"]).normalize(), str(r["ticker"])) in existing_keys,
+            axis=1,
+        )
+    ].copy()
+
+    if fresh.empty:
+        return base, 0
+
+    combined = normalize_alert_history(pd.concat([fresh, base], ignore_index=True))
+    return combined, int(len(fresh))
+
+
+def update_alert_history_outcomes(
+    history: pd.DataFrame | None,
+    period: str = "1y",
+) -> pd.DataFrame:
+    """Fill forward outcomes for persisted alerts using next-session-open entry.
+
+    The calculation matches the backtest convention:
+    signal/alert at session close -> next session open entry.
+    """
+    out = normalize_alert_history(history)
+    if out.empty:
+        return out
+
+    tickers = out["ticker"].dropna().astype(str).unique().tolist()
+    frames = _download_prices(tickers, period=period)
+    if not frames:
+        return out
+
+    now_ts = pd.Timestamp.now()
+    for idx, row in out.iterrows():
+        ticker = str(row["ticker"])
+        alert_date = pd.to_datetime(row["alert_date"], errors="coerce")
+        frame = frames.get(ticker)
+        if pd.isna(alert_date) or frame is None or frame.empty:
+            continue
+
+        normalized_index = pd.to_datetime(frame.index).normalize()
+        prior_positions = [
+            i for i, d in enumerate(normalized_index)
+            if d <= pd.Timestamp(alert_date).normalize()
+        ]
+        if not prior_positions:
+            continue
+
+        signal_pos = prior_positions[-1]
+        # Require exact trading-date match so a weekend app run doesn't shift the signal.
+        if normalized_index[signal_pos] != pd.Timestamp(alert_date).normalize():
+            continue
+
+        stats = _forward_trade_stats(frame, signal_pos)
+        if stats["entry_price"] is None:
+            out.at[idx, "outcome_status"] = "⏳ 翌営業日待ち"
+            out.at[idx, "last_updated"] = now_ts
+            continue
+
+        out.at[idx, "entry_date"] = stats["entry_date"]
+        out.at[idx, "entry_price"] = stats["entry_price"]
+        for col in ["ret_1d", "ret_3d", "ret_5d", "ret_10d", "mfe_10d", "mae_10d"]:
+            out.at[idx, col] = stats[col]
+
+        if stats["ret_10d"] is not None:
+            status = "✅ 10日完了"
+        elif stats["ret_5d"] is not None:
+            status = "📈 5日経過"
+        elif stats["ret_3d"] is not None:
+            status = "📊 3日経過"
+        elif stats["ret_1d"] is not None:
+            status = "🌱 1日経過"
+        else:
+            status = "⏳ 追跡中"
+        out.at[idx, "outcome_status"] = status
+        out.at[idx, "last_updated"] = now_ts
+
+    return normalize_alert_history(out)
+
+
+def summarize_alert_history(history: pd.DataFrame | None) -> dict:
+    """Headline performance metrics for the persisted real alert log."""
+    h = normalize_alert_history(history)
+    if h.empty:
+        return {
+            "alerts": 0, "tracked": 0, "win_5d": None,
+            "avg_5d": None, "avg_10d": None,
+        }
+    r5 = pd.to_numeric(h["ret_5d"], errors="coerce").dropna()
+    r10 = pd.to_numeric(h["ret_10d"], errors="coerce").dropna()
+    tracked = int(pd.to_numeric(h["entry_price"], errors="coerce").notna().sum())
+    return {
+        "alerts": int(len(h)),
+        "tracked": tracked,
+        "win_5d": float((r5 > 0).mean() * 100.0) if not r5.empty else None,
+        "avg_5d": float(r5.mean()) if not r5.empty else None,
+        "avg_10d": float(r10.mean()) if not r10.empty else None,
+    }
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
