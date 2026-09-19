@@ -518,6 +518,46 @@ priority_alerts = build_priority_alerts(
     validation_ready=active_condition is not None,
 )
 
+st.markdown("## 🧭 初回セットアップ")
+_has_backtest = st.session_state.get("short_cover_backtest") is not None
+_has_saved_version = _versions is not None and not _versions.empty
+_has_active_version = _saved_active is not None
+
+_s1, _s2, _s3 = st.columns(3)
+_s1.metric(
+    "1. バックテスト",
+    "✅ 完了" if _has_backtest else "① 未実行",
+)
+_s2.metric(
+    "2. 条件保存",
+    "✅ 保存済み" if _has_saved_version else "② 未保存",
+)
+_s3.metric(
+    "3. 条件有効化",
+    "✅ 有効" if _has_active_version else "③ 未有効",
+)
+
+if not _has_backtest:
+    st.info(
+        "まず左の「🧪 バックテスト」設定を確認して、下の「▶️ バックテストを実行」を押してください。"
+        " 最適条件ファインダーがROBUST/PROMISING候補を作ります。"
+    )
+elif not _has_saved_version:
+    st.info(
+        "バックテスト結果ができました。下の「最適条件ファインダー」で内容を確認し、"
+        "「💾 現在の最適条件を新バージョン保存」を押してください。"
+    )
+elif not _has_active_version:
+    st.info(
+        "条件は保存済みです。下の「条件バージョン管理」で保存済み条件を選び、"
+        "「✅ このバージョンを有効化」を押すと検証済み優先度へ切り替わります。"
+    )
+else:
+    st.success(
+        f"検証済み条件を使用中です：{_saved_active.get('version_id', '')} "
+        f"{_saved_active.get('condition_text', '')}"
+    )
+
 st.markdown("## 🚨 今日の最優先チェック")
 st.caption(
     (
