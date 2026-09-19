@@ -2197,7 +2197,12 @@ def activate_condition_version(
     if out.empty or version_id not in set(out["version_id"].astype(str)):
         return out
     out["is_active"] = out["version_id"].astype(str) == str(version_id)
-    out.loc[out["is_active"], "activated_at"] = pd.Timestamp.now()
+
+    # Pandas 3 may infer datetime64[s] after CSV/concat normalization.
+    # Assign at second precision so activation works across pandas 2.x/3.x.
+    activated_at = pd.Timestamp.now().floor("s")
+    out["activated_at"] = pd.to_datetime(out["activated_at"], errors="coerce").astype("datetime64[ns]")
+    out.loc[out["is_active"], "activated_at"] = activated_at
     return normalize_condition_versions(out)
 
 
