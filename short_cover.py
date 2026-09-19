@@ -1322,6 +1322,86 @@ def optimize_short_cover_thresholds(
     return out.reset_index(drop=True)
 
 
+
+def apply_optimizer_condition(
+    current: pd.DataFrame,
+    condition,
+) -> pd.DataFrame:
+    """Apply one optimizer threshold row to the current live ranking.
+
+    Returns the original rows plus:
+    - optimizer_match: all five thresholds are satisfied
+    - optimizer_label: ROBUST/PROMISING match label
+    - match_strength: 0-100 score based on how far the row clears thresholds
+    - condition_text: compact threshold description
+    """
+    if current is None or current.empty:
+        return pd.DataFrame() if current is None else current.copy()
+
+    out = current.copy()
+    out["optimizer_match"] = False
+    out["optimizer_label"] = ""
+    out["match_strength"] = 0.0
+    out["condition_text"] = ""
+
+    if condition is None:
+        return out
+
+    try:
+        robustness = str(condition.get("robustness", ""))
+    except Exception:
+        return out
+
+    if robustness not in {"🟢 ROBUST", "🟡 PROMISING"}:
+        return out
+
+    thresholds = {
+        "cover_score": float(condition.get("cover_min", 0) or 0),
+        "ignition_score": float(condition.get("ignition_min", 0) or 0),
+        "long_demand_score": float(condition.get("long_min", 0) or 0),
+        "short_pressure": float(condition.get("pressure_min", 0) or 0),
+        "confidence": float(condition.get("confidence_min", 0) or 0),
+    }
+
+    numeric = {}
+    for col, threshold in thresholds.items():
+        numeric[col] = pd.to_numeric(out.get(col), errors="coerce").fillna(-1e9)
+
+    mask = pd.Series(True, index=out.index)
+    for col, threshold in thresholds.items():
+        mask &= numeric[col] >= threshold
+
+    out["optimizer_match"] = mask
+
+    label = "⭐ ROBUST MATCH" if robustness == "🟢 ROBUST" else "🟡 PROMISING MATCH"
+    out.loc[mask, "optimizer_label"] = label
+
+    # Strength rewards clearance above each threshold, capped at +20 points per factor.
+    strength = pd.Series(0.0, index=out.index)
+    active_factors = 0
+    for col, threshold in thresholds.items():
+        # Threshold 0 means the optimizer did not require this factor.
+        if threshold <= 0:
+            continue
+        active_factors += 1
+        excess = (numeric[col] - threshold).clip(lower=0, upper=20)
+        strength += excess / 20.0 * 100.0
+
+    if active_factors > 0:
+        strength = strength / active_factors
+    out["match_strength"] = strength.where(mask, 0.0).round(1)
+
+    condition_text = (
+        f"C{int(thresholds['cover_score'])}/"
+        f"I{int(thresholds['ignition_score'])}/"
+        f"L{int(thresholds['long_demand_score'])}/"
+        f"P{int(thresholds['short_pressure'])}/"
+        f"Q{int(thresholds['confidence'])}"
+    )
+    out["condition_text"] = condition_text
+    return out
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
