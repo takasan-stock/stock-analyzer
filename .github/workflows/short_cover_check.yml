@@ -1,0 +1,26 @@
+name: Short Cover syntax check
+
+on:
+  pull_request:
+    paths:
+      - "short_cover.py"
+      - "pages/8_Short_Cover_Hunter.py"
+      - ".github/workflows/short_cover_check.yml"
+  workflow_dispatch:
+
+jobs:
+  py-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Short Cover files
+        run: |
+          python -m py_compile short_cover.py
+          python -m py_compile pages/8_Short_Cover_Hunter.py
