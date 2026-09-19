@@ -1402,6 +1402,157 @@ def apply_optimizer_condition(
     return out
 
 
+
+def build_priority_alerts(
+    current: pd.DataFrame,
+    promotions: pd.DataFrame | None = None,
+    limit: int = 5,
+) -> pd.DataFrame:
+    """Rank today's Short Cover candidates by review priority.
+
+    This is an attention-priority score, not a return forecast or buy signal.
+    It deliberately emphasizes:
+    1) validation against ROBUST/PROMISING historical thresholds,
+    2) a fresh day-over-day promotion,
+    3) current phase/regime,
+    4) data confidence and volume confirmation.
+    """
+    columns = [
+        "ticker", "name", "alert_score", "alert_tier", "alert_reason",
+        "phase", "regime", "optimizer_label", "match_strength",
+        "cover_score", "ignition_score", "long_demand_score",
+        "short_pressure", "confidence", "vol_ratio", "rs_watch",
+        "is_promotion", "promotion_reason",
+    ]
+    if current is None or current.empty:
+        return pd.DataFrame(columns=columns)
+
+    out = current.copy()
+
+    promo_map: dict[str, dict] = {}
+    if promotions is not None and not promotions.empty and "ticker" in promotions.columns:
+        for _, r in promotions.iterrows():
+            promo_map[str(r.get("ticker", ""))] = r.to_dict()
+
+    phase_points = {
+        "NORMAL": 0.0,
+        "🧱 SHORT BUILDUP": 20.0,
+        "👀 COVER WATCH": 50.0,
+        "🔥 COVER EARLY": 78.0,
+        "✅ COVER CONFIRMED": 90.0,
+        "🚀 SQUEEZE": 100.0,
+    }
+    regime_points = {
+        "🔥 COVER + NEW MONEY": 100.0,
+        "⚠️ PURE SHORT COVER": 60.0,
+        "🟢 NEW MONEY": 55.0,
+        "⚪ NEUTRAL": 25.0,
+    }
+
+    rows = []
+    for _, r in out.iterrows():
+        ticker = str(r.get("ticker", ""))
+        promo = promo_map.get(ticker)
+
+        label = str(r.get("optimizer_label", "") or "")
+        match_strength = (
+            float(r.get("match_strength"))
+            if pd.notna(r.get("match_strength"))
+            else 0.0
+        )
+        if label == "⭐ ROBUST MATCH":
+            validation = min(100.0, 70.0 + match_strength * 0.30)
+        elif label == "🟡 PROMISING MATCH":
+            validation = min(85.0, 45.0 + match_strength * 0.25)
+        else:
+            validation = 0.0
+
+        freshness = 0.0
+        is_promotion = promo is not None
+        promotion_reason = ""
+        if promo is not None:
+            phase_jump = max(0.0, float(promo.get("phase_jump") or 0.0))
+            cover_delta = max(0.0, float(promo.get("cover_delta") or 0.0))
+            ignition_delta = max(0.0, float(promo.get("ignition_delta") or 0.0))
+            freshness = 35.0
+            freshness += min(30.0, phase_jump * 18.0)
+            freshness += min(15.0, cover_delta * 0.8)
+            freshness += min(10.0, ignition_delta * 0.4)
+            if _truthy(promo.get("fresh_breakout")):
+                freshness += 7.0
+            if _truthy(promo.get("fresh_avwap_reclaim")):
+                freshness += 5.0
+            freshness = min(100.0, freshness)
+            promotion_reason = str(promo.get("promotion_reason", "") or "")
+
+        phase = str(r.get("phase", "NORMAL"))
+        regime = str(r.get("regime", "⚪ NEUTRAL"))
+        phase_component = phase_points.get(phase, 0.0)
+        regime_component = regime_points.get(regime, 25.0)
+
+        confidence = (
+            max(0.0, min(100.0, float(r.get("confidence"))))
+            if pd.notna(r.get("confidence"))
+            else 0.0
+        )
+        vol = float(r.get("vol_ratio")) if pd.notna(r.get("vol_ratio")) else 0.0
+        volume_component = max(0.0, min(100.0, (vol - 1.0) / 2.0 * 100.0))
+
+        alert_score = (
+            validation * 0.30
+            + freshness * 0.25
+            + phase_component * 0.20
+            + regime_component * 0.10
+            + confidence * 0.10
+            + volume_component * 0.05
+        )
+        alert_score = round(min(100.0, max(0.0, alert_score)), 1)
+
+        if alert_score >= 80:
+            tier = "🚨 A+ 最優先確認"
+        elif alert_score >= 70:
+            tier = "🔥 A 優先確認"
+        elif alert_score >= 58:
+            tier = "🟡 B 監視"
+        else:
+            tier = "⚪ C 通常"
+
+        reasons = []
+        if label:
+            reasons.append(label)
+        if is_promotion:
+            reasons.append("⚡ 今日昇格")
+        if phase in {"🔥 COVER EARLY", "✅ COVER CONFIRMED", "🚀 SQUEEZE"}:
+            reasons.append(phase)
+        if regime == "🔥 COVER + NEW MONEY":
+            reasons.append("新規資金併走")
+        if vol >= 2.0:
+            reasons.append(f"出来高{vol:.1f}x")
+        elif vol >= 1.5:
+            reasons.append(f"出来高{vol:.1f}x")
+        if confidence >= 70:
+            reasons.append("信頼度高")
+
+        item = r.to_dict()
+        item.update({
+            "alert_score": alert_score,
+            "alert_tier": tier,
+            "alert_reason": " / ".join(reasons[:5]) if reasons else "通常監視",
+            "is_promotion": is_promotion,
+            "promotion_reason": promotion_reason,
+        })
+        rows.append(item)
+
+    result = pd.DataFrame(rows)
+    result = result.sort_values(
+        ["alert_score", "match_strength", "cover_score", "ignition_score"],
+        ascending=False,
+    ).reset_index(drop=True)
+    if limit and int(limit) > 0:
+        result = result.head(int(limit)).copy()
+    return result
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
