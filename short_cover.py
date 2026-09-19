@@ -1937,6 +1937,141 @@ def compare_live_vs_backtest(
     return result
 
 
+
+def build_reoptimization_comparison(
+    backtest: pd.DataFrame | None,
+    active_condition,
+    horizon: int = 5,
+    recent_fraction: float = 0.65,
+    train_fraction: float = 0.65,
+    min_train_signals: int = 6,
+    min_test_signals: int = 3,
+) -> dict:
+    """Build an old-vs-reoptimized comparison on a recent chronological window.
+
+    The new candidate is optimized only inside the recent window and both the old
+    and new conditions are compared on the *same* recent holdout dates. Nothing
+    is adopted automatically.
+    """
+    result = {
+        "status": "⚪ INSUFFICIENT",
+        "message": "再最適化に必要なデータが不足しています。",
+        "old_condition": condition_text_from_row(active_condition),
+        "new_condition": "",
+        "old_n": 0, "new_n": 0,
+        "old_avg": None, "new_avg": None,
+        "old_win": None, "new_win": None,
+        "old_mfe": None, "new_mfe": None,
+        "old_mae": None, "new_mae": None,
+        "avg_improvement": None,
+        "win_improvement": None,
+        "candidate_robustness": "",
+        "candidate_stability": None,
+        "holdout_start": None,
+        "holdout_end": None,
+        "candidate": None,
+    }
+    if backtest is None or backtest.empty or active_condition is None:
+        return result
+
+    horizon = int(horizon)
+    if horizon not in (1, 3, 5, 10):
+        horizon = 5
+    ret_col = f"ret_{horizon}d"
+
+    bt = backtest.copy()
+    bt["signal_date"] = pd.to_datetime(bt["signal_date"], errors="coerce").dt.normalize()
+    bt = bt.dropna(subset=["signal_date", ret_col]).sort_values("signal_date")
+    dates = sorted(bt["signal_date"].unique())
+    if len(dates) < 10:
+        return result
+
+    keep_n = max(10, int(round(len(dates) * float(recent_fraction))))
+    recent_dates = set(dates[-keep_n:])
+    recent_bt = bt[bt["signal_date"].isin(recent_dates)].copy()
+
+    candidates = optimize_short_cover_thresholds(
+        recent_bt,
+        horizon=horizon,
+        train_fraction=train_fraction,
+        min_train_signals=min_train_signals,
+        min_test_signals=min_test_signals,
+        top_train_candidates=30,
+    )
+    if candidates.empty:
+        result["message"] = "最近のデータでは再最適化候補を作れませんでした。"
+        return result
+
+    preferred = candidates[
+        candidates["robustness"].isin(["🟢 ROBUST", "🟡 PROMISING"])
+    ]
+    candidate = preferred.iloc[0] if not preferred.empty else candidates.iloc[0]
+
+    test_start = pd.Timestamp(candidate["test_start"]).normalize()
+    test_end = pd.Timestamp(candidate["test_end"]).normalize()
+    holdout = recent_bt[
+        (recent_bt["signal_date"] >= test_start)
+        & (recent_bt["signal_date"] <= test_end)
+    ].copy()
+    if holdout.empty:
+        result["message"] = "共通ホールドアウト期間を作れませんでした。"
+        return result
+
+    old_rows = _filter_backtest_by_condition(holdout, active_condition)
+    new_rows = _filter_backtest_by_condition(holdout, candidate)
+    old_stats = _condition_stats(old_rows, ret_col)
+    new_stats = _condition_stats(new_rows, ret_col)
+
+    result.update({
+        "old_n": old_stats["n"],
+        "new_n": new_stats["n"],
+        "old_avg": old_stats["avg"],
+        "new_avg": new_stats["avg"],
+        "old_win": old_stats["win"],
+        "new_win": new_stats["win"],
+        "old_mfe": old_stats["mfe"],
+        "new_mfe": new_stats["mfe"],
+        "old_mae": old_stats["mae"],
+        "new_mae": new_stats["mae"],
+        "new_condition": condition_text_from_row(candidate),
+        "candidate_robustness": candidate.get("robustness", ""),
+        "candidate_stability": candidate.get("stability_score"),
+        "holdout_start": test_start,
+        "holdout_end": test_end,
+        "candidate": candidate.to_dict(),
+    })
+
+    if old_stats["avg"] is not None and new_stats["avg"] is not None:
+        result["avg_improvement"] = float(new_stats["avg"] - old_stats["avg"])
+    if old_stats["win"] is not None and new_stats["win"] is not None:
+        result["win_improvement"] = float(new_stats["win"] - old_stats["win"])
+
+    if new_stats["n"] < int(min_test_signals):
+        result["status"] = "⚪ INSUFFICIENT"
+        result["message"] = "新条件の共通検証サンプルが不足しています。"
+        return result
+
+    avg_gain = result["avg_improvement"]
+    win_gain = result["win_improvement"]
+    robust = str(candidate.get("robustness", "")) in {"🟢 ROBUST", "🟡 PROMISING"}
+
+    if (
+        robust
+        and avg_gain is not None and avg_gain > 0.75
+        and (win_gain is None or win_gain >= -5.0)
+    ):
+        result["status"] = "🟢 RESEARCH CANDIDATE"
+        result["message"] = "最近の共通ホールドアウトでは新条件が旧条件を上回っています。採用前に追加検証対象です。"
+    elif avg_gain is not None and avg_gain > 0:
+        result["status"] = "🟡 SMALL IMPROVEMENT"
+        result["message"] = "改善は見られますが、差はまだ小さいため旧条件を維持して観察します。"
+    else:
+        result["status"] = "⚪ KEEP CURRENT"
+        result["message"] = "最近の共通検証では、新条件へ替える明確な優位性は確認できません。"
+
+    return result
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
