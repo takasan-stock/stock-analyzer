@@ -1515,12 +1515,22 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
     focus = focus[:limit]
     for item in focus:
         priority_score = item.get("priority_score", 0)
-        if priority_score >= 6:
+        tags = set(item.get("tags", []))
+
+        # Aランクは「強い単独シグナル」または「複数の強い条件が重なる」場合。
+        # これにより、Aがゼロになり続ける一方でAだらけになるのも防ぐ。
+        strong_combo = priority_score >= 4 and len(tags) >= 2
+        critical_warning = bool(
+            {"要注意", "決算本日", "決算直前"} & tags
+        )
+
+        if priority_score >= 6 or strong_combo or critical_warning:
             item["priority_rank"] = "A"
         elif priority_score >= 3:
             item["priority_rank"] = "B"
         else:
             item["priority_rank"] = "C"
+
         item["summary"] = summarize_focus_reason(item)
     return focus
 
@@ -2176,7 +2186,10 @@ if not _focus_df.empty:
                 f"🟡 B {_rank_counts['B']}銘柄　"
                 f"⚪ C {_rank_counts['C']}銘柄"
             )
-            st.caption("A＝最優先チェック / B＝次に確認 / C＝時間があれば確認")
+            st.caption(
+                "A＝強い単独シグナルまたは複数条件が重なる最優先 / "
+                "B＝次に確認 / C＝時間があれば確認"
+            )
 
             def _render_focus_item(_item, _rank):
                 _chg = _item.get("change_pct")
