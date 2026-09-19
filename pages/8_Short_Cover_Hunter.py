@@ -198,6 +198,47 @@ def save_alert_history(history: pd.DataFrame) -> tuple[bool, str]:
         put_resp = requests.put(url, headers=headers, json=payload, timeout=15)
         if put_resp.status_code in (200, 201):
             return True, "GitHubへ保存"
+
+        # Another Streamlit session may have updated the same CSV after our GET.
+        # On GitHub SHA conflict, merge the newest remote rows and retry once.
+        if put_resp.status_code == 409:
+            latest = requests.get(
+                url,
+                headers=headers,
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if latest.status_code == 200:
+                remote_b64 = latest.json().get("content", "").replace("\n", "")
+                remote_text = base64.b64decode(remote_b64).decode("utf-8-sig")
+                remote_df = normalize_alert_history(pd.read_csv(io.StringIO(remote_text)))
+                merged = normalize_alert_history(
+                    pd.concat([history, remote_df], ignore_index=True)
+                )
+                merged_export = merged.copy()
+                for col in ["alert_date", "entry_date", "last_updated"]:
+                    merged_export[col] = pd.to_datetime(
+                        merged_export[col], errors="coerce"
+                    ).dt.strftime("%Y-%m-%d %H:%M:%S")
+                merged_text = merged_export.to_csv(index=False, encoding="utf-8-sig")
+                retry_payload = {
+                    "message": f"Merge Short Cover alert history - {pd.Timestamp.now():%Y-%m-%d %H:%M}",
+                    "content": base64.b64encode(
+                        merged_text.encode("utf-8")
+                    ).decode("utf-8"),
+                    "branch": config["branch"],
+                    "sha": latest.json().get("sha"),
+                }
+                retry = requests.put(
+                    url, headers=headers, json=retry_payload, timeout=15
+                )
+                if retry.status_code in (200, 201):
+                    with open(
+                        ALERT_HISTORY_FILE, "w", encoding="utf-8-sig", newline=""
+                    ) as f:
+                        f.write(merged_text)
+                    return True, "GitHub競合をマージして保存"
+
         return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
     except requests.exceptions.RequestException as e:
         return False, f"GitHub通信エラー: {e}"
@@ -270,6 +311,54 @@ def save_condition_versions(versions: pd.DataFrame) -> tuple[bool, str]:
         put_resp = requests.put(url, headers=headers, json=payload, timeout=15)
         if put_resp.status_code in (200, 201):
             return True, "GitHubへ保存"
+
+        if put_resp.status_code == 409:
+            latest = requests.get(
+                url,
+                headers=headers,
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if latest.status_code == 200:
+                remote_b64 = latest.json().get("content", "").replace("\n", "")
+                remote_text = base64.b64decode(remote_b64).decode("utf-8-sig")
+                remote_df = normalize_condition_versions(
+                    pd.read_csv(io.StringIO(remote_text))
+                )
+                # Keep the current session's explicit activation decision while
+                # retaining versions created by another concurrent session.
+                local_ids = set(versions["version_id"].astype(str))
+                remote_only = remote_df[
+                    ~remote_df["version_id"].astype(str).isin(local_ids)
+                ].copy()
+                merged = normalize_condition_versions(
+                    pd.concat([versions, remote_only], ignore_index=True)
+                )
+                merged_export = merged.copy()
+                for col in ["created_at", "activated_at"]:
+                    merged_export[col] = pd.to_datetime(
+                        merged_export[col], errors="coerce"
+                    ).dt.strftime("%Y-%m-%d %H:%M:%S")
+                merged_text = merged_export.to_csv(index=False, encoding="utf-8-sig")
+                retry_payload = {
+                    "message": f"Merge Short Cover condition versions - {pd.Timestamp.now():%Y-%m-%d %H:%M}",
+                    "content": base64.b64encode(
+                        merged_text.encode("utf-8")
+                    ).decode("utf-8"),
+                    "branch": config["branch"],
+                    "sha": latest.json().get("sha"),
+                }
+                retry = requests.put(
+                    url, headers=headers, json=retry_payload, timeout=15
+                )
+                if retry.status_code in (200, 201):
+                    with open(
+                        CONDITION_HISTORY_FILE, "w",
+                        encoding="utf-8-sig", newline=""
+                    ) as f:
+                        f.write(merged_text)
+                    return True, "GitHub競合をマージして保存"
+
         return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
     except requests.exceptions.RequestException as e:
         return False, f"GitHub通信エラー: {e}"
