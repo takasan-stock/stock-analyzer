@@ -1286,6 +1286,48 @@ def calc_risk_reward(current_price, target_str, stop_str):
     return reward_pct / risk_pct, reward_pct, risk_pct
 
 
+def summarize_focus_reason(item: dict) -> str:
+    """今日見るべき理由を、追加APIなしのルールベースで一言要約する。"""
+    tags = set(item.get("tags", []))
+    rr = item.get("rr")
+    chg = item.get("change_pct")
+    vr = item.get("vol_ratio")
+    earnings_days = item.get("earnings_days")
+    risk_pct = item.get("risk_pct")
+    focus_type = item.get("focus_type")
+
+    if focus_type == "warning":
+        if "要注意" in tags:
+            return "損切りライン到達。まずリスク管理を確認"
+        if "損切り接近" in tags:
+            return f"損切りラインまで残り{risk_pct:.1f}%前後。管理優先" if risk_pct is not None else "損切りライン接近。管理優先"
+        if "決算本日" in tags:
+            return "本日決算。発表前後の値動きとポジション管理を確認"
+        if "決算直前" in tags:
+            return f"決算まで{earnings_days}日。イベント前の持ち越し判断を確認" if earnings_days is not None else "決算直前。持ち越し判断を確認"
+        if "決算7日以内" in tags:
+            return f"決算まで{earnings_days}日。期待先行・ギャップリスクに注意" if earnings_days is not None else "決算が近い。期待先行とギャップリスクに注意"
+        if "急落" in tags:
+            return f"前日比{chg:+.1f}%の急落。材料と需給悪化の有無を確認" if chg is not None else "急落中。材料と需給悪化の有無を確認"
+        if "RR低め" in tags:
+            return f"RR 1:{rr:.1f}で妙味が低下。目標・損切り設定を再確認" if rr is not None else "RRが低め。目標・損切り設定を再確認"
+        return "注意要因が優勢。決算・値動き・損切りラインを優先確認"
+
+    if "RR良好" in tags and "出来高急増" in tags:
+        return f"RR 1:{rr:.1f}に加え出来高急増。値動き継続を確認" if rr is not None else "RR良好かつ出来高急増。値動き継続を確認"
+    if "RR良好" in tags and "材料ホット" in tags:
+        return f"新鮮な材料＋RR 1:{rr:.1f}。押し目と出来高を確認" if rr is not None else "新鮮な材料＋RR良好。押し目と出来高を確認"
+    if "出来高急増" in tags and "急騰" in tags:
+        return f"出来高を伴う{chg:+.1f}%上昇。ブレイク継続性を確認" if chg is not None else "出来高を伴う上昇。ブレイク継続性を確認"
+    if "材料ホット" in tags:
+        return "材料が新しい。市場の織り込み度と出来高反応を確認"
+    if rr is not None and rr >= 2:
+        return f"RR 1:{rr:.1f}で条件良好。エントリー位置を確認"
+    if vr is not None and vr >= 2:
+        return f"出来高{vr:.1f}倍。資金流入の継続性を確認"
+    return "複数の好材料が重なっているため優先チェック"
+
+
 def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dict | None = None, limit: int = 5) -> list:
     """
     今日チェックする優先度を、注意喚起とチャンスの両面から算出する。
@@ -1457,6 +1499,7 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
                 "rr": rr,
                 "reward_pct": reward_pct,
                 "risk_pct": risk_pct,
+                "vol_ratio": vr,
                 "earnings_date": earnings_date,
                 "earnings_days": earnings_days,
             })
@@ -1468,7 +1511,10 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
             -abs(x["change_pct"] or 0),
         )
     )
-    return focus[:limit]
+    focus = focus[:limit]
+    for item in focus:
+        item["summary"] = summarize_focus_reason(item)
+    return focus
 
 def build_daily_summary_md(df, news_batch: dict, prices: dict) -> str:
     """
@@ -2045,7 +2091,8 @@ if not _focus_df.empty:
         ):
             st.caption(
                 "出来高・値動き・24時間ニュース・材料の鮮度・決算接近・損切り接近・RRを統合。"
-                "チャンス候補と警戒候補を分けて表示します。売買推奨ではなく確認優先度です。"
+                "チャンス候補と警戒候補を分け、各銘柄に『なぜ今見るか』の一言要約を表示します。"
+                "売買推奨ではなく確認優先度です。"
             )
 
             _opportunity_items = [
@@ -2062,6 +2109,7 @@ if not _focus_df.empty:
                     f"【{tag}】" for tag in _item.get("tags", [])[:3]
                 )
                 _reason_text = " / ".join(_item.get("reasons", [])[:5])
+                _summary_text = _item.get("summary", "")
 
                 _rr = _item.get("rr")
                 if _rr is not None:
@@ -2075,6 +2123,7 @@ if not _focus_df.empty:
                     f"¥{_item['price']:,.0f}（{_chg_text}）　"
                     f"{_item['status']}　**{_rr_text}**  "
                     + (f"\n{_tag_text}  " if _tag_text else "")
+                    + (f"\n**ひとこと：{_summary_text}**  " if _summary_text else "")
                     + f"\n↳ {_reason_text}"
                 )
 
