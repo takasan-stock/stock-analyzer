@@ -331,6 +331,13 @@ def save_condition_versions(versions: pd.DataFrame) -> tuple[bool, str]:
                 remote_only = remote_df[
                     ~remote_df["version_id"].astype(str).isin(local_ids)
                 ].copy()
+
+                # If this session explicitly has an active version, preserve it
+                # during conflict resolution. Concurrent remote-only versions
+                # remain in history but are not allowed to steal activation.
+                if versions["is_active"].any():
+                    remote_only["is_active"] = False
+
                 merged = normalize_condition_versions(
                     pd.concat([versions, remote_only], ignore_index=True)
                 )
