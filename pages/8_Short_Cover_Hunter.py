@@ -11,6 +11,7 @@ import yfinance as yf
 from short_cover import (
     backtest_short_cover,
     build_price_feature_snapshots,
+    build_priority_alerts,
     build_promotion_table,
     build_short_metrics,
     candidate_tickers,
@@ -195,6 +196,60 @@ promotions = promotions.merge(
     on="ticker",
     how="left",
 ) if not promotions.empty else promotions
+
+priority_alerts = build_priority_alerts(
+    scored,
+    promotions=promotions,
+    limit=5,
+)
+
+st.markdown("## 🚨 今日の最優先チェック")
+st.caption(
+    "過去検証との一致・今日の昇格・Phase・資金フロー・信頼度・出来高を統合した確認優先度です。"
+)
+if priority_alerts.empty:
+    st.info("現在、優先表示できる候補はありません。")
+else:
+    _priority = priority_alerts.copy()
+    _pcols = st.columns(min(5, len(_priority)))
+    for _idx, (_, _r) in enumerate(_priority.iterrows()):
+        with _pcols[_idx]:
+            st.metric(
+                label=f"{_r['alert_tier']}",
+                value=f"{_r['alert_score']:.0f}",
+                delta=f"{_r['ticker']} {_r['name']}",
+            )
+            st.caption(
+                f"{_r['alert_reason']}  \\n"
+                f"Cover {_r['cover_score']:.0f}｜Ignition {_r['ignition_score']:.0f}｜"
+                f"Long {_r['long_demand_score']:.0f}"
+            )
+
+    _priority_show = _priority.copy()
+    _priority_show["優先度"] = _priority_show["alert_score"].map(lambda x: f"{float(x):.0f}")
+    _priority_show["出来高"] = _priority_show["vol_ratio"].map(lambda x: fmt_num(x, 2, "x"))
+    _priority_show["検証条件"] = _priority_show["optimizer_label"].replace("", "—")
+    _priority_show["今日昇格"] = _priority_show["is_promotion"].map(lambda x: "⚡" if bool(x) else "—")
+    _priority_cols = [
+        "alert_tier", "ticker", "name", "優先度", "検証条件", "今日昇格",
+        "phase", "regime", "cover_score", "ignition_score",
+        "long_demand_score", "short_pressure", "出来高", "confidence",
+        "alert_reason",
+    ]
+    _priority_labels = {
+        "alert_tier": "Tier", "ticker": "コード", "name": "銘柄",
+        "phase": "Phase", "regime": "資金フロー", "cover_score": "Cover",
+        "ignition_score": "Ignition", "long_demand_score": "Long",
+        "short_pressure": "Pressure", "confidence": "信頼度",
+        "alert_reason": "確認理由",
+    }
+    st.dataframe(
+        _priority_show[_priority_cols].rename(columns=_priority_labels),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+st.divider()
 
 filtered = scored[scored["cover_score"] >= min_score].copy()
 filtered.insert(0, "順位", range(1, len(filtered) + 1))
@@ -624,6 +679,19 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 今日の最優先チェック
+
+確認優先度は、次を統合した0〜100のスコアです。
+
+- 検証済みROBUST / PROMISING条件との一致 **30%**
+- 今日のPhase昇格・Cover/Ignition上昇 **25%**
+- 現在Phase **20%**
+- 資金フロー分類 **10%**
+- データ信頼度 **10%**
+- 出来高確認 **5%**
+
+A+ / A / B / C は売買判断ではなく、**今日どの候補から確認するか**の順番です。
 
 ### 検証済み条件マッチ
 
