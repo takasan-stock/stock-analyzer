@@ -40,14 +40,13 @@ def _archive_url(index: int) -> str:
     return f"{JPX_BASE}/markets/public/short-selling/00-archives-{index:02d}.html"
 
 
-def discover_jpx_excel_urls(archive_pages: int = 2, timeout: int = 20) -> tuple[list[str], list[str]]:
-    """Discover public JPX short-position Excel files from the current page and archives.
-
-    archive_pages=2 means current month + two archive pages (roughly 2-3 months).
-    The JPX page is the source of truth; no hard-coded daily filenames are used.
-    """
+def discover_jpx_excel_urls(
+    archive_pages: int = 2,
+    timeout: int = 20,
+) -> tuple[list[tuple[str, pd.Timestamp | None]], list[str]]:
+    """Discover JPX short-position Excel URLs plus their webpage publication date."""
     pages = [JPX_INDEX] + [_archive_url(i) for i in range(1, archive_pages + 1)]
-    urls: list[str] = []
+    items: list[tuple[str, pd.Timestamp | None]] = []
     errors: list[str] = []
     seen: set[str] = set()
     s = _session()
@@ -57,16 +56,49 @@ def discover_jpx_excel_urls(archive_pages: int = 2, timeout: int = 20) -> tuple[
             r = s.get(page, timeout=timeout)
             r.raise_for_status()
             text = r.text
-            hrefs = re.findall(r'href=["\']([^"\']+\.(?:xlsx|xls)(?:\?[^"\']*)?)["\']', text, flags=re.I)
-            for href in hrefs:
-                full = urljoin(page, href)
-                if full not in seen:
-                    seen.add(full)
-                    urls.append(full)
+
+            # Prefer row-level extraction so the date shown on the JPX page can be
+            # treated as the first date the workbook was publicly available.
+            found_in_rows = False
+            for row_html in re.findall(r"<tr[^>]*>(.*?)</tr>", text, flags=re.I | re.S):
+                hrefs = re.findall(
+                    r'href=["\']([^"\']+\.(?:xlsx|xls)(?:\?[^"\']*)?)["\']',
+                    row_html,
+                    flags=re.I,
+                )
+                if not hrefs:
+                    continue
+                date_match = re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", row_html)
+                pub_date = None
+                if date_match:
+                    pub_date = pd.Timestamp(
+                        year=int(date_match.group(1)),
+                        month=int(date_match.group(2)),
+                        day=int(date_match.group(3)),
+                    )
+                for href in hrefs:
+                    full = urljoin(page, href)
+                    if full not in seen:
+                        seen.add(full)
+                        items.append((full, pub_date))
+                        found_in_rows = True
+
+            # Fallback for future JPX HTML changes where table rows are not preserved.
+            if not found_in_rows:
+                hrefs = re.findall(
+                    r'href=["\']([^"\']+\.(?:xlsx|xls)(?:\?[^"\']*)?)["\']',
+                    text,
+                    flags=re.I,
+                )
+                for href in hrefs:
+                    full = urljoin(page, href)
+                    if full not in seen:
+                        seen.add(full)
+                        items.append((full, None))
         except Exception as e:
             errors.append(f"{page}: {e}")
 
-    return urls, errors
+    return items, errors
 
 
 def _clean_header(value) -> str:
@@ -145,7 +177,11 @@ def _detect_header_row(raw: pd.DataFrame, max_rows: int = 25) -> int | None:
     return None
 
 
-def parse_jpx_excel(content: bytes, source_url: str = "") -> pd.DataFrame:
+def parse_jpx_excel(
+    content: bytes,
+    source_url: str = "",
+    publication_date: pd.Timestamp | None = None,
+) -> pd.DataFrame:
     """Parse JPX disclosure workbook into normalized event rows.
 
     The workbook format has changed over time, so headers are detected by keywords.
@@ -194,12 +230,16 @@ def parse_jpx_excel(content: bytes, source_url: str = "") -> pd.DataFrame:
         out["short_ratio"] = df[ratio_col].map(_to_percent)
         out["short_shares"] = df[shares_col].map(_to_float) if shares_col else None
         out["source_url"] = source_url
+        out["publication_date"] = publication_date
         out = out[(out["ticker"] != "") & out["short_ratio"].notna()]
         if not out.empty:
             frames.append(out)
 
     if not frames:
-        return pd.DataFrame(columns=["ticker", "name", "seller", "calc_date", "short_ratio", "short_shares", "source_url"])
+        return pd.DataFrame(columns=[
+            "ticker", "name", "seller", "calc_date", "short_ratio",
+            "short_shares", "source_url", "publication_date",
+        ])
 
     result = pd.concat(frames, ignore_index=True)
     result = result.drop_duplicates(subset=["ticker", "seller", "calc_date", "short_ratio", "short_shares"], keep="last")
@@ -207,21 +247,26 @@ def parse_jpx_excel(content: bytes, source_url: str = "") -> pd.DataFrame:
 
 
 def load_jpx_events(archive_pages: int = 2, max_files: int = 70, workers: int = 8, timeout: int = 25) -> JpxLoadResult:
-    urls, errors = discover_jpx_excel_urls(archive_pages=archive_pages, timeout=timeout)
-    urls = urls[:max_files]
+    discovered, errors = discover_jpx_excel_urls(archive_pages=archive_pages, timeout=timeout)
+    discovered = discovered[:max_files]
     frames: list[pd.DataFrame] = []
 
-    def fetch_one(url: str) -> tuple[str, pd.DataFrame | None, str | None]:
+    def fetch_one(item: tuple[str, pd.Timestamp | None]) -> tuple[str, pd.DataFrame | None, str | None]:
+        url, publication_date = item
         try:
             s = _session()
             r = s.get(url, timeout=timeout)
             r.raise_for_status()
-            return url, parse_jpx_excel(r.content, source_url=url), None
+            return url, parse_jpx_excel(
+                r.content,
+                source_url=url,
+                publication_date=publication_date,
+            ), None
         except Exception as e:
             return url, None, str(e)
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, 10))) as ex:
-        futures = [ex.submit(fetch_one, u) for u in urls]
+        futures = [ex.submit(fetch_one, item) for item in discovered]
         for fut in as_completed(futures):
             url, frame, err = fut.result()
             if err:
@@ -232,7 +277,10 @@ def load_jpx_events(archive_pages: int = 2, max_files: int = 70, workers: int = 
     events = (
         pd.concat(frames, ignore_index=True)
         if frames
-        else pd.DataFrame(columns=["ticker", "name", "seller", "calc_date", "short_ratio", "short_shares", "source_url"])
+        else pd.DataFrame(columns=[
+            "ticker", "name", "seller", "calc_date", "short_ratio",
+            "short_shares", "source_url", "publication_date",
+        ])
     )
     if not events.empty:
         events["calc_date"] = pd.to_datetime(events["calc_date"], errors="coerce")
@@ -242,7 +290,7 @@ def load_jpx_events(archive_pages: int = 2, max_files: int = 70, workers: int = 
 
     return JpxLoadResult(
         events=events,
-        files_found=len(urls),
+        files_found=len(discovered),
         files_loaded=len(frames),
         pages_scanned=1 + archive_pages,
         errors=errors,
@@ -262,7 +310,11 @@ def load_uploaded_workbooks(files) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def build_short_metrics(events: pd.DataFrame, window_days: int = 75) -> pd.DataFrame:
+def build_short_metrics(
+    events: pd.DataFrame,
+    window_days: int = 75,
+    as_of_date: pd.Timestamp | str | None = None,
+) -> pd.DataFrame:
     """Build per-ticker disclosed short-position metrics from report events.
 
     Important: JPX daily files are report events, not a complete daily snapshot. We therefore
@@ -278,13 +330,28 @@ def build_short_metrics(events: pd.DataFrame, window_days: int = 75) -> pd.DataF
 
     ev = events.copy()
     ev["calc_date"] = pd.to_datetime(ev["calc_date"], errors="coerce")
+    if "publication_date" in ev.columns:
+        ev["publication_date"] = pd.to_datetime(ev["publication_date"], errors="coerce")
+    else:
+        ev["publication_date"] = pd.NaT
     ev = ev.dropna(subset=["calc_date"])
     if ev.empty:
         return pd.DataFrame(columns=columns)
 
-    newest = ev["calc_date"].max()
-    cutoff = newest - pd.Timedelta(days=window_days)
-    ev = ev[ev["calc_date"] >= cutoff].copy()
+    # publication_date is the no-lookahead availability date where known.
+    # Uploaded legacy workbooks may not carry it, so calculation date is the fallback.
+    ev["_available_date"] = ev["publication_date"].fillna(ev["calc_date"]).dt.normalize()
+
+    if as_of_date is not None:
+        anchor_date = pd.Timestamp(as_of_date).normalize()
+        ev = ev[ev["_available_date"] <= anchor_date].copy()
+        if ev.empty:
+            return pd.DataFrame(columns=columns)
+    else:
+        anchor_date = ev["_available_date"].max()
+
+    cutoff = anchor_date - pd.Timedelta(days=window_days)
+    ev = ev[ev["_available_date"] >= cutoff].copy()
 
     rows = []
     for ticker, tg in ev.groupby("ticker"):
@@ -323,7 +390,9 @@ def build_short_metrics(events: pd.DataFrame, window_days: int = 75) -> pd.DataF
         names = tg["name"].replace("nan", "").replace("None", "")
         name = next((str(v).strip() for v in reversed(names.tolist()) if str(v).strip()), "")
         last_date = max(x[3] for x in seller_latest)
-        age = max(0, (pd.Timestamp(datetime.now().date()) - pd.Timestamp(last_date).normalize()).days)
+        last_available = tg.loc[tg["calc_date"] == last_date, "_available_date"].max()
+        age_base = last_available if pd.notna(last_available) else pd.Timestamp(last_date).normalize()
+        age = max(0, (anchor_date - pd.Timestamp(age_base).normalize()).days)
         cover_breadth = decreases / comparable * 100 if comparable else None
         build_breadth = increases / comparable * 100 if comparable else None
 
