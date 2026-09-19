@@ -1559,7 +1559,7 @@ ALERT_HISTORY_COLUMNS = [
     "phase", "regime", "optimizer_label", "match_strength",
     "cover_score", "ignition_score", "long_demand_score",
     "short_pressure", "confidence", "vol_ratio", "rs_watch",
-    "alert_price", "alert_reason", "promotion_reason",
+    "alert_price", "alert_reason", "promotion_reason", "condition_text",
     "entry_date", "entry_price", "ret_1d", "ret_3d",
     "ret_5d", "ret_10d", "mfe_10d", "mae_10d",
     "outcome_status", "last_updated",
@@ -1645,6 +1645,7 @@ def append_priority_alert_history(
             "alert_price": price,
             "alert_reason": r.get("alert_reason", ""),
             "promotion_reason": r.get("promotion_reason", ""),
+            "condition_text": r.get("condition_text", ""),
             "entry_date": pd.NaT,
             "entry_price": None,
             "ret_1d": None,
@@ -1768,6 +1769,172 @@ def summarize_alert_history(history: pd.DataFrame | None) -> dict:
         "avg_5d": float(r5.mean()) if not r5.empty else None,
         "avg_10d": float(r10.mean()) if not r10.empty else None,
     }
+
+
+
+def condition_text_from_row(condition) -> str:
+    """Return the compact C/I/L/P/Q identity used by live history."""
+    if condition is None:
+        return ""
+    try:
+        return (
+            f"C{int(float(condition.get('cover_min', 0) or 0))}/"
+            f"I{int(float(condition.get('ignition_min', 0) or 0))}/"
+            f"L{int(float(condition.get('long_min', 0) or 0))}/"
+            f"P{int(float(condition.get('pressure_min', 0) or 0))}/"
+            f"Q{int(float(condition.get('confidence_min', 0) or 0))}"
+        )
+    except Exception:
+        return ""
+
+
+def _filter_backtest_by_condition(backtest: pd.DataFrame, condition) -> pd.DataFrame:
+    if backtest is None or backtest.empty or condition is None:
+        return pd.DataFrame() if backtest is None else backtest.copy()
+
+    thresholds = {
+        "cover_score": float(condition.get("cover_min", 0) or 0),
+        "ignition_score": float(condition.get("ignition_min", 0) or 0),
+        "long_demand_score": float(condition.get("long_min", 0) or 0),
+        "short_pressure": float(condition.get("pressure_min", 0) or 0),
+        "confidence": float(condition.get("confidence_min", 0) or 0),
+    }
+    mask = pd.Series(True, index=backtest.index)
+    for col, threshold in thresholds.items():
+        vals = pd.to_numeric(backtest.get(col), errors="coerce")
+        mask &= vals >= threshold
+    return backtest.loc[mask].copy()
+
+
+def compare_live_vs_backtest(
+    backtest: pd.DataFrame | None,
+    history: pd.DataFrame | None,
+    condition=None,
+    horizon: int = 5,
+    recent_live_n: int = 20,
+    min_live_signals: int = 5,
+) -> dict:
+    """Compare live alert performance with the historical benchmark for one condition.
+
+    The result is a drift/health monitor, not a forecast.
+    """
+    horizon = int(horizon)
+    if horizon not in (1, 3, 5, 10):
+        horizon = 5
+    ret_col = f"ret_{horizon}d"
+
+    result = {
+        "status": "⚪ DATA BUILDING",
+        "health_score": None,
+        "condition_text": condition_text_from_row(condition),
+        "backtest_n": 0,
+        "live_n": 0,
+        "backtest_avg": None,
+        "live_avg": None,
+        "avg_drift": None,
+        "backtest_win": None,
+        "live_win": None,
+        "win_drift": None,
+        "backtest_mfe": None,
+        "live_mfe": None,
+        "backtest_mae": None,
+        "live_mae": None,
+        "message": "実運用サンプルを蓄積中です。",
+    }
+
+    if backtest is None or backtest.empty:
+        result["message"] = "比較できるバックテスト結果がありません。"
+        return result
+
+    bt = _filter_backtest_by_condition(backtest, condition)
+    if ret_col not in bt.columns:
+        result["message"] = f"{horizon}日リターンのバックテスト列がありません。"
+        return result
+
+    bt_ret = pd.to_numeric(bt[ret_col], errors="coerce").dropna()
+    if bt_ret.empty:
+        result["message"] = "現在条件に一致するバックテストサンプルがありません。"
+        return result
+
+    hist = normalize_alert_history(history)
+    if hist.empty:
+        result["backtest_n"] = int(len(bt_ret))
+        result["backtest_avg"] = float(bt_ret.mean())
+        result["backtest_win"] = float((bt_ret > 0).mean() * 100.0)
+        return result
+
+    condition_id = result["condition_text"]
+    if condition_id:
+        hist = hist[hist["condition_text"].fillna("").astype(str) == condition_id].copy()
+
+    if ret_col not in hist.columns:
+        return result
+
+    hist[ret_col] = pd.to_numeric(hist[ret_col], errors="coerce")
+    hist = hist.dropna(subset=[ret_col]).sort_values("alert_date")
+    if recent_live_n and recent_live_n > 0:
+        hist = hist.tail(int(recent_live_n))
+
+    live_ret = hist[ret_col].dropna()
+
+    bt_avg = float(bt_ret.mean())
+    bt_win = float((bt_ret > 0).mean() * 100.0)
+    bt_mfe_s = pd.to_numeric(bt.get("mfe_10d"), errors="coerce").dropna()
+    bt_mae_s = pd.to_numeric(bt.get("mae_10d"), errors="coerce").dropna()
+
+    result.update({
+        "backtest_n": int(len(bt_ret)),
+        "backtest_avg": bt_avg,
+        "backtest_win": bt_win,
+        "backtest_mfe": float(bt_mfe_s.mean()) if not bt_mfe_s.empty else None,
+        "backtest_mae": float(bt_mae_s.mean()) if not bt_mae_s.empty else None,
+        "live_n": int(len(live_ret)),
+    })
+
+    if len(live_ret) < int(min_live_signals):
+        result["message"] = (
+            f"同一条件の実運用{horizon}日結果が{len(live_ret)}件。"
+            f"{min_live_signals}件までは劣化判定を保留します。"
+        )
+        return result
+
+    live_avg = float(live_ret.mean())
+    live_win = float((live_ret > 0).mean() * 100.0)
+    live_mfe_s = pd.to_numeric(hist.get("mfe_10d"), errors="coerce").dropna()
+    live_mae_s = pd.to_numeric(hist.get("mae_10d"), errors="coerce").dropna()
+    avg_drift = live_avg - bt_avg
+    win_drift = live_win - bt_win
+
+    # Tolerances expand with the historical edge so we do not overreact to normal noise.
+    avg_tolerance = max(1.0, abs(bt_avg) * 0.50)
+    severe_avg_tolerance = max(2.0, abs(bt_avg) * 1.00)
+
+    avg_penalty = max(0.0, -avg_drift / avg_tolerance) * 35.0
+    win_penalty = max(0.0, -win_drift / 10.0) * 20.0
+    health = max(0.0, min(100.0, 100.0 - avg_penalty - win_penalty))
+
+    if avg_drift >= -avg_tolerance and win_drift >= -10.0:
+        status = "🟢 STABLE"
+        message = "実運用成績はバックテストの想定レンジ内です。"
+    elif avg_drift >= -severe_avg_tolerance and win_drift >= -20.0:
+        status = "🟡 WATCH"
+        message = "実運用成績が弱含み。サンプル追加と条件の再検証を優先します。"
+    else:
+        status = "🔴 DEGRADED"
+        message = "実運用成績がバックテストから大きく悪化しています。条件の再最適化候補です。"
+
+    result.update({
+        "status": status,
+        "health_score": round(health, 1),
+        "live_avg": live_avg,
+        "avg_drift": avg_drift,
+        "live_win": live_win,
+        "win_drift": win_drift,
+        "live_mfe": float(live_mfe_s.mean()) if not live_mfe_s.empty else None,
+        "live_mae": float(live_mae_s.mean()) if not live_mae_s.empty else None,
+        "message": message,
+    })
+    return result
 
 
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
