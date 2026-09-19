@@ -8,6 +8,7 @@ from short_cover import (
     append_priority_alert_history,
     apply_optimizer_condition,
     build_priority_alerts,
+    clean_issue_name,
     compare_live_vs_backtest,
     get_active_condition_version,
     normalize_alert_history,
@@ -95,6 +96,51 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertIn(row["alert_tier"], {"🚨 A+ 最優先確認", "🔥 A 優先確認"})
         self.assertIn("ROBUST MATCH", row["alert_reason"])
         self.assertIn("今日昇格", row["alert_reason"])
+
+    def test_first_run_priority_is_provisional_without_validation(self):
+        current = pd.DataFrame([{
+            "ticker": "3333",
+            "name": "FIRST",
+            "phase": "✅ COVER CONFIRMED",
+            "regime": "🟢 NEW MONEY",
+            "cover_score": 82,
+            "ignition_score": 78,
+            "long_demand_score": 80,
+            "short_pressure": 70,
+            "confidence": 85,
+            "vol_ratio": 2.0,
+            "rs_watch": 90,
+            "snapshot_date": pd.Timestamp("2026-09-18"),
+            "optimizer_label": "",
+            "match_strength": 0,
+            "condition_text": "",
+        }])
+        promotions = pd.DataFrame([{
+            "ticker": "3333",
+            "phase_jump": 1,
+            "cover_delta": 10,
+            "ignition_delta": 15,
+            "fresh_breakout": True,
+            "fresh_avwap_reclaim": True,
+            "promotion_reason": "昇格",
+        }])
+
+        alerts = build_priority_alerts(
+            current,
+            promotions=promotions,
+            limit=5,
+            validation_ready=False,
+        )
+        row = alerts.iloc[0]
+        self.assertLess(float(row["alert_score"]), 80)
+        self.assertNotEqual(row["alert_tier"], "🚨 A+ 最優先確認")
+        self.assertIn("暫定", row["alert_tier"])
+        self.assertIn("未検証", row["alert_reason"])
+
+    def test_clean_issue_name_removes_common_stock_suffix(self):
+        self.assertEqual(clean_issue_name("ミナトホールディングス　普通株式"), "ミナトホールディングス")
+        self.assertEqual(clean_issue_name("ネクセラファーマ 普通株式"), "ネクセラファーマ")
+        self.assertEqual(clean_issue_name("Bitcoin Japan"), "Bitcoin Japan")
 
     def test_alert_history_dedup_keeps_latest_tracking_result(self):
         older = {

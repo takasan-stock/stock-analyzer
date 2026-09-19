@@ -515,11 +515,16 @@ priority_alerts = build_priority_alerts(
     scored,
     promotions=promotions,
     limit=5,
+    validation_ready=active_condition is not None,
 )
 
 st.markdown("## 🚨 今日の最優先チェック")
 st.caption(
-    "過去検証との一致・今日の昇格・Phase・資金フロー・信頼度・出来高を統合した確認優先度です。"
+    (
+        "検証済み条件＋今日の昇格・Phase・資金フロー・信頼度・出来高を統合した確認優先度です。"
+        if active_condition is not None
+        else "初回は未検証の暫定優先度です。バックテスト後にROBUST/PROMISING条件を反映します。"
+    )
 )
 if priority_alerts.empty:
     st.info("現在、優先表示できる候補はありません。")
@@ -533,8 +538,8 @@ else:
                 value=f"{_r['alert_score']:.0f}",
                 delta=f"{_r['ticker']} {_r['name']}",
             )
-            st.caption(
-                f"{_r['alert_reason']}  \\n"
+            st.markdown(
+                f"{_r['alert_reason']}  \n"
                 f"Cover {_r['cover_score']:.0f}｜Ignition {_r['ignition_score']:.0f}｜"
                 f"Long {_r['long_demand_score']:.0f}"
             )

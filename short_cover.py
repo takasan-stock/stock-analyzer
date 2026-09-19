@@ -166,6 +166,16 @@ def normalize_ticker(value) -> str:
     return text
 
 
+def clean_issue_name(value) -> str:
+    """Remove JPX security-type suffixes that add noise to display names."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    text = str(value).replace("\u3000", " ").strip()
+    text = re.sub(r"\s+(普通株式|普通株)$", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def _detect_header_row(raw: pd.DataFrame, max_rows: int = 25) -> int | None:
     for i in range(min(max_rows, len(raw))):
         cells = [_clean_header(v) for v in raw.iloc[i].tolist()]
@@ -224,7 +234,7 @@ def parse_jpx_excel(
 
         out = pd.DataFrame()
         out["ticker"] = df[code_col].map(normalize_ticker)
-        out["name"] = df[name_col].fillna("").astype(str).str.strip() if name_col else ""
+        out["name"] = df[name_col].map(clean_issue_name) if name_col else ""
         out["seller"] = df[seller_col].fillna("不明").astype(str).str.strip() if seller_col else "不明"
         out["calc_date"] = pd.to_datetime(df[date_col], errors="coerce") if date_col else pd.NaT
         out["short_ratio"] = df[ratio_col].map(_to_percent)
@@ -388,7 +398,7 @@ def build_short_metrics(
         ratio_sum = sum(x[1] for x in active)
         shares_sum = sum((x[2] or 0.0) for x in active)
         names = tg["name"].replace("nan", "").replace("None", "")
-        name = next((str(v).strip() for v in reversed(names.tolist()) if str(v).strip()), "")
+        name = clean_issue_name(next((str(v).strip() for v in reversed(names.tolist()) if str(v).strip()), ""))
         last_date = max(x[3] for x in seller_latest)
         last_available = tg.loc[tg["calc_date"] == last_date, "_available_date"].max()
         age_base = last_available if pd.notna(last_available) else pd.Timestamp(last_date).normalize()
@@ -1407,6 +1417,7 @@ def build_priority_alerts(
     current: pd.DataFrame,
     promotions: pd.DataFrame | None = None,
     limit: int = 5,
+    validation_ready: bool | None = None,
 ) -> pd.DataFrame:
     """Rank today's Short Cover candidates by review priority.
 
@@ -1428,6 +1439,12 @@ def build_priority_alerts(
         return pd.DataFrame(columns=columns)
 
     out = current.copy()
+
+    if validation_ready is None:
+        validation_ready = (
+            "condition_text" in out.columns
+            and out["condition_text"].fillna("").astype(str).str.len().gt(0).any()
+        )
 
     promo_map: dict[str, dict] = {}
     if promotions is not None and not promotions.empty and "ticker" in promotions.columns:
@@ -1498,26 +1515,47 @@ def build_priority_alerts(
         vol = float(r.get("vol_ratio")) if pd.notna(r.get("vol_ratio")) else 0.0
         volume_component = max(0.0, min(100.0, (vol - 1.0) / 2.0 * 100.0))
 
-        alert_score = (
-            validation * 0.30
-            + freshness * 0.25
-            + phase_component * 0.20
-            + regime_component * 0.10
-            + confidence * 0.10
-            + volume_component * 0.05
-        )
-        alert_score = round(min(100.0, max(0.0, alert_score)), 1)
+        if validation_ready:
+            alert_score = (
+                validation * 0.30
+                + freshness * 0.25
+                + phase_component * 0.20
+                + regime_component * 0.10
+                + confidence * 0.10
+                + volume_component * 0.05
+            )
+            alert_score = round(min(100.0, max(0.0, alert_score)), 1)
 
-        if alert_score >= 80:
-            tier = "🚨 A+ 最優先確認"
-        elif alert_score >= 70:
-            tier = "🔥 A 優先確認"
-        elif alert_score >= 58:
-            tier = "🟡 B 監視"
+            if alert_score >= 80:
+                tier = "🚨 A+ 最優先確認"
+            elif alert_score >= 70:
+                tier = "🔥 A 優先確認"
+            elif alert_score >= 58:
+                tier = "🟡 B 監視"
+            else:
+                tier = "⚪ C 通常"
         else:
-            tier = "⚪ C 通常"
+            # First-run / pre-validation mode: remain useful before a backtest has
+            # produced an active condition, but never imply ROBUST/A+ validation.
+            alert_score = (
+                freshness * 0.35
+                + phase_component * 0.30
+                + regime_component * 0.15
+                + confidence * 0.15
+                + volume_component * 0.05
+            )
+            alert_score = round(min(79.0, max(0.0, alert_score)), 1)
+
+            if alert_score >= 65:
+                tier = "🧪 A 暫定優先"
+            elif alert_score >= 52:
+                tier = "🟡 B 暫定監視"
+            else:
+                tier = "⚪ C 通常"
 
         reasons = []
+        if not validation_ready:
+            reasons.append("🧪 未検証")
         if label:
             reasons.append(label)
         if is_promotion:
