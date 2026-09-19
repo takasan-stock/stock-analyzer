@@ -1,15 +1,16 @@
-name: Short Cover syntax check
+name: Short Cover checks
 
 on:
   pull_request:
     paths:
       - "short_cover.py"
       - "pages/8_Short_Cover_Hunter.py"
+      - "tests/test_short_cover.py"
       - ".github/workflows/short_cover_check.yml"
   workflow_dispatch:
 
 jobs:
-  py-compile:
+  short-cover-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,7 +21,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests yfinance
+
       - name: Compile Short Cover files
         run: |
           python -m py_compile short_cover.py
           python -m py_compile pages/8_Short_Cover_Hunter.py
+          python -m py_compile tests/test_short_cover.py
+
+      - name: Run Short Cover regression tests
+        run: python -m unittest tests.test_short_cover -v
