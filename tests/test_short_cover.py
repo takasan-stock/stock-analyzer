@@ -141,6 +141,8 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertEqual(clean_issue_name("ミナトホールディングス　普通株式"), "ミナトホールディングス")
         self.assertEqual(clean_issue_name("ネクセラファーマ 普通株式"), "ネクセラファーマ")
         self.assertEqual(clean_issue_name("Bitcoin Japan"), "Bitcoin Japan")
+        self.assertEqual(clean_issue_name("B i t c o i n J a p a n"), "Bitcoin Japan")
+        self.assertEqual(clean_issue_name("A B C"), "ABC")
 
     def test_alert_history_dedup_keeps_latest_tracking_result(self):
         older = {
