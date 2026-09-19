@@ -16,6 +16,7 @@ from short_cover import (
     backtest_short_cover,
     build_price_feature_snapshots,
     build_priority_alerts,
+    build_reoptimization_comparison,
     build_promotion_table,
     build_short_metrics,
     candidate_tickers,
@@ -416,6 +417,82 @@ if _health is not None:
         f"BT {_health['backtest_n']}件 / 実運用 {_health['live_n']}件｜"
         f"{_health['message']}"
     )
+
+    if _health["status"] in {"🟡 WATCH", "🔴 DEGRADED"}:
+        _reopt = build_reoptimization_comparison(
+            _bt_for_health,
+            active_condition,
+            horizon=opt_horizon,
+            recent_fraction=0.65,
+            train_fraction=opt_train_fraction,
+            min_train_signals=6,
+            min_test_signals=3,
+        )
+        st.markdown("### 🔁 再最適化候補パネル")
+        st.caption(
+            "最近のデータだけで新条件を作り、旧条件と新条件を同じホールドアウト期間で比較します。"
+            "ここで良く見えても自動採用はしません。"
+        )
+
+        _rc1, _rc2, _rc3, _rc4 = st.columns(4)
+        _rc1.metric("判定", _reopt["status"])
+        _rc2.metric(
+            f"旧条件 {opt_horizon}日平均",
+            "—" if _reopt["old_avg"] is None else f"{_reopt['old_avg']:+.2f}%",
+        )
+        _rc3.metric(
+            f"新条件 {opt_horizon}日平均",
+            "—" if _reopt["new_avg"] is None else f"{_reopt['new_avg']:+.2f}%",
+            delta=(
+                None if _reopt["avg_improvement"] is None
+                else f"{_reopt['avg_improvement']:+.2f}pt"
+            ),
+        )
+        _rc4.metric(
+            "新条件安定度",
+            "—" if _reopt["candidate_stability"] is None
+            else f"{float(_reopt['candidate_stability']):.0f}/100",
+        )
+
+        _cmp = pd.DataFrame([
+            {
+                "条件": "現在",
+                "C/I/L/P/Q": _reopt["old_condition"] or "—",
+                "件数": _reopt["old_n"],
+                f"{opt_horizon}日平均": _reopt["old_avg"],
+                f"{opt_horizon}日勝率": _reopt["old_win"],
+                "MFE": _reopt["old_mfe"],
+                "MAE": _reopt["old_mae"],
+                "判定": "現行",
+            },
+            {
+                "条件": "再最適化候補",
+                "C/I/L/P/Q": _reopt["new_condition"] or "—",
+                "件数": _reopt["new_n"],
+                f"{opt_horizon}日平均": _reopt["new_avg"],
+                f"{opt_horizon}日勝率": _reopt["new_win"],
+                "MFE": _reopt["new_mfe"],
+                "MAE": _reopt["new_mae"],
+                "判定": _reopt["candidate_robustness"] or "—",
+            },
+        ])
+        for _col in [f"{opt_horizon}日平均", f"{opt_horizon}日勝率", "MFE", "MAE"]:
+            _cmp[_col] = _cmp[_col].map(
+                lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%"
+            )
+        st.dataframe(_cmp, hide_index=True, use_container_width=True)
+
+        _period = ""
+        if _reopt["holdout_start"] is not None and _reopt["holdout_end"] is not None:
+            _period = (
+                f"｜共通検証期間 "
+                f"{pd.Timestamp(_reopt['holdout_start']).strftime('%Y-%m-%d')}"
+                f"〜{pd.Timestamp(_reopt['holdout_end']).strftime('%Y-%m-%d')}"
+            )
+        st.caption(
+            f"{_reopt['message']}{_period}｜"
+            "採用判断は追加サンプル確認後に行う前提です。"
+        )
 
 _h1, _h2, _h3, _h4 = st.columns(4)
 _h1.metric("累計アラート", f"{_hsum['alerts']}件")
@@ -921,6 +998,14 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 再最適化候補パネル
+
+- WATCH / DEGRADED のときだけ表示
+- 最近のデータで新しいC/I/L/P/Q候補を再探索
+- 旧条件と新条件を**同じホールドアウト期間**で比較
+- 平均リターン、勝率、MFE、MAE、安定度を横並び
+- 新条件が良くても自動採用せず、研究候補として表示
 
 ### ロジック健全性
 
