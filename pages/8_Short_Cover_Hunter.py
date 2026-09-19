@@ -9,6 +9,7 @@ import streamlit as st
 import yfinance as yf
 
 from short_cover import (
+    backtest_short_cover,
     build_price_feature_snapshots,
     build_promotion_table,
     build_short_metrics,
@@ -17,6 +18,7 @@ from short_cover import (
     load_uploaded_workbooks,
     normalize_ticker,
     score_short_cover,
+    summarize_backtest,
 )
 
 st.set_page_config(page_title="Short Cover Hunter", page_icon="🔥", layout="wide")
@@ -98,6 +100,11 @@ with st.sidebar:
     candidate_limit = st.slider("JPX候補の価格分析数", 20, 100, 60, step=10)
     universe = st.radio("分析対象", ["JPX候補＋登録銘柄", "登録銘柄のみ", "JPX候補のみ"], index=0)
     min_score = st.slider("ランキング最低Cover Score", 0, 90, 45, step=5)
+
+    st.markdown("### 🧪 バックテスト")
+    bt_sessions = st.slider("検証する直近営業日数", 20, 80, 40, step=10)
+    bt_tickers = st.slider("バックテスト銘柄上限", 10, 60, 30, step=10)
+    bt_min_score = st.slider("検証最低Cover Score", 45, 80, 55, step=5)
 
     st.divider()
     if st.button("🔄 データを再取得", use_container_width=True):
@@ -260,6 +267,124 @@ else:
             )
 
 st.divider()
+st.markdown("## 🧪 シグナル実績バックテスト")
+st.caption(
+    "当日終値でシグナル確定 → 翌営業日始値でエントリーした想定です。"
+    "JPXは掲載日が取得できる場合は掲載日を利用可能日として扱い、未来情報の混入を抑えます。"
+)
+
+_bt_targets = list(dict.fromkeys(jpx_candidates + watchlist))[:bt_tickers]
+if not _bt_targets:
+    st.info("バックテスト対象銘柄がありません。")
+else:
+    if st.button("▶️ バックテストを実行", key="short_cover_backtest_btn", use_container_width=False):
+        with st.spinner("過去シグナルを再構成して検証中..."):
+            st.session_state.short_cover_backtest = backtest_short_cover(
+                events=events,
+                tickers=_bt_targets,
+                sessions=bt_sessions,
+                max_tickers=bt_tickers,
+                min_cover_score=bt_min_score,
+            )
+
+    bt = st.session_state.get("short_cover_backtest")
+    if bt is not None:
+        if bt.empty:
+            st.warning("指定条件では検証可能なシグナルがありませんでした。")
+        else:
+            b1, b2, b3, b4 = st.columns(4)
+            b1.metric("検証シグナル", f"{len(bt)}件")
+            _r5 = pd.to_numeric(bt["ret_5d"], errors="coerce").dropna()
+            _r10 = pd.to_numeric(bt["ret_10d"], errors="coerce").dropna()
+            b2.metric("5日勝率", f"{((_r5 > 0).mean() * 100):.1f}%" if not _r5.empty else "—")
+            b3.metric("5日平均", f"{_r5.mean():+.2f}%" if not _r5.empty else "—")
+            b4.metric("10日平均", f"{_r10.mean():+.2f}%" if not _r10.empty else "—")
+
+            phase_summary = summarize_backtest(bt, "phase")
+            regime_summary = summarize_backtest(bt, "regime")
+
+            left_bt, right_bt = st.columns(2)
+            with left_bt:
+                st.markdown("### Phase別")
+                if not phase_summary.empty:
+                    ps = phase_summary.copy()
+                    for col in [
+                        "win_1d", "win_3d", "win_5d", "win_10d",
+                        "avg_1d", "avg_3d", "avg_5d", "avg_10d",
+                        "median_5d", "avg_mfe_10d", "avg_mae_10d",
+                    ]:
+                        ps[col] = ps[col].map(lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%")
+                    ps = ps.rename(columns={
+                        "phase": "Phase", "signals": "件数",
+                        "win_1d": "1日勝率", "win_3d": "3日勝率",
+                        "win_5d": "5日勝率", "win_10d": "10日勝率",
+                        "avg_1d": "1日平均", "avg_3d": "3日平均",
+                        "avg_5d": "5日平均", "avg_10d": "10日平均",
+                        "median_5d": "5日中央値",
+                        "avg_mfe_10d": "10日MFE", "avg_mae_10d": "10日MAE",
+                    })
+                    st.dataframe(ps, hide_index=True, use_container_width=True)
+
+            with right_bt:
+                st.markdown("### 資金フロー別")
+                if not regime_summary.empty:
+                    rs = regime_summary.copy()
+                    for col in [
+                        "win_1d", "win_3d", "win_5d", "win_10d",
+                        "avg_1d", "avg_3d", "avg_5d", "avg_10d",
+                        "median_5d", "avg_mfe_10d", "avg_mae_10d",
+                    ]:
+                        rs[col] = rs[col].map(lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%")
+                    rs = rs.rename(columns={
+                        "regime": "資金フロー", "signals": "件数",
+                        "win_1d": "1日勝率", "win_3d": "3日勝率",
+                        "win_5d": "5日勝率", "win_10d": "10日勝率",
+                        "avg_1d": "1日平均", "avg_3d": "3日平均",
+                        "avg_5d": "5日平均", "avg_10d": "10日平均",
+                        "median_5d": "5日中央値",
+                        "avg_mfe_10d": "10日MFE", "avg_mae_10d": "10日MAE",
+                    })
+                    st.dataframe(rs, hide_index=True, use_container_width=True)
+
+            st.markdown("### シグナル明細")
+            bt_show = bt.copy()
+            for col in ["signal_date", "entry_date"]:
+                bt_show[col] = pd.to_datetime(bt_show[col], errors="coerce").dt.strftime("%Y-%m-%d")
+            for col in ["ret_1d", "ret_3d", "ret_5d", "ret_10d", "mfe_10d", "mae_10d"]:
+                bt_show[col] = bt_show[col].map(
+                    lambda x: "—" if pd.isna(x) else f"{float(x):+.2f}%"
+                )
+            bt_cols = [
+                "signal_date", "ticker", "name", "phase", "regime",
+                "cover_score", "ignition_score", "long_demand_score",
+                "entry_date", "ret_1d", "ret_3d", "ret_5d", "ret_10d",
+                "mfe_10d", "mae_10d",
+            ]
+            bt_labels = {
+                "signal_date": "シグナル日", "ticker": "コード", "name": "銘柄",
+                "phase": "Phase", "regime": "資金フロー",
+                "cover_score": "Cover", "ignition_score": "Ignition",
+                "long_demand_score": "Long", "entry_date": "翌日エントリー",
+                "ret_1d": "1日", "ret_3d": "3日", "ret_5d": "5日",
+                "ret_10d": "10日", "mfe_10d": "MFE", "mae_10d": "MAE",
+            }
+            st.dataframe(
+                bt_show[bt_cols].rename(columns=bt_labels),
+                hide_index=True,
+                use_container_width=True,
+                height=420,
+            )
+
+            csv_data = bt.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "⬇️ バックテストCSV",
+                data=csv_data,
+                file_name="short_cover_backtest.csv",
+                mime="text/csv",
+                key="short_cover_backtest_download",
+            )
+
+st.divider()
 st.markdown("## 🔎 個別銘柄ドリルダウン")
 choices_df = scored.copy()
 choices_df["label"] = choices_df.apply(
@@ -351,6 +476,15 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### バックテスト
+
+- シグナルは当日終値で確定
+- エントリーは翌営業日始値
+- 1 / 3 / 5 / 10営業日後の終値リターン
+- MFE = エントリー後10営業日の最大上昇率
+- MAE = エントリー後10営業日の最大下落率
+- JPX掲載日が取れる場合は掲載日より前のシグナル生成には使いません
 
 ### Cover Score（0〜100）
 
