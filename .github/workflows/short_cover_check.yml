@@ -6,6 +6,8 @@ on:
       - "short_cover.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "tests/test_short_cover.py"
+      - "requirements.txt"
+      - "dashboard_app.py"
       - ".github/workflows/short_cover_check.yml"
   workflow_dispatch:
 
@@ -21,10 +23,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install app dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests yfinance
+          pip install -r requirements.txt
 
       - name: Compile Short Cover files
         run: |
@@ -34,3 +36,19 @@ jobs:
 
       - name: Run Short Cover regression tests
         run: python -m unittest tests.test_short_cover -v
+
+      - name: Smoke boot Streamlit dashboard
+        run: |
+          streamlit run dashboard_app.py             --server.headless true             --server.port 8501             --browser.gatherUsageStats false > /tmp/streamlit.log 2>&1 &
+          APP_PID=$!
+          trap 'kill $APP_PID || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8501/_stcore/health | grep -q "ok"; then
+              echo "Streamlit health check passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Streamlit failed to become healthy"
+          cat /tmp/streamlit.log
+          exit 1
