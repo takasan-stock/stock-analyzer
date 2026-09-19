@@ -2072,6 +2072,136 @@ def build_reoptimization_comparison(
     return result
 
 
+
+CONDITION_VERSION_COLUMNS = [
+    "version_id", "created_at", "activated_at", "is_active", "source",
+    "note", "condition_text", "cover_min", "ignition_min", "long_min",
+    "pressure_min", "confidence_min", "horizon", "robustness",
+    "stability_score", "test_signals", "test_win", "test_avg",
+    "test_mfe", "test_mae",
+]
+
+
+def normalize_condition_versions(versions: pd.DataFrame | None) -> pd.DataFrame:
+    if versions is None or versions.empty:
+        return pd.DataFrame(columns=CONDITION_VERSION_COLUMNS)
+
+    out = versions.copy()
+    for col in CONDITION_VERSION_COLUMNS:
+        if col not in out.columns:
+            out[col] = None
+
+    for col in ["created_at", "activated_at"]:
+        out[col] = pd.to_datetime(out[col], errors="coerce")
+
+    for col in [
+        "cover_min", "ignition_min", "long_min", "pressure_min",
+        "confidence_min", "horizon", "stability_score", "test_signals",
+        "test_win", "test_avg", "test_mfe", "test_mae",
+    ]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    def _bool(v):
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in {"1", "true", "yes", "y"}
+
+    out["is_active"] = out["is_active"].map(_bool)
+    out["version_id"] = out["version_id"].fillna("").astype(str)
+    out = out[out["version_id"] != ""].copy()
+    out = out.drop_duplicates(subset=["version_id"], keep="last")
+
+    # At most one active condition; keep the most recently activated.
+    active = out[out["is_active"]].sort_values("activated_at")
+    if len(active) > 1:
+        keep_idx = active.index[-1]
+        out.loc[out.index != keep_idx, "is_active"] = False
+
+    return out[CONDITION_VERSION_COLUMNS].sort_values(
+        ["created_at", "version_id"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+
+def next_condition_version_id(versions: pd.DataFrame | None) -> str:
+    v = normalize_condition_versions(versions)
+    max_minor = -1
+    for value in v["version_id"].astype(str).tolist():
+        m = re.fullmatch(r"v1\.(\d+)", value.strip(), flags=re.I)
+        if m:
+            max_minor = max(max_minor, int(m.group(1)))
+    return f"v1.{max_minor + 1}"
+
+
+def append_condition_version(
+    versions: pd.DataFrame | None,
+    condition,
+    *,
+    source: str,
+    horizon: int,
+    note: str = "",
+    activate: bool = False,
+) -> tuple[pd.DataFrame, str]:
+    """Append one immutable condition snapshot; activation is explicit."""
+    base = normalize_condition_versions(versions)
+    if condition is None:
+        return base, ""
+
+    version_id = next_condition_version_id(base)
+    row = {
+        "version_id": version_id,
+        "created_at": pd.Timestamp.now(),
+        "activated_at": pd.Timestamp.now() if activate else pd.NaT,
+        "is_active": bool(activate),
+        "source": str(source or ""),
+        "note": str(note or ""),
+        "condition_text": condition_text_from_row(condition),
+        "cover_min": condition.get("cover_min"),
+        "ignition_min": condition.get("ignition_min"),
+        "long_min": condition.get("long_min"),
+        "pressure_min": condition.get("pressure_min"),
+        "confidence_min": condition.get("confidence_min"),
+        "horizon": int(horizon),
+        "robustness": condition.get("robustness", ""),
+        "stability_score": condition.get("stability_score"),
+        "test_signals": condition.get("test_signals"),
+        "test_win": condition.get("test_win"),
+        "test_avg": condition.get("test_avg"),
+        "test_mfe": condition.get("test_mfe"),
+        "test_mae": condition.get("test_mae"),
+    }
+
+    if activate and not base.empty:
+        base["is_active"] = False
+
+    combined = pd.concat([pd.DataFrame([row]), base], ignore_index=True)
+    return normalize_condition_versions(combined), version_id
+
+
+def activate_condition_version(
+    versions: pd.DataFrame | None,
+    version_id: str,
+) -> pd.DataFrame:
+    """Activate one saved version and deactivate all others."""
+    out = normalize_condition_versions(versions)
+    if out.empty or version_id not in set(out["version_id"].astype(str)):
+        return out
+    out["is_active"] = out["version_id"].astype(str) == str(version_id)
+    out.loc[out["is_active"], "activated_at"] = pd.Timestamp.now()
+    return normalize_condition_versions(out)
+
+
+def get_active_condition_version(versions: pd.DataFrame | None):
+    """Return the active saved condition as a Series compatible with optimizer rows."""
+    out = normalize_condition_versions(versions)
+    active = out[out["is_active"]]
+    if active.empty:
+        return None
+    row = active.sort_values("activated_at", ascending=False).iloc[0].copy()
+    # Saved version rows use the same threshold column names expected downstream.
+    return row
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
