@@ -9,7 +9,8 @@ import streamlit as st
 import yfinance as yf
 
 from short_cover import (
-    build_price_feature_table,
+    build_price_feature_snapshots,
+    build_promotion_table,
     build_short_metrics,
     candidate_tickers,
     load_jpx_events,
@@ -27,8 +28,8 @@ def load_jpx_cached(archive_pages: int, max_files: int):
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def price_features_cached(tickers: tuple[str, ...]) -> pd.DataFrame:
-    return build_price_feature_table(list(tickers))
+def price_features_cached(tickers: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    return build_price_feature_snapshots(list(tickers))
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -145,9 +146,12 @@ if not targets:
     st.stop()
 
 with st.spinner(f"価格・出来高を分析中... {len(targets)}銘柄"):
-    prices = price_features_cached(tuple(sorted(set(targets))))
+    prices, prev_prices = price_features_cached(tuple(sorted(set(targets))))
 
-scored = score_short_cover(short_metrics[short_metrics["ticker"].isin(targets)].copy(), prices)
+_target_metrics = short_metrics[short_metrics["ticker"].isin(targets)].copy()
+scored = score_short_cover(_target_metrics, prices)
+prev_scored = score_short_cover(_target_metrics, prev_prices)
+promotions = build_promotion_table(scored, prev_scored)
 if scored.empty:
     st.info("対象銘柄に、今回読み込んだJPX空売り報告イベントがありませんでした。")
     st.stop()
@@ -168,6 +172,52 @@ st.info(
 filtered = scored[scored["cover_score"] >= min_score].copy()
 filtered.insert(0, "順位", range(1, len(filtered) + 1))
 
+st.markdown("## ⚡ 初動昇格ランキング")
+st.caption(
+    "直近営業日と前営業日を同じ公表空売りデータで比較し、価格・出来高側の状態が一段強くなった銘柄だけを抽出します。"
+)
+if promotions.empty:
+    st.info("今回は新しい昇格シグナルがありません。")
+else:
+    promo = promotions.copy().head(20)
+    promo.insert(0, "順位", range(1, len(promo) + 1))
+    promo["前Cover"] = promo["prev_cover_score"].map(lambda x: fmt_num(x, 0))
+    promo["現Cover"] = promo["cover_score"].map(lambda x: fmt_num(x, 0))
+    promo["ΔCover"] = promo["cover_delta"].map(lambda x: f"{float(x):+.0f}")
+    promo["前Ignition"] = promo["prev_ignition_score"].map(lambda x: fmt_num(x, 0))
+    promo["現Ignition"] = promo["ignition_score"].map(lambda x: fmt_num(x, 0))
+    promo["ΔIgnition"] = promo["ignition_delta"].map(lambda x: f"{float(x):+.0f}")
+    promo["出来高"] = promo["vol_ratio"].map(lambda x: fmt_num(x, 2, "x"))
+    promo["RS"] = promo["rs_watch"].map(lambda x: fmt_num(x, 0))
+    promo_cols = [
+        "順位", "ticker", "name", "prev_phase", "phase", "promotion_reason",
+        "前Cover", "現Cover", "ΔCover", "前Ignition", "現Ignition", "ΔIgnition",
+        "regime", "出来高", "RS", "confidence",
+    ]
+    promo_labels = {
+        "ticker": "コード", "name": "銘柄", "prev_phase": "前回Phase",
+        "phase": "今回Phase", "promotion_reason": "昇格理由",
+        "regime": "資金フロー", "confidence": "信頼度",
+    }
+    st.dataframe(
+        promo[promo_cols].rename(columns=promo_labels),
+        hide_index=True,
+        use_container_width=True,
+        height=min(680, 80 + 35 * len(promo)),
+    )
+
+    top_promos = promo.head(5)
+    st.markdown("### 🚨 今日変化した上位候補")
+    for _, r in top_promos.iterrows():
+        st.markdown(
+            f"**{r['name']}（{r['ticker']}）**　{r['prev_phase']} → **{r['phase']}**  \\n"
+            f"{r['promotion_reason']}  \\n"
+            f"Cover {r['prev_cover_score']:.0f}→**{r['cover_score']:.0f}** "
+            f"({r['cover_delta']:+.0f})｜Ignition {r['prev_ignition_score']:.0f}→"
+            f"**{r['ignition_score']:.0f}** ({r['ignition_delta']:+.0f})｜{r['regime']}"
+        )
+
+st.divider()
 st.markdown("## 🏹 買い戻し初動ランキング")
 if filtered.empty:
     st.warning("現在の閾値を超える候補はありません。最低Cover Scoreを下げると候補を広げられます。")
@@ -294,6 +344,14 @@ if not hist.empty:
 with st.expander("🧮 v1 スコア設計"):
     st.markdown(
         """
+### 初動昇格ランキング
+
+前営業日と直近営業日の価格・出来高シグナルを同じShort Pressure条件で比較し、
+Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新規AVWAP回復を検出します。
+
+**これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
+公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
 ### Cover Score（0〜100）
 
 - Short Pressure **25%**
