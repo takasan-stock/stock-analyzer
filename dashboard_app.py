@@ -1286,12 +1286,15 @@ def calc_risk_reward(current_price, target_str, stop_str):
     return reward_pct / risk_pct, reward_pct, risk_pct
 
 
-def build_today_focus(df, prices: dict, news_batch: dict, limit: int = 5) -> list:
+def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dict | None = None, limit: int = 5) -> list:
     """
     今日チェックする優先度を、注意喚起とチャンスの両面から算出する。
     スコアは売買推奨ではなく、確認順を決めるための内部値。
+    決算予定日が取得できている場合は、7日以内/14日以内のイベントリスクも加味する。
     """
     focus = []
+    earnings_calendar = earnings_calendar or {}
+    today = datetime.date.today()
 
     for _, row in df.iterrows():
         ticker = str(row.get("ティッカー", ""))
@@ -1347,6 +1350,33 @@ def build_today_focus(df, prices: dict, news_batch: dict, limit: int = 5) -> lis
             score += 1
             reasons.append(f"材料から {catalyst_days}日")
 
+        # 決算イベント接近
+        earnings_date = earnings_calendar.get(ticker)
+        earnings_days = None
+        if earnings_date:
+            try:
+                earnings_days = (earnings_date - today).days
+            except TypeError:
+                earnings_days = None
+
+        if earnings_days is not None:
+            if earnings_days == 0:
+                score += 7
+                reasons.append("本日決算")
+                tags.append("決算本日")
+            elif 1 <= earnings_days <= 3:
+                score += 6
+                reasons.append(f"決算まで {earnings_days}日")
+                tags.append("決算直前")
+            elif 4 <= earnings_days <= 7:
+                score += 5
+                reasons.append(f"決算まで {earnings_days}日")
+                tags.append("決算7日以内")
+            elif 8 <= earnings_days <= 14:
+                score += 2
+                reasons.append(f"決算まで {earnings_days}日")
+                tags.append("決算14日以内")
+
         rr, reward_pct, risk_pct = calc_risk_reward(
             price, row.get("目標株価", ""), row.get("損切りライン", "")
         )
@@ -1394,6 +1424,8 @@ def build_today_focus(df, prices: dict, news_batch: dict, limit: int = 5) -> lis
                 "rr": rr,
                 "reward_pct": reward_pct,
                 "risk_pct": risk_pct,
+                "earnings_date": earnings_date,
+                "earnings_days": earnings_days,
             })
 
     focus.sort(
@@ -1963,11 +1995,13 @@ if not _focus_df.empty:
     _focus_tickers = tuple(_focus_df["ティッカー"].astype(str).tolist())
     with st.spinner("今日見るべき銘柄をチェック中..."):
         _focus_prices = fetch_prices_batch(_focus_tickers)
+        _focus_calendar = fetch_earnings_calendar(_focus_tickers)
 
     _focus_items = build_today_focus(
         _focus_df,
         _focus_prices,
         st.session_state.get("news_batch", {}),
+        earnings_calendar=_focus_calendar,
         limit=5,
     )
 
@@ -1977,7 +2011,7 @@ if not _focus_df.empty:
             expanded=True,
         ):
             st.caption(
-                "出来高・値動き・24時間ニュース・材料の鮮度・損切り接近・RRを統合。"
+                "出来高・値動き・24時間ニュース・材料の鮮度・決算接近・損切り接近・RRを統合。"
                 "順位は『今日チェックする優先度』で、売買推奨ではありません。"
             )
             for _rank, _item in enumerate(_focus_items, start=1):
@@ -2025,8 +2059,13 @@ if not _cal_df.empty:
         if st.button("📅 決算日を取得する", key="cal_fetch", type="primary") or st.session_state.get("cal_loaded"):
             st.session_state.cal_loaded = True
             _tickers = tuple(_cal_df["ティッカー"].astype(str).tolist())
-            with st.spinner(f"{len(_tickers)}銘柄の決算日を取得中..."):
-                _calendar = fetch_earnings_calendar(_tickers)
+            # 「今日見るべき銘柄」で同じティッカー集合を取得済みなら再利用。
+            # 異なる場合も fetch_earnings_calendar の1時間キャッシュが効く。
+            if "_focus_calendar" in locals() and _tickers == _focus_tickers:
+                _calendar = _focus_calendar
+            else:
+                with st.spinner(f"{len(_tickers)}銘柄の決算日を取得中..."):
+                    _calendar = fetch_earnings_calendar(_tickers)
 
             _today = datetime.date.today()
             _rows = []
