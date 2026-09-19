@@ -82,7 +82,9 @@ with st.expander("このツールの読み方", expanded=False):
 - **Short Pressure**：0.5%以上で公表された大口空売りの蓄積度
 - **Absorption**：空売り圧力があるのに株価が崩れにくくなった兆候
 - **Cover Score**：出来高、AVWAP回復、5日高値突破、RSなどを統合した初動スコア
+- **Ignition**：出来高急増・AVWAP回復・短期高値突破・RS加速から「点火」を見る補助スコア
 - **Long Demand**：単なる買い戻しではなく、新規買い資金も入っていそうかを見る補助スコア
+- **資金フロー**：COVER + NEW MONEY / PURE SHORT COVER / NEW MONEY / NEUTRAL の4分類
 
 `🔥 COVER EARLY` は「買い戻しの可能性が高まった候補」であり、空売り主体の実注文を直接識別したものではありません。
         """
@@ -179,15 +181,18 @@ else:
     display["AVWAP"] = display["above_avwap"].map(lambda x: "✅上" if _truthy(x) else "—")
     display["5日高値"] = display["breakout5"].map(lambda x: "✅突破" if _truthy(x) else "—")
     display["RS"] = display["rs_watch"].map(lambda x: fmt_num(x, 0))
+    display["Ignition"] = display["ignition_score"].map(lambda x: fmt_num(x, 0))
     display["信頼度"] = display["confidence"].map(lambda x: f"{int(x)}")
 
     cols = [
-        "順位", "ticker", "name", "phase", "cover_score", "long_demand_score", "short_pressure",
-        "空売り%", "Δ空売り", "institution_count", "買戻Breadth", "DTC", "出来高", "AVWAP", "5日高値", "RS", "信頼度",
+        "順位", "ticker", "name", "phase", "regime", "cover_score", "short_pressure",
+        "Ignition", "long_demand_score", "空売り%", "Δ空売り", "institution_count",
+        "買戻Breadth", "DTC", "出来高", "AVWAP", "5日高値", "RS", "信頼度",
     ]
     labels = {
-        "ticker": "コード", "name": "銘柄", "phase": "Phase", "cover_score": "Cover",
-        "long_demand_score": "Long", "short_pressure": "Pressure", "institution_count": "機関数",
+        "ticker": "コード", "name": "銘柄", "phase": "Phase", "regime": "資金フロー",
+        "cover_score": "Cover", "long_demand_score": "Long",
+        "short_pressure": "Pressure", "institution_count": "機関数",
     }
     table = display[cols].rename(columns=labels)
     st.dataframe(table, hide_index=True, use_container_width=True, height=min(760, 80 + 35 * len(table)))
@@ -198,9 +203,10 @@ else:
         for _, r in strong.head(5).iterrows():
             st.markdown(
                 f"**{r['phase']}｜{r['name']}（{r['ticker']}）**　"
-                f"Cover **{r['cover_score']:.0f}** / Long **{r['long_demand_score']:.0f}** / "
-                f"Pressure **{r['short_pressure']:.0f}**　"
-                f"出来高 {fmt_num(r.get('vol_ratio'), 2, 'x')}　RS {fmt_num(r.get('rs_watch'), 0)}"
+                f"Cover **{r['cover_score']:.0f}** / Ignite **{r['ignition_score']:.0f}** / "
+                f"Long **{r['long_demand_score']:.0f}** / Pressure **{r['short_pressure']:.0f}**　"
+                f"{r.get('regime', '')}　出来高 {fmt_num(r.get('vol_ratio'), 2, 'x')}　"
+                f"RS {fmt_num(r.get('rs_watch'), 0)}"
             )
 
 st.divider()
@@ -213,14 +219,16 @@ selected_label = st.selectbox("銘柄を選択", choices_df["label"].tolist())
 selected = choices_df[choices_df["label"] == selected_label].iloc[0]
 ticker = selected["ticker"]
 
-m1, m2, m3, m4, m5 = st.columns(5)
+m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Cover Score", f"{selected['cover_score']:.0f}")
-m2.metric("Long Demand", f"{selected['long_demand_score']:.0f}")
-m3.metric("Short Pressure", f"{selected['short_pressure']:.0f}")
-m4.metric("公表空売り", fmt_num(selected.get("short_ratio"), 2, "%"))
-m5.metric("DTC", fmt_num(selected.get("dtc"), 1, "日"))
+m2.metric("Ignition", f"{selected['ignition_score']:.0f}")
+m3.metric("Long Demand", f"{selected['long_demand_score']:.0f}")
+m4.metric("Short Pressure", f"{selected['short_pressure']:.0f}")
+m5.metric("公表空売り", fmt_num(selected.get("short_ratio"), 2, "%"))
+m6.metric("DTC", fmt_num(selected.get("dtc"), 1, "日"))
 
 st.markdown(f"### {selected['phase']}　{selected['name']}（{ticker}）")
+st.caption(f"資金フロー判定：{selected.get('regime', '—')}")
 
 price_df = load_detail_price(ticker)
 left, right = st.columns([1.45, 1])
@@ -255,6 +263,8 @@ with right:
         ["Long Demand", selected.get("long_demand_score")],
         ["Short Pressure", selected.get("short_pressure")],
         ["Absorption", selected.get("absorption_score")],
+        ["Ignition", selected.get("ignition_score")],
+        ["資金フロー", selected.get("regime")],
         ["買戻Breadth", selected.get("cover_breadth")],
         ["Δ空売り(pt)", selected.get("delta_short")],
         ["機関数", selected.get("institution_count")],
