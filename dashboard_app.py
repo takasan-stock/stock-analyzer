@@ -2093,6 +2093,67 @@ if not _focus_df.empty:
     )
 
     if _focus_items:
+        _a_items = [x for x in _focus_items if x.get("priority_rank") == "A"]
+
+        if _a_items:
+            st.markdown("### 🌅 朝イチ確認ボックス")
+            st.caption("まずはAランクだけ確認。チャンスAと警戒Aを分けて要点だけ表示します。")
+
+            _morning_opp = [x for x in _a_items if x.get("focus_type") == "opportunity"]
+            _morning_warn = [x for x in _a_items if x.get("focus_type") == "warning"]
+
+            _mcol1, _mcol2 = st.columns(2)
+
+            with _mcol1:
+                st.markdown("#### 🚀 チャンスA")
+                if _morning_opp:
+                    for _item in _morning_opp:
+                        _rr = _item.get("rr")
+                        _rr_text = f"RR 1:{_rr:.1f}" if _rr is not None else "RR —"
+                        _ed = _item.get("earnings_days")
+                        _earn_text = (
+                            "｜本日決算" if _ed == 0
+                            else (f"｜決算まで{_ed}日" if _ed is not None and 0 < _ed <= 14 else "")
+                        )
+                        st.markdown(
+                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  
+"
+                            f"¥{_item['price']:,.0f}｜{_rr_text}{_earn_text}  
+"
+                            f"**{_item.get('summary', '')}**"
+                        )
+                else:
+                    st.caption("チャンスAはありません。")
+
+            with _mcol2:
+                st.markdown("#### ⚠️ 警戒A")
+                if _morning_warn:
+                    for _item in _morning_warn:
+                        _rr = _item.get("rr")
+                        _rr_text = f"RR 1:{_rr:.1f}" if _rr is not None else "RR —"
+                        _risk = _item.get("risk_pct")
+                        _risk_text = (
+                            f"｜損切りまで{_risk:.1f}%" if _risk is not None and _risk > 0 else ""
+                        )
+                        _ed = _item.get("earnings_days")
+                        _earn_text = (
+                            "｜本日決算" if _ed == 0
+                            else (f"｜決算まで{_ed}日" if _ed is not None and 0 < _ed <= 14 else "")
+                        )
+                        st.markdown(
+                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  
+"
+                            f"¥{_item['price']:,.0f}｜{_rr_text}{_risk_text}{_earn_text}  
+"
+                            f"**{_item.get('summary', '')}**"
+                        )
+                else:
+                    st.caption("警戒Aはありません。")
+
+            st.divider()
+        else:
+            st.success("🌅 朝イチ確認：本日はAランク銘柄なし", icon="✅")
+
         with st.expander(
             f"👀 今日見るべき銘柄 TOP{len(_focus_items)}",
             expanded=True,
