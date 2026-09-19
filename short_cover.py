@@ -443,14 +443,7 @@ def _price_features(frame: pd.DataFrame) -> dict:
     return out
 
 
-def build_price_feature_table(tickers: list[str]) -> pd.DataFrame:
-    tickers = [normalize_ticker(t) for t in tickers if normalize_ticker(t)]
-    frames = _download_prices(sorted(set(tickers)))
-    rows = []
-    for ticker in tickers:
-        feat = _price_features(frames.get(ticker))
-        feat["ticker"] = ticker
-        rows.append(feat)
+def _finalize_price_feature_rows(rows: list[dict]) -> pd.DataFrame:
     result = pd.DataFrame(rows)
     if result.empty:
         return result
@@ -463,6 +456,53 @@ def build_price_feature_table(tickers: list[str]) -> pd.DataFrame:
     else:
         result["rs_watch"] = 50.0
     return result
+
+
+def build_price_feature_snapshots(tickers: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build latest and previous-session price features with one yfinance download.
+
+    The previous snapshot intentionally uses the same disclosed-short metrics later in
+    score_short_cover(). This makes promotion detection a price/volume state transition
+    detector and avoids any need for persistent daily state on Streamlit Cloud.
+    """
+    tickers = [normalize_ticker(t) for t in tickers if normalize_ticker(t)]
+    frames = _download_prices(sorted(set(tickers)))
+    current_rows: list[dict] = []
+    previous_rows: list[dict] = []
+
+    for ticker in tickers:
+        frame = frames.get(ticker)
+
+        current = _price_features(frame)
+        current["ticker"] = ticker
+        current["snapshot_date"] = (
+            pd.Timestamp(frame.index[-1]).normalize()
+            if frame is not None and not frame.empty else pd.NaT
+        )
+        current_rows.append(current)
+
+        previous_frame = (
+            frame.iloc[:-1].copy()
+            if frame is not None and len(frame) >= 2
+            else pd.DataFrame()
+        )
+        previous = _price_features(previous_frame)
+        previous["ticker"] = ticker
+        previous["snapshot_date"] = (
+            pd.Timestamp(previous_frame.index[-1]).normalize()
+            if not previous_frame.empty else pd.NaT
+        )
+        previous_rows.append(previous)
+
+    return (
+        _finalize_price_feature_rows(current_rows),
+        _finalize_price_feature_rows(previous_rows),
+    )
+
+
+def build_price_feature_table(tickers: list[str]) -> pd.DataFrame:
+    current, _previous = build_price_feature_snapshots(tickers)
+    return current
 
 
 
@@ -602,6 +642,131 @@ def score_short_cover(short_metrics: pd.DataFrame, price_features: pd.DataFrame)
 
     out = pd.DataFrame(rows)
     return out.sort_values(["cover_score", "confidence", "short_pressure"], ascending=False).reset_index(drop=True)
+
+
+PHASE_RANK = {
+    "NORMAL": 0,
+    "🧱 SHORT BUILDUP": 1,
+    "👀 COVER WATCH": 2,
+    "🔥 COVER EARLY": 3,
+    "✅ COVER CONFIRMED": 4,
+    "🚀 SQUEEZE": 5,
+}
+
+
+def build_promotion_table(current: pd.DataFrame, previous: pd.DataFrame) -> pd.DataFrame:
+    """Compare the latest two price sessions and return fresh Short Cover promotions."""
+    columns = [
+        "ticker", "name", "prev_phase", "phase", "phase_jump",
+        "prev_cover_score", "cover_score", "cover_delta",
+        "prev_ignition_score", "ignition_score", "ignition_delta",
+        "prev_long_demand_score", "long_demand_score",
+        "fresh_breakout", "fresh_avwap_reclaim", "promotion_reason",
+        "promotion_score", "regime", "short_pressure", "vol_ratio",
+        "rs_watch", "confidence", "snapshot_date", "prev_snapshot_date",
+    ]
+    if current is None or current.empty or previous is None or previous.empty:
+        return pd.DataFrame(columns=columns)
+
+    prev_cols = [
+        "ticker", "phase", "cover_score", "ignition_score", "long_demand_score",
+        "breakout5", "above_avwap", "snapshot_date",
+    ]
+    p = previous[[x for x in prev_cols if x in previous.columns]].copy()
+    p = p.rename(columns={
+        "phase": "prev_phase",
+        "cover_score": "prev_cover_score",
+        "ignition_score": "prev_ignition_score",
+        "long_demand_score": "prev_long_demand_score",
+        "breakout5": "prev_breakout5",
+        "above_avwap": "prev_above_avwap",
+        "snapshot_date": "prev_snapshot_date",
+    })
+
+    merged = current.merge(p, on="ticker", how="inner")
+    if merged.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for _, r in merged.iterrows():
+        phase = str(r.get("phase", "NORMAL"))
+        prev_phase = str(r.get("prev_phase", "NORMAL"))
+        cur_rank = PHASE_RANK.get(phase, 0)
+        prev_rank = PHASE_RANK.get(prev_phase, 0)
+        phase_jump = cur_rank - prev_rank
+
+        cover = float(r.get("cover_score")) if pd.notna(r.get("cover_score")) else 0.0
+        prev_cover = float(r.get("prev_cover_score")) if pd.notna(r.get("prev_cover_score")) else 0.0
+        ignition = float(r.get("ignition_score")) if pd.notna(r.get("ignition_score")) else 0.0
+        prev_ignition = float(r.get("prev_ignition_score")) if pd.notna(r.get("prev_ignition_score")) else 0.0
+
+        cover_delta = cover - prev_cover
+        ignition_delta = ignition - prev_ignition
+        fresh_breakout = _truthy(r.get("breakout5")) and not _truthy(r.get("prev_breakout5"))
+        fresh_avwap = _truthy(r.get("above_avwap")) and not _truthy(r.get("prev_above_avwap"))
+        cover_cross = prev_cover < 65 <= cover
+        ignition_cross = prev_ignition < 65 <= ignition
+
+        # A fresh candidate needs a meaningful state change; pure score noise is ignored.
+        is_promotion = (
+            phase_jump > 0
+            or cover_cross
+            or ignition_cross
+            or (fresh_breakout and cover_delta >= 5)
+            or (fresh_avwap and ignition_delta >= 10)
+        )
+        if not is_promotion:
+            continue
+
+        reasons = []
+        if phase_jump > 0:
+            reasons.append(f"{prev_phase} → {phase}")
+        if cover_cross:
+            reasons.append("Cover 65突破")
+        if ignition_cross:
+            reasons.append("Ignition 65突破")
+        if fresh_breakout:
+            reasons.append("5日高値を新規突破")
+        if fresh_avwap:
+            reasons.append("AVWAPを新規回復")
+        if cover_delta >= 10:
+            reasons.append(f"Cover +{cover_delta:.0f}")
+        if ignition_delta >= 15:
+            reasons.append(f"Ignition +{ignition_delta:.0f}")
+
+        promotion_score = (
+            max(0.0, phase_jump) * 18.0
+            + max(0.0, cover_delta) * 0.8
+            + max(0.0, ignition_delta) * 0.5
+            + (12.0 if fresh_breakout else 0.0)
+            + (8.0 if fresh_avwap else 0.0)
+            + (8.0 if str(r.get("regime", "")).startswith("🔥") else 0.0)
+        )
+
+        item = r.to_dict()
+        item.update({
+            "prev_phase": prev_phase,
+            "phase_jump": phase_jump,
+            "prev_cover_score": round(prev_cover, 1),
+            "cover_delta": round(cover_delta, 1),
+            "prev_ignition_score": round(prev_ignition, 1),
+            "ignition_delta": round(ignition_delta, 1),
+            "prev_long_demand_score": r.get("prev_long_demand_score"),
+            "fresh_breakout": fresh_breakout,
+            "fresh_avwap_reclaim": fresh_avwap,
+            "promotion_reason": " / ".join(reasons),
+            "promotion_score": round(min(100.0, promotion_score), 1),
+        })
+        rows.append(item)
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    out = pd.DataFrame(rows)
+    return out.sort_values(
+        ["promotion_score", "phase_jump", "cover_delta", "ignition_delta"],
+        ascending=False,
+    ).reset_index(drop=True)
 
 
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
