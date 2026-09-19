@@ -1590,8 +1590,18 @@ def normalize_alert_history(history: pd.DataFrame | None) -> pd.DataFrame:
 
     out["ticker"] = out["ticker"].map(normalize_ticker)
     out = out[out["ticker"] != ""].copy()
-    out = out.sort_values(["alert_date", "alert_score"], ascending=[False, False])
-    out = out.drop_duplicates(subset=["alert_date", "ticker"], keep="last")
+
+    # If the same alert is merged from local/GitHub copies, prefer the most
+    # recently updated record, then the higher alert score. This preserves
+    # newly calculated outcomes instead of accidentally keeping an older row.
+    out["_last_updated_sort"] = pd.to_datetime(out["last_updated"], errors="coerce")
+    out = out.sort_values(
+        ["alert_date", "_last_updated_sort", "alert_score"],
+        ascending=[False, False, False],
+        na_position="last",
+    )
+    out = out.drop_duplicates(subset=["alert_date", "ticker"], keep="first")
+    out = out.drop(columns=["_last_updated_sort"], errors="ignore")
     return out[ALERT_HISTORY_COLUMNS].reset_index(drop=True)
 
 
