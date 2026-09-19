@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import base64
+import io
 import os
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 
 from short_cover import (
+    append_priority_alert_history,
     backtest_short_cover,
     build_price_feature_snapshots,
     build_priority_alerts,
@@ -17,11 +21,14 @@ from short_cover import (
     candidate_tickers,
     load_jpx_events,
     load_uploaded_workbooks,
+    normalize_alert_history,
     normalize_ticker,
     apply_optimizer_condition,
     optimize_short_cover_thresholds,
     score_short_cover,
+    summarize_alert_history,
     summarize_backtest,
+    update_alert_history_outcomes,
 )
 
 st.set_page_config(page_title="Short Cover Hunter", page_icon="🔥", layout="wide")
@@ -61,6 +68,101 @@ def load_watchlist_codes() -> list[str]:
     except Exception:
         return []
 
+
+
+ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
+
+
+def _github_history_config():
+    try:
+        return {
+            "token": st.secrets["GITHUB_TOKEN"],
+            "repo": st.secrets["GITHUB_REPO"],
+            "branch": st.secrets.get("GITHUB_BRANCH", "main"),
+        }
+    except Exception:
+        return None
+
+
+def _github_headers(config):
+    return {
+        "Authorization": f"Bearer {config['token']}",
+        "Accept": "application/vnd.github+json",
+    }
+
+
+def load_alert_history() -> pd.DataFrame:
+    """Load persistent alert history from GitHub, with local CSV fallback."""
+    config = _github_history_config()
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{ALERT_HISTORY_FILE}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(content).decode("utf-8-sig")
+                return normalize_alert_history(pd.read_csv(io.StringIO(text)))
+        except Exception:
+            pass
+
+    if os.path.exists(ALERT_HISTORY_FILE):
+        try:
+            return normalize_alert_history(pd.read_csv(ALERT_HISTORY_FILE, encoding="utf-8-sig"))
+        except Exception:
+            pass
+
+    return normalize_alert_history(None)
+
+
+def save_alert_history(history: pd.DataFrame) -> tuple[bool, str]:
+    """Persist alert history locally and to the same GitHub repo used by the dashboard."""
+    history = normalize_alert_history(history)
+    os.makedirs(os.path.dirname(ALERT_HISTORY_FILE), exist_ok=True)
+
+    export = history.copy()
+    for col in ["alert_date", "entry_date", "last_updated"]:
+        if col in export.columns:
+            export[col] = pd.to_datetime(export[col], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
+    csv_text = export.to_csv(index=False, encoding="utf-8-sig")
+    with open(ALERT_HISTORY_FILE, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(csv_text)
+
+    config = _github_history_config()
+    if not config:
+        return True, "ローカル保存（GitHub未設定）"
+
+    url = f"https://api.github.com/repos/{config['repo']}/contents/{ALERT_HISTORY_FILE}"
+    headers = _github_headers(config)
+    sha = None
+    try:
+        get_resp = requests.get(
+            url,
+            headers=headers,
+            params={"ref": config["branch"]},
+            timeout=10,
+        )
+        if get_resp.status_code == 200:
+            sha = get_resp.json().get("sha")
+
+        payload = {
+            "message": f"Update Short Cover alert history - {pd.Timestamp.now():%Y-%m-%d %H:%M}",
+            "content": base64.b64encode(csv_text.encode("utf-8")).decode("utf-8"),
+            "branch": config["branch"],
+        }
+        if sha:
+            payload["sha"] = sha
+
+        put_resp = requests.put(url, headers=headers, json=payload, timeout=15)
+        if put_resp.status_code in (200, 201):
+            return True, "GitHubへ保存"
+        return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
+    except requests.exceptions.RequestException as e:
+        return False, f"GitHub通信エラー: {e}"
 
 
 def _truthy(value) -> bool:
@@ -247,6 +349,100 @@ else:
         _priority_show[_priority_cols].rename(columns=_priority_labels),
         hide_index=True,
         use_container_width=True,
+    )
+
+# A+/A と検証済み条件マッチを、同一日・同一銘柄で重複しないよう履歴へ自動記録。
+if "short_cover_alert_history" not in st.session_state:
+    st.session_state.short_cover_alert_history = load_alert_history()
+
+_history, _new_alerts = append_priority_alert_history(
+    st.session_state.short_cover_alert_history,
+    priority_alerts,
+)
+if _new_alerts > 0:
+    st.session_state.short_cover_alert_history = _history
+    _ok, _msg = save_alert_history(_history)
+    if _ok:
+        st.toast(f"📌 Short Coverアラートを{_new_alerts}件記録しました", icon="📌")
+    else:
+        st.warning(f"アラート履歴の保存に失敗しました：{_msg}")
+
+st.markdown("## 🗂️ アラート履歴・追跡")
+_history = st.session_state.short_cover_alert_history
+_hsum = summarize_alert_history(_history)
+
+_h1, _h2, _h3, _h4 = st.columns(4)
+_h1.metric("累計アラート", f"{_hsum['alerts']}件")
+_h2.metric("追跡開始", f"{_hsum['tracked']}件")
+_h3.metric(
+    "実績5日勝率",
+    "—" if _hsum["win_5d"] is None else f"{_hsum['win_5d']:.1f}%",
+)
+_h4.metric(
+    "実績5日平均",
+    "—" if _hsum["avg_5d"] is None else f"{_hsum['avg_5d']:+.2f}%",
+)
+
+_hcol1, _hcol2 = st.columns([1, 3])
+with _hcol1:
+    if st.button("🔄 履歴の成績を更新", key="update_short_cover_history"):
+        with st.spinner("アラート後の値動きを更新中..."):
+            _updated_history = update_alert_history_outcomes(_history)
+            st.session_state.short_cover_alert_history = _updated_history
+            _ok, _msg = save_alert_history(_updated_history)
+        if _ok:
+            st.success("履歴を更新しました。")
+            st.rerun()
+        else:
+            st.warning(f"ローカル更新は完了しましたが、GitHub保存に失敗しました：{_msg}")
+
+with _hcol2:
+    _storage_mode = "GitHub永続保存" if _github_history_config() else "ローカル保存"
+    st.caption(
+        f"保存先：{_storage_mode}｜A+/AまたはROBUST/PROMISING一致を自動記録。"
+        "成績更新はシグナル翌営業日始値を基準に1/3/5/10日を追跡します。"
+    )
+
+if _history.empty:
+    st.info("まだ保存されたアラート履歴はありません。")
+else:
+    _hist_show = _history.head(100).copy()
+    for _col in ["alert_date", "entry_date"]:
+        _hist_show[_col] = pd.to_datetime(_hist_show[_col], errors="coerce").dt.strftime("%Y-%m-%d")
+    for _col in ["ret_1d", "ret_3d", "ret_5d", "ret_10d", "mfe_10d", "mae_10d"]:
+        _hist_show[_col] = _hist_show[_col].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):+.2f}%"
+        )
+    _hist_show["alert_score"] = _hist_show["alert_score"].map(
+        lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+    )
+    _hist_cols = [
+        "alert_date", "ticker", "name", "alert_tier", "alert_score",
+        "optimizer_label", "phase", "regime", "outcome_status",
+        "entry_date", "ret_1d", "ret_3d", "ret_5d", "ret_10d",
+        "mfe_10d", "mae_10d",
+    ]
+    _hist_labels = {
+        "alert_date": "発生日", "ticker": "コード", "name": "銘柄",
+        "alert_tier": "Tier", "alert_score": "優先度",
+        "optimizer_label": "検証条件", "phase": "Phase",
+        "regime": "資金フロー", "outcome_status": "追跡",
+        "entry_date": "翌日始値", "ret_1d": "1日", "ret_3d": "3日",
+        "ret_5d": "5日", "ret_10d": "10日",
+        "mfe_10d": "MFE", "mae_10d": "MAE",
+    }
+    st.dataframe(
+        _hist_show[_hist_cols].rename(columns=_hist_labels),
+        hide_index=True,
+        use_container_width=True,
+        height=360,
+    )
+    st.download_button(
+        "⬇️ アラート履歴CSV",
+        data=_history.to_csv(index=False).encode("utf-8-sig"),
+        file_name="short_cover_alert_history.csv",
+        mime="text/csv",
+        key="download_short_cover_alert_history",
     )
 
 st.divider()
@@ -679,6 +875,14 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### アラート履歴・追跡
+
+- A+ / A、またはROBUST / PROMISING一致を発生日ごとに自動保存
+- 同じ日・同じ銘柄は重複保存しません
+- 既存ダッシュボードと同じGitHub SecretsがあればGitHubへ永続保存
+- 翌営業日始値を基準に1 / 3 / 5 / 10営業日の実績を更新
+- MFE / MAEも追跡し、実運用アラートの成績をバックテストと別に確認できます
 
 ### 今日の最優先チェック
 
