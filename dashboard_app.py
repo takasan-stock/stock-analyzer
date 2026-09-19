@@ -2116,10 +2116,8 @@ if not _focus_df.empty:
                             else (f"｜決算まで{_ed}日" if _ed is not None and 0 < _ed <= 14 else "")
                         )
                         st.markdown(
-                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  
-"
-                            f"¥{_item['price']:,.0f}｜{_rr_text}{_earn_text}  
-"
+                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  \n"
+                            f"¥{_item['price']:,.0f}｜{_rr_text}{_earn_text}  \n"
                             f"**{_item.get('summary', '')}**"
                         )
                 else:
@@ -2141,10 +2139,8 @@ if not _focus_df.empty:
                             else (f"｜決算まで{_ed}日" if _ed is not None and 0 < _ed <= 14 else "")
                         )
                         st.markdown(
-                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  
-"
-                            f"¥{_item['price']:,.0f}｜{_rr_text}{_risk_text}{_earn_text}  
-"
+                            f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  \n"
+                            f"¥{_item['price']:,.0f}｜{_rr_text}{_risk_text}{_earn_text}  \n"
                             f"**{_item.get('summary', '')}**"
                         )
                 else:
