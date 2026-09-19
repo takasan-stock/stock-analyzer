@@ -545,6 +545,26 @@ def score_short_cover(short_metrics: pd.DataFrame, price_features: pd.DataFrame)
         )
         long_demand = round(min(100.0, long_demand), 1)
 
+        # Ignition isolates the actual 'spark': volume expansion + AVWAP recovery
+        # + short-term breakout + acceleration. It is explanatory; Cover Score remains
+        # the stable v1 composite above.
+        ignition = (
+            volume_score * 0.35
+            + avwap_score * 0.30
+            + breakout_score * 0.25
+            + (100.0 if _truthy(r.get("rs_accel")) else 0.0) * 0.10
+        )
+        ignition = round(min(100.0, ignition), 1)
+
+        if early >= 65 and long_demand >= 65:
+            regime = "🔥 COVER + NEW MONEY"
+        elif early >= 65 and long_demand < 45:
+            regime = "⚠️ PURE SHORT COVER"
+        elif early < 65 and long_demand >= 70:
+            regime = "🟢 NEW MONEY"
+        else:
+            regime = "⚪ NEUTRAL"
+
         if pressure < 35:
             phase = "NORMAL"
         elif early >= 85 and vol >= 2.0 and _truthy(r.get("breakout5")):
@@ -571,8 +591,10 @@ def score_short_cover(short_metrics: pd.DataFrame, price_features: pd.DataFrame)
         item.update({
             "short_pressure": round(pressure, 1),
             "absorption_score": round(absorption, 1),
+            "ignition_score": ignition,
             "cover_score": early,
             "long_demand_score": long_demand,
+            "regime": regime,
             "confidence": int(min(100, confidence)),
             "phase": phase,
         })
