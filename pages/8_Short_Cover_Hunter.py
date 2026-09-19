@@ -17,6 +17,7 @@ from short_cover import (
     load_jpx_events,
     load_uploaded_workbooks,
     normalize_ticker,
+    optimize_short_cover_thresholds,
     score_short_cover,
     summarize_backtest,
 )
@@ -105,6 +106,8 @@ with st.sidebar:
     bt_sessions = st.slider("検証する直近営業日数", 20, 80, 40, step=10)
     bt_tickers = st.slider("バックテスト銘柄上限", 10, 60, 30, step=10)
     bt_min_score = st.slider("検証最低Cover Score", 45, 80, 55, step=5)
+    opt_horizon = st.selectbox("最適化の評価期間", [3, 5, 10], index=1, format_func=lambda x: f"{x}営業日")
+    opt_train_fraction = st.slider("学習期間の割合", 0.55, 0.80, 0.65, step=0.05)
 
     st.divider()
     if st.button("🔄 データを再取得", use_container_width=True):
@@ -384,6 +387,87 @@ else:
                 key="short_cover_backtest_download",
             )
 
+            st.markdown("## 🧬 最適条件ファインダー")
+            st.caption(
+                "時系列を前半の学習期間と後半の検証期間に分けます。"
+                "閾値は学習期間だけで探索し、その後の検証期間で再現した条件を上位に表示します。"
+            )
+            optimizer = optimize_short_cover_thresholds(
+                bt,
+                horizon=opt_horizon,
+                train_fraction=opt_train_fraction,
+                min_train_signals=8,
+                min_test_signals=4,
+                top_train_candidates=30,
+            )
+
+            if optimizer.empty:
+                st.info("最適化に必要なシグナル数がまだ不足しています。検証営業日数や対象銘柄数を増やしてください。")
+            else:
+                best = optimizer.iloc[0]
+                o1, o2, o3, o4 = st.columns(4)
+                o1.metric("安定度", f"{best['stability_score']:.0f}/100")
+                o2.metric("検証シグナル", f"{int(best['test_signals'])}件")
+                o3.metric(
+                    f"検証{opt_horizon}日平均",
+                    "—" if pd.isna(best["test_avg"]) else f"{float(best['test_avg']):+.2f}%",
+                )
+                o4.metric(
+                    f"検証{opt_horizon}日勝率",
+                    "—" if pd.isna(best["test_win"]) else f"{float(best['test_win']):.1f}%",
+                )
+
+                st.markdown(
+                    f"### {best['robustness']}｜候補条件  "
+                    f"Cover ≥ **{best['cover_min']:.0f}** / "
+                    f"Ignition ≥ **{best['ignition_min']:.0f}** / "
+                    f"Long ≥ **{best['long_min']:.0f}** / "
+                    f"Pressure ≥ **{best['pressure_min']:.0f}** / "
+                    f"Confidence ≥ **{best['confidence_min']:.0f}**"
+                )
+
+                opt_show = optimizer.head(15).copy()
+                for col in [
+                    "train_win", "train_avg", "train_median",
+                    "test_win", "test_avg", "test_median",
+                    "test_mfe", "test_mae",
+                ]:
+                    opt_show[col] = opt_show[col].map(
+                        lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%"
+                    )
+                opt_show["stability_score"] = opt_show["stability_score"].map(lambda x: f"{float(x):.0f}")
+                opt_show["条件"] = opt_show.apply(
+                    lambda r: (
+                        f"C{int(r['cover_min'])} / I{int(r['ignition_min'])} / "
+                        f"L{int(r['long_min'])} / P{int(r['pressure_min'])} / "
+                        f"Q{int(r['confidence_min'])}"
+                    ),
+                    axis=1,
+                )
+                opt_cols = [
+                    "robustness", "条件", "train_signals", "train_win", "train_avg",
+                    "test_signals", "test_win", "test_avg", "test_mfe", "test_mae",
+                    "stability_score",
+                ]
+                opt_labels = {
+                    "robustness": "判定", "train_signals": "学習件数",
+                    "train_win": "学習勝率", "train_avg": "学習平均",
+                    "test_signals": "検証件数", "test_win": "検証勝率",
+                    "test_avg": "検証平均", "test_mfe": "検証MFE",
+                    "test_mae": "検証MAE", "stability_score": "安定度",
+                }
+                st.dataframe(
+                    opt_show[opt_cols].rename(columns=opt_labels),
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(600, 80 + 35 * len(opt_show)),
+                )
+
+                st.caption(
+                    "🟢 ROBUST = 後半の未使用データでもプラス期待値・勝率50%以上・安定度60以上。"
+                    "サンプル数が少ない条件は上位でも過信しない設計です。"
+                )
+
 st.divider()
 st.markdown("## 🔎 個別銘柄ドリルダウン")
 choices_df = scored.copy()
@@ -476,6 +560,13 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 最適条件ファインダー
+
+- 前半期間だけで Cover / Ignition / Long / Pressure / Confidence の閾値を探索
+- 後半期間は探索に使わず、ホールドアウト検証だけに使用
+- 検証期間でもプラス期待値・勝率・サンプル数が保てた条件を ROBUST / PROMISING と表示
+- 全期間を一度に最適化しないことで、過学習を抑えます
 
 ### バックテスト
 
