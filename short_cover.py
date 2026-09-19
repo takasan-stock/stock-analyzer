@@ -838,6 +838,268 @@ def build_promotion_table(current: pd.DataFrame, previous: pd.DataFrame) -> pd.D
     ).reset_index(drop=True)
 
 
+
+def _price_feature_table_asof(
+    frames: dict[str, pd.DataFrame],
+    tickers: list[str],
+    as_of_date: pd.Timestamp,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    cutoff = pd.Timestamp(as_of_date)
+
+    for ticker in tickers:
+        frame = frames.get(ticker)
+        if frame is None or frame.empty:
+            feat = _price_features(pd.DataFrame())
+            feat["ticker"] = ticker
+            feat["snapshot_date"] = pd.NaT
+            rows.append(feat)
+            continue
+
+        idx = pd.to_datetime(frame.index)
+        hist = frame.loc[idx <= cutoff].copy()
+        feat = _price_features(hist)
+        feat["ticker"] = ticker
+        feat["snapshot_date"] = (
+            pd.Timestamp(hist.index[-1]).normalize() if not hist.empty else pd.NaT
+        )
+        rows.append(feat)
+
+    return _finalize_price_feature_rows(rows)
+
+
+def _forward_trade_stats(frame: pd.DataFrame, signal_pos: int) -> dict:
+    """Evaluate a close-confirmed signal using the next session open as entry."""
+    out = {
+        "entry_date": pd.NaT,
+        "entry_price": None,
+        "ret_1d": None,
+        "ret_3d": None,
+        "ret_5d": None,
+        "ret_10d": None,
+        "mfe_10d": None,
+        "mae_10d": None,
+    }
+    if frame is None or frame.empty:
+        return out
+
+    # signal_pos points at the session whose close generated the signal.
+    entry_pos = signal_pos + 1
+    if entry_pos >= len(frame):
+        return out
+
+    entry_row = frame.iloc[entry_pos]
+    entry = _to_float(entry_row.get("Open"))
+    if entry is None or entry <= 0:
+        entry = _to_float(entry_row.get("Close"))
+    if entry is None or entry <= 0:
+        return out
+
+    out["entry_date"] = pd.Timestamp(frame.index[entry_pos]).normalize()
+    out["entry_price"] = float(entry)
+
+    for horizon in (1, 3, 5, 10):
+        exit_pos = entry_pos + horizon - 1
+        if exit_pos >= len(frame):
+            continue
+        exit_close = _to_float(frame.iloc[exit_pos].get("Close"))
+        if exit_close is not None:
+            out[f"ret_{horizon}d"] = (float(exit_close) / entry - 1.0) * 100.0
+
+    end_pos = min(len(frame) - 1, entry_pos + 9)
+    future = frame.iloc[entry_pos : end_pos + 1]
+    if not future.empty:
+        highs = future["High"] if "High" in future else future["Close"]
+        lows = future["Low"] if "Low" in future else future["Close"]
+        if highs.notna().any():
+            out["mfe_10d"] = (float(highs.max()) / entry - 1.0) * 100.0
+        if lows.notna().any():
+            out["mae_10d"] = (float(lows.min()) / entry - 1.0) * 100.0
+
+    return out
+
+
+def backtest_short_cover(
+    events: pd.DataFrame,
+    tickers: list[str],
+    sessions: int = 40,
+    max_tickers: int = 40,
+    min_cover_score: float = 55.0,
+) -> pd.DataFrame:
+    """Point-in-time backtest for recent Short Cover signals.
+
+    - JPX events are filtered by publication_date when available (calc_date fallback).
+    - Signals use data available through that session close.
+    - Entry is the next session open.
+    - Returns are measured to the 1st/3rd/5th/10th session close after entry.
+    """
+    columns = [
+        "signal_date", "ticker", "name", "phase", "regime",
+        "cover_score", "short_pressure", "absorption_score",
+        "ignition_score", "long_demand_score", "confidence",
+        "short_ratio", "delta_short", "cover_breadth", "dtc",
+        "vol_ratio", "rs_watch", "breakout5", "above_avwap",
+        "entry_date", "entry_price", "ret_1d", "ret_3d",
+        "ret_5d", "ret_10d", "mfe_10d", "mae_10d",
+    ]
+    if events is None or events.empty:
+        return pd.DataFrame(columns=columns)
+
+    clean_tickers = list(dict.fromkeys(
+        normalize_ticker(t) for t in tickers if normalize_ticker(t)
+    ))[:max_tickers]
+    if not clean_tickers:
+        return pd.DataFrame(columns=columns)
+
+    frames = _download_prices(clean_tickers, period="1y")
+    if not frames:
+        return pd.DataFrame(columns=columns)
+
+    # Build a common recent trading calendar from downloaded prices.
+    all_dates: set[pd.Timestamp] = set()
+    for frame in frames.values():
+        if frame is None or frame.empty:
+            continue
+        for idx in frame.index:
+            all_dates.add(pd.Timestamp(idx).normalize())
+
+    trade_dates = sorted(all_dates)
+    if len(trade_dates) < 12:
+        return pd.DataFrame(columns=columns)
+
+    # Leave ten future sessions for outcome measurement.
+    signal_dates = trade_dates[-(sessions + 10) : -10]
+    if not signal_dates:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict] = []
+    for signal_date in signal_dates:
+        short_metrics = build_short_metrics(
+            events,
+            window_days=75,
+            as_of_date=signal_date,
+        )
+        if short_metrics.empty:
+            continue
+
+        short_metrics = short_metrics[
+            short_metrics["ticker"].isin(clean_tickers)
+        ].copy()
+        if short_metrics.empty:
+            continue
+
+        price_features = _price_feature_table_asof(
+            frames,
+            short_metrics["ticker"].astype(str).tolist(),
+            signal_date,
+        )
+        scored = score_short_cover(short_metrics, price_features)
+        if scored.empty:
+            continue
+
+        scored = scored[scored["cover_score"] >= float(min_cover_score)].copy()
+        scored = scored[
+            scored["phase"].isin([
+                "👀 COVER WATCH",
+                "🔥 COVER EARLY",
+                "✅ COVER CONFIRMED",
+                "🚀 SQUEEZE",
+            ])
+        ]
+        if scored.empty:
+            continue
+
+        for _, r in scored.iterrows():
+            ticker = str(r["ticker"])
+            frame = frames.get(ticker)
+            if frame is None or frame.empty:
+                continue
+
+            normalized_index = pd.to_datetime(frame.index).normalize()
+            matches = [i for i, d in enumerate(normalized_index) if d == signal_date]
+            if not matches:
+                continue
+            signal_pos = matches[-1]
+
+            stats = _forward_trade_stats(frame, signal_pos)
+            if stats["entry_price"] is None:
+                continue
+
+            item = {
+                "signal_date": pd.Timestamp(signal_date),
+                "ticker": ticker,
+                "name": r.get("name", ""),
+                "phase": r.get("phase", ""),
+                "regime": r.get("regime", ""),
+                "cover_score": r.get("cover_score"),
+                "short_pressure": r.get("short_pressure"),
+                "absorption_score": r.get("absorption_score"),
+                "ignition_score": r.get("ignition_score"),
+                "long_demand_score": r.get("long_demand_score"),
+                "confidence": r.get("confidence"),
+                "short_ratio": r.get("short_ratio"),
+                "delta_short": r.get("delta_short"),
+                "cover_breadth": r.get("cover_breadth"),
+                "dtc": r.get("dtc"),
+                "vol_ratio": r.get("vol_ratio"),
+                "rs_watch": r.get("rs_watch"),
+                "breakout5": r.get("breakout5"),
+                "above_avwap": r.get("above_avwap"),
+            }
+            item.update(stats)
+            rows.append(item)
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    out = pd.DataFrame(rows)
+    out = out.sort_values(["signal_date", "cover_score"], ascending=[False, False])
+    return out.reset_index(drop=True)
+
+
+def summarize_backtest(backtest: pd.DataFrame, group_col: str = "phase") -> pd.DataFrame:
+    """Aggregate signal count, win rates, returns, MFE and MAE by phase/regime."""
+    columns = [
+        group_col, "signals", "win_1d", "win_3d", "win_5d", "win_10d",
+        "avg_1d", "avg_3d", "avg_5d", "avg_10d",
+        "median_5d", "avg_mfe_10d", "avg_mae_10d",
+    ]
+    if backtest is None or backtest.empty or group_col not in backtest.columns:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for key, g in backtest.groupby(group_col, dropna=False):
+        def _win(col: str):
+            s = pd.to_numeric(g[col], errors="coerce").dropna()
+            return float((s > 0).mean() * 100.0) if not s.empty else None
+
+        def _avg(col: str):
+            s = pd.to_numeric(g[col], errors="coerce").dropna()
+            return float(s.mean()) if not s.empty else None
+
+        s5 = pd.to_numeric(g["ret_5d"], errors="coerce").dropna()
+        rows.append({
+            group_col: key,
+            "signals": int(len(g)),
+            "win_1d": _win("ret_1d"),
+            "win_3d": _win("ret_3d"),
+            "win_5d": _win("ret_5d"),
+            "win_10d": _win("ret_10d"),
+            "avg_1d": _avg("ret_1d"),
+            "avg_3d": _avg("ret_3d"),
+            "avg_5d": _avg("ret_5d"),
+            "avg_10d": _avg("ret_10d"),
+            "median_5d": float(s5.median()) if not s5.empty else None,
+            "avg_mfe_10d": _avg("mfe_10d"),
+            "avg_mae_10d": _avg("mae_10d"),
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["signals", "avg_5d"],
+        ascending=[False, False],
+    ).reset_index(drop=True)
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
