@@ -2111,7 +2111,7 @@ if not _focus_df.empty:
 
         if _a_items:
             st.markdown("### 🌅 朝イチ確認ボックス")
-            st.caption("まずはAランクだけ確認。チャンスAと警戒Aを分けて要点だけ表示します。")
+            st.caption("まずはAランクだけ確認。次の行動は3項目以内の短いチェックワードで表示します。")
 
             _morning_opp = [x for x in _a_items if x.get("focus_type") == "opportunity"]
             _morning_warn = [x for x in _a_items if x.get("focus_type") == "warning"]
@@ -2142,23 +2142,27 @@ if not _focus_df.empty:
                         _vr = _item.get("vol_ratio")
                         _chg = _item.get("change_pct")
                         if not _rr_configured:
-                            _checks.append("目標株価・損切りラインを設定")
+                            _checks.append("RR設定")
                         if _vr is not None and _vr >= 1.5:
-                            _checks.append("出来高が継続するか確認")
+                            _checks.append("出来高継続")
                         if _chg is not None and _chg >= 5:
-                            _checks.append("高値更新・失速の有無を確認")
+                            _checks.append("高値更新")
                         if "材料ホット" in _tags:
-                            _checks.append("材料の織り込み度を確認")
+                            _checks.append("材料織り込み")
                         if _ed is not None and 0 <= _ed <= 7:
-                            _checks.append("決算前の持ち越し判断を確認")
+                            _checks.append("決算持越し")
                         if not _checks:
-                            _checks.append("エントリー位置と出来高を確認")
+                            _checks.append("押し目・出来高")
 
                         st.markdown(
                             f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  \n"
                             f"¥{_item['price']:,.0f}｜{_rr_text}{_earn_text}  \n"
                             f"**{_item.get('summary', '')}**  \n"
-                            f"👉 次に見る：{' / '.join(_checks[:3])}"
+                            f"👉 次に見る："
+                            + "　".join(
+                                f"{n} {label}"
+                                for n, label in zip(("①", "②", "③"), _checks[:3])
+                            )
                         )
                 else:
                     st.caption("チャンスAはありません。")
@@ -2189,23 +2193,27 @@ if not _focus_df.empty:
                         _checks = []
                         _tags = set(_item.get("tags", []))
                         if not _rr_configured:
-                            _checks.append("目標株価・損切りラインを設定")
+                            _checks.append("RR設定")
                         if "要注意" in _tags or "損切り接近" in _tags:
-                            _checks.append("損切りラインと保有量を確認")
+                            _checks.append("損切り・保有量")
                         if _ed is not None and 0 <= _ed <= 7:
-                            _checks.append("決算前の持ち越し判断を確認")
+                            _checks.append("決算持越し")
                         if "急落" in _tags:
-                            _checks.append("悪材料・需給悪化の有無を確認")
+                            _checks.append("悪材料・需給")
                         if "RR低め" in _tags:
-                            _checks.append("目標株価・損切り設定を再確認")
+                            _checks.append("RR再確認")
                         if not _checks:
-                            _checks.append("イベントと下値リスクを確認")
+                            _checks.append("イベント・下値")
 
                         st.markdown(
                             f"**🔴 A｜{_item['name']}（{_item['ticker']}）**  \n"
                             f"¥{_item['price']:,.0f}｜{_rr_text}{_risk_text}{_earn_text}  \n"
                             f"**{_item.get('summary', '')}**  \n"
-                            f"👉 次に見る：{' / '.join(_checks[:3])}"
+                            f"👉 次に見る："
+                            + "　".join(
+                                f"{n} {label}"
+                                for n, label in zip(("①", "②", "③"), _checks[:3])
+                            )
                         )
                 else:
                     st.caption("警戒Aはありません。")
