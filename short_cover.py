@@ -167,11 +167,27 @@ def normalize_ticker(value) -> str:
 
 
 def clean_issue_name(value) -> str:
-    """Remove JPX security-type suffixes that add noise to display names."""
+    """Remove JPX display noise and repair letter-spaced ASCII issue names."""
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return ""
+
     text = str(value).replace("\u3000", " ").strip()
     text = re.sub(r"\s+(普通株式|普通株)$", "", text)
+
+    # Some JPX workbooks expose English issue names as one-character tokens,
+    # e.g. "B i t c o i n J a p a n". Repair only this narrow pattern so
+    # ordinary names such as "ABC Holdings" keep their real word spacing.
+    tokens = text.split()
+    if len(tokens) >= 4 and all(
+        len(token) == 1 and re.fullmatch(r"[A-Za-z0-9]", token)
+        for token in tokens
+    ):
+        joined = "".join(tokens)
+        if any(ch.islower() for ch in joined):
+            # Restore camel-case word boundary: BitcoinJapan -> Bitcoin Japan.
+            joined = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", joined)
+        text = joined
+
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 
