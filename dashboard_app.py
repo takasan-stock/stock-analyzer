@@ -1304,6 +1304,8 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
             continue
 
         score = 0
+        opportunity_score = 0
+        warning_score = 0
         reasons = []
         tags = []
 
@@ -1311,32 +1313,46 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
         if vr is not None:
             if vr >= 3:
                 score += 4
+                opportunity_score += 3
                 reasons.append(f"出来高 {vr:.1f}倍")
                 tags.append("出来高急増")
             elif vr >= 2:
                 score += 3
+                opportunity_score += 2
                 reasons.append(f"出来高 {vr:.1f}倍")
                 tags.append("出来高増")
             elif vr >= 1.5:
                 score += 2
+                opportunity_score += 1
                 reasons.append(f"出来高 {vr:.1f}倍")
 
         chg = p.get("change_pct")
         if chg is not None and abs(chg) >= 5:
             score += 3
+            if chg > 0:
+                opportunity_score += 2
+            else:
+                warning_score += 3
             reasons.append(f"前日比 {chg:+.1f}%")
             tags.append("急騰" if chg > 0 else "急落")
         elif chg is not None and abs(chg) >= 3:
             score += 1
+            if chg > 0:
+                opportunity_score += 1
+            else:
+                warning_score += 1
             reasons.append(f"前日比 {chg:+.1f}%")
 
         news_count = count_fresh_news(news_batch.get(ticker, []), hours=24)
         if news_count >= 3:
             score += 3
+            opportunity_score += 1
+            warning_score += 1
             reasons.append(f"24hニュース {news_count}件")
             tags.append("材料確認")
         elif news_count >= 1:
             score += 2
+            opportunity_score += 1
             reasons.append(f"24hニュース {news_count}件")
 
         catalyst_days, _ = calc_catalyst_info(
@@ -1344,10 +1360,12 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
         )
         if catalyst_days is not None and 0 <= catalyst_days <= 7:
             score += 3
+            opportunity_score += 2
             reasons.append(f"材料から {catalyst_days}日")
             tags.append("材料ホット")
         elif catalyst_days is not None and 0 <= catalyst_days <= 30:
             score += 1
+            opportunity_score += 1
             reasons.append(f"材料から {catalyst_days}日")
 
         # 決算イベント接近
@@ -1362,18 +1380,22 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
         if earnings_days is not None:
             if earnings_days == 0:
                 score += 7
+                warning_score += 6
                 reasons.append("本日決算")
                 tags.append("決算本日")
             elif 1 <= earnings_days <= 3:
                 score += 6
+                warning_score += 5
                 reasons.append(f"決算まで {earnings_days}日")
                 tags.append("決算直前")
             elif 4 <= earnings_days <= 7:
                 score += 5
+                warning_score += 4
                 reasons.append(f"決算まで {earnings_days}日")
                 tags.append("決算7日以内")
             elif 8 <= earnings_days <= 14:
                 score += 2
+                warning_score += 2
                 reasons.append(f"決算まで {earnings_days}日")
                 tags.append("決算14日以内")
 
@@ -1385,23 +1407,28 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
         if stop is not None:
             if price <= stop:
                 score += 6
+                warning_score += 6
                 reasons.append("損切りライン到達")
                 tags.append("要注意")
             elif risk_pct is not None and 0 < risk_pct <= 5:
                 score += 4
+                warning_score += 4
                 reasons.append(f"損切りまで {risk_pct:.1f}%")
                 tags.append("損切り接近")
 
         if rr is not None:
             if rr >= 3:
                 score += 3
+                opportunity_score += 4
                 reasons.append(f"RR 1:{rr:.1f}")
                 tags.append("RR良好")
             elif rr >= 2:
                 score += 2
+                opportunity_score += 3
                 reasons.append(f"RR 1:{rr:.1f}")
             elif rr < 1:
                 score += 1
+                warning_score += 2
                 reasons.append(f"RR 1:{rr:.1f}")
                 tags.append("RR低め")
 
@@ -1419,6 +1446,12 @@ def build_today_focus(df, prices: dict, news_batch: dict, earnings_calendar: dic
                 "price": price,
                 "change_pct": chg,
                 "score": score,
+                "opportunity_score": opportunity_score,
+                "warning_score": warning_score,
+                "focus_type": (
+                    "warning" if warning_score > opportunity_score
+                    else "opportunity"
+                ),
                 "reasons": reasons,
                 "tags": list(dict.fromkeys(tags)),
                 "rr": rr,
@@ -2012,9 +2045,17 @@ if not _focus_df.empty:
         ):
             st.caption(
                 "出来高・値動き・24時間ニュース・材料の鮮度・決算接近・損切り接近・RRを統合。"
-                "順位は『今日チェックする優先度』で、売買推奨ではありません。"
+                "チャンス候補と警戒候補を分けて表示します。売買推奨ではなく確認優先度です。"
             )
-            for _rank, _item in enumerate(_focus_items, start=1):
+
+            _opportunity_items = [
+                x for x in _focus_items if x.get("focus_type") == "opportunity"
+            ]
+            _warning_items = [
+                x for x in _focus_items if x.get("focus_type") == "warning"
+            ]
+
+            def _render_focus_item(_item, _rank):
                 _chg = _item.get("change_pct")
                 _chg_text = f"{_chg:+.1f}%" if _chg is not None else "—"
                 _tag_text = "　".join(
@@ -2036,6 +2077,24 @@ if not _focus_df.empty:
                     + (f"\n{_tag_text}  " if _tag_text else "")
                     + f"\n↳ {_reason_text}"
                 )
+
+            _col_opp, _col_warn = st.columns(2)
+
+            with _col_opp:
+                st.markdown("#### 🚀 チャンス候補")
+                if _opportunity_items:
+                    for _rank, _item in enumerate(_opportunity_items, start=1):
+                        _render_focus_item(_item, _rank)
+                else:
+                    st.caption("今日は強いチャンス候補はありません。")
+
+            with _col_warn:
+                st.markdown("#### ⚠️ 警戒候補")
+                if _warning_items:
+                    for _rank, _item in enumerate(_warning_items, start=1):
+                        _render_focus_item(_item, _rank)
+                else:
+                    st.caption("今日は強い警戒候補はありません。")
     else:
         st.info(
             "👀 今日見るべき銘柄：現在、強い注意シグナルはありません。",
