@@ -12,6 +12,7 @@ from short_cover import (
     compare_live_vs_backtest,
     get_active_condition_version,
     normalize_alert_history,
+    save_or_activate_condition_version,
     summarize_alert_history,
     normalize_condition_versions,
 )
@@ -273,6 +274,35 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertEqual(added, 1)
         self.assertEqual(history.iloc[0]["tracking_mode"], "ACTIVE")
         self.assertEqual(history.iloc[0]["condition_version"], "v1.0")
+
+    def test_one_click_start_creates_and_activates_once(self):
+        versions, version_id, created_new = save_or_activate_condition_version(
+            None,
+            robust_condition(),
+            source="optimizer",
+            horizon=5,
+            note="start",
+        )
+        self.assertTrue(created_new)
+        self.assertEqual(version_id, "v1.0")
+        active = get_active_condition_version(versions)
+        self.assertIsNotNone(active)
+        self.assertEqual(active["version_id"], "v1.0")
+
+        versions2, version_id2, created_new2 = save_or_activate_condition_version(
+            versions,
+            robust_condition(),
+            source="optimizer",
+            horizon=5,
+            note="start again",
+        )
+        self.assertFalse(created_new2)
+        self.assertEqual(version_id2, "v1.0")
+        self.assertEqual(len(normalize_condition_versions(versions2)), 1)
+        self.assertEqual(
+            get_active_condition_version(versions2)["version_id"],
+            "v1.0",
+        )
 
     def test_condition_versions_require_explicit_activation(self):
         versions, v10 = append_condition_version(

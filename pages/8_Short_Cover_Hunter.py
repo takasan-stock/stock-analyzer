@@ -33,6 +33,7 @@ from short_cover import (
     normalize_ticker,
     apply_optimizer_condition,
     optimize_short_cover_thresholds,
+    save_or_activate_condition_version,
     score_short_cover,
     summarize_alert_history,
     summarize_backtest,
@@ -816,6 +817,35 @@ if optimizer_live is not None and not optimizer_live.empty:
     ]
     if not _preferred_for_save.empty:
         _best_for_save = _preferred_for_save.iloc[0]
+
+        if _saved_active is None:
+            st.success(
+                f"正式運用候補：{_best_for_save['robustness']}｜"
+                f"{condition_text_from_row(_best_for_save)}｜"
+                f"安定度 {fmt_num(_best_for_save.get('stability_score'), 0)}/100"
+            )
+            if st.button(
+                "🚀 この条件で正式運用を開始",
+                key="start_short_cover_live",
+                type="primary",
+                use_container_width=False,
+            ):
+                _versions, _version_id, _created_new = save_or_activate_condition_version(
+                    _versions,
+                    _best_for_save,
+                    source="optimizer",
+                    horizon=opt_horizon,
+                    note="初回正式運用開始",
+                )
+                st.session_state.short_cover_condition_versions = _versions
+                _ok, _msg = save_condition_versions(_versions)
+                if _ok:
+                    _verb = "保存＋有効化" if _created_new else "既存版を有効化"
+                    st.success(f"{_version_id} を{_verb}しました。正式運用を開始します。")
+                    st.rerun()
+                else:
+                    st.warning(f"正式運用条件の保存に失敗しました：{_msg}")
+
         if st.button("💾 現在の最適条件を新バージョン保存", key="save_current_condition_version"):
             _versions, _version_id = append_condition_version(
                 _versions,
@@ -1403,6 +1433,13 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 正式運用開始
+
+- 初回は「🚀 この条件で正式運用を開始」で保存＋有効化を一括実行
+- 同じ条件が既に保存済みなら重複バージョンを作らず、その版を有効化
+- 有効化後からACTIVE履歴への正式記録を開始
+- 保存だけしたい場合は従来の「新バージョン保存」も利用可能
 
 ### 条件バージョン管理
 

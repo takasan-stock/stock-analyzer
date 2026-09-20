@@ -2277,6 +2277,46 @@ def activate_condition_version(
     return normalize_condition_versions(out)
 
 
+def save_or_activate_condition_version(
+    versions: pd.DataFrame | None,
+    condition,
+    *,
+    source: str,
+    horizon: int,
+    note: str = "",
+) -> tuple[pd.DataFrame, str, bool]:
+    """Activate an existing identical condition or create+activate a new version.
+
+    Returns (versions, version_id, created_new).
+    This keeps the first-run one-click flow idempotent and avoids duplicate
+    versions when the same optimized condition was already saved earlier.
+    """
+    base = normalize_condition_versions(versions)
+    if condition is None:
+        return base, "", False
+
+    condition_text = condition_text_from_row(condition)
+    same = base[
+        (base["condition_text"].fillna("").astype(str) == condition_text)
+        & (pd.to_numeric(base["horizon"], errors="coerce").fillna(-1).astype(int) == int(horizon))
+    ].copy()
+
+    if not same.empty:
+        same = same.sort_values(["created_at", "version_id"], ascending=[False, False])
+        version_id = str(same.iloc[0]["version_id"])
+        return activate_condition_version(base, version_id), version_id, False
+
+    created, version_id = append_condition_version(
+        base,
+        condition,
+        source=source,
+        horizon=int(horizon),
+        note=note,
+        activate=True,
+    )
+    return created, version_id, True
+
+
 def get_active_condition_version(versions: pd.DataFrame | None):
     """Return the active saved condition as a Series compatible with optimizer rows."""
     out = normalize_condition_versions(versions)
