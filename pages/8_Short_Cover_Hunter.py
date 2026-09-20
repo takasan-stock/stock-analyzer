@@ -12,6 +12,7 @@ import streamlit as st
 import yfinance as yf
 
 from short_cover import (
+    ALERT_HISTORY_COLUMNS,
     append_priority_alert_history,
     backtest_short_cover,
     build_price_feature_snapshots,
@@ -617,7 +618,19 @@ else:
 if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
 
-_history = st.session_state.short_cover_alert_history
+# Streamlitの既存セッションには旧スキーマのDataFrameが残ることがあるため、
+# 毎回ここで正規化してから利用する。旧行はLEGACYとして保持される。
+_raw_history = st.session_state.short_cover_alert_history
+_raw_columns = set(getattr(_raw_history, "columns", []))
+_history_needs_migration = not set(ALERT_HISTORY_COLUMNS).issubset(_raw_columns)
+_history = normalize_alert_history(_raw_history)
+st.session_state.short_cover_alert_history = _history
+
+if _history_needs_migration and not _history.empty:
+    _migrated_ok, _migrated_msg = save_alert_history(_history)
+    if _migrated_ok:
+        st.toast("🧩 旧アラート履歴を新形式へ移行しました", icon="🧩")
+
 _new_alerts = 0
 if _saved_active is not None:
     _history, _new_alerts = append_priority_alert_history(
@@ -637,7 +650,8 @@ else:
     st.caption("🧪 現在はプレビュー運用です。条件を有効化するまで新規アラートは正式履歴へ保存しません。")
 
 st.markdown("## 🗂️ アラート履歴・追跡")
-_history = st.session_state.short_cover_alert_history
+_history = normalize_alert_history(st.session_state.short_cover_alert_history)
+st.session_state.short_cover_alert_history = _history
 _hsum = summarize_alert_history(_history)
 
 _bt_for_health = st.session_state.get("short_cover_backtest")
@@ -918,7 +932,8 @@ with _hcol2:
 if _history.empty:
     st.info("まだ保存されたアラート履歴はありません。")
 else:
-    _hist_show = _history.head(100).copy()
+    # 表示直前も正規化して、将来の列追加でも旧セッションがKeyErrorにならないようにする。
+    _hist_show = normalize_alert_history(_history).head(100).copy()
     for _col in ["alert_date", "entry_date"]:
         _hist_show[_col] = pd.to_datetime(_hist_show[_col], errors="coerce").dt.strftime("%Y-%m-%d")
     for _col in ["ret_1d", "ret_3d", "ret_5d", "ret_10d", "mfe_10d", "mae_10d"]:
