@@ -242,3 +242,10 @@ st.success(
     "Calibration単体より一段厳しい検証です。",
     icon="🧭",
 )
+
+if st.button(
+    "🚶 Walk-Forward Calibrationを開く",
+    use_container_width=True,
+    key="open_walk_forward_calibration",
+):
+    st.switch_page("pages/13_Walk_Forward_Calibration.py")
