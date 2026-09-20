@@ -136,15 +136,29 @@ st.caption(
     "これは売買推奨ではなく、確認漏れを減らすための実行支援ツールです。"
 )
 
+incoming_ticker = normalize_ticker(st.session_state.pop("pretrade_ticker", ""))
+incoming_source = str(st.session_state.pop("pretrade_source", "") or "").strip()
+incoming_name = str(st.session_state.pop("pretrade_name", "") or "").strip()
+incoming_earnings_days = st.session_state.pop("pretrade_earnings_days", None)
+
 portfolio = load_portfolio()
+row = {}
 
 if portfolio.empty or "ティッカー" not in portfolio.columns:
     st.warning("登録銘柄を読み込めませんでした。ティッカーを直接入力してください。")
-    ticker = normalize_ticker(st.text_input("証券コード", placeholder="例: 4063"))
-    row = {}
+    ticker = normalize_ticker(
+        st.text_input(
+            "証券コード",
+            value=incoming_ticker,
+            placeholder="例: 4063",
+            key="pretrade_direct_ticker",
+        )
+    )
 else:
     options = []
     rows = {}
+    label_by_code = {}
+
     for _, r in portfolio.iterrows():
         code = normalize_ticker(r.get("ティッカー", ""))
         if not code:
@@ -153,13 +167,49 @@ else:
         label = f"{name}（{code}）" if name else code
         options.append(label)
         rows[label] = r.to_dict()
+        label_by_code[code] = label
 
-    selected = st.selectbox("購入前チェックする銘柄", options)
+    # Entry Hunterなどから渡された未登録銘柄も、そのままチェックできるようにする。
+    if incoming_ticker and incoming_ticker not in label_by_code:
+        incoming_label = (
+            f"{incoming_name}（{incoming_ticker}）"
+            if incoming_name
+            else f"未登録銘柄（{incoming_ticker}）"
+        )
+        options.insert(0, incoming_label)
+        rows[incoming_label] = {
+            "ティッカー": incoming_ticker,
+            "銘柄名": incoming_name,
+        }
+        label_by_code[incoming_ticker] = incoming_label
+
+    if not options:
+        st.warning("チェック可能な銘柄がありません。")
+        st.stop()
+
+    if incoming_ticker and incoming_ticker in label_by_code:
+        st.session_state["pretrade_selected_label"] = label_by_code[incoming_ticker]
+        if incoming_source:
+            st.session_state["pretrade_active_source"] = incoming_source
+            st.session_state["pretrade_source_ticker"] = incoming_ticker
+        if incoming_earnings_days is not None:
+            st.session_state["pretrade_incoming_earnings_days"] = incoming_earnings_days
+
+    selected = st.selectbox(
+        "購入前チェックする銘柄",
+        options,
+        key="pretrade_selected_label",
+    )
     row = rows.get(selected, {})
     ticker = normalize_ticker(row.get("ティッカー", ""))
 
 if not ticker:
     st.stop()
+
+_active_source = str(st.session_state.get("pretrade_active_source", "") or "")
+_source_ticker = normalize_ticker(st.session_state.get("pretrade_source_ticker", ""))
+if _active_source and _source_ticker == ticker:
+    st.success(f"🔗 {_active_source} から {ticker} を引き継ぎました。")
 
 with st.spinner(f"{ticker} の価格データを取得中..."):
     daily = load_daily(ticker)
@@ -283,10 +333,31 @@ with r2:
         step=0.1,
     )
 with r3:
+    _incoming_days = st.session_state.pop("pretrade_incoming_earnings_days", None)
+    _earnings_options = ["未確認", "当日", "1-2日", "3-5日", "6-10日", "11日以上"]
+    if _incoming_days is None:
+        _earnings_index = 0
+    else:
+        try:
+            _d = int(_incoming_days)
+            if _d <= 0:
+                _earnings_index = 1
+            elif _d <= 2:
+                _earnings_index = 2
+            elif _d <= 5:
+                _earnings_index = 3
+            elif _d <= 10:
+                _earnings_index = 4
+            else:
+                _earnings_index = 5
+        except (TypeError, ValueError):
+            _earnings_index = 0
+
     earnings_mode = st.selectbox(
         "決算まで",
-        ["未確認", "当日", "1-2日", "3-5日", "6-10日", "11日以上"],
-        index=0,
+        _earnings_options,
+        index=_earnings_index,
+        key=f"pretrade_earnings_mode_{ticker}",
     )
 
 earnings_days_map = {
