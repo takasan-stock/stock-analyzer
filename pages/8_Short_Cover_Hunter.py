@@ -19,6 +19,7 @@ from short_cover import (
     append_priority_alert_history,
     backtest_short_cover,
     build_price_feature_snapshots,
+    build_entry_hunter_snapshot,
     build_operational_health,
     build_priority_alerts,
     build_reoptimization_comparison,
@@ -38,6 +39,7 @@ from short_cover import (
     apply_optimizer_condition,
     optimize_short_cover_thresholds,
     score_short_cover,
+    select_entry_hunter_candidates,
     summarize_alert_history,
     summarize_backtest,
     update_alert_history_outcomes,
@@ -54,6 +56,32 @@ def load_jpx_cached(archive_pages: int, max_files: int):
 @st.cache_data(ttl=900, show_spinner=False)
 def price_features_cached(tickers: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return build_price_feature_snapshots(list(tickers))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_entry_hunter_prices(ticker: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    symbol = ticker if "." in ticker else f"{ticker}.T"
+    try:
+        daily = yf.download(
+            symbol,
+            period="1mo",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+        )
+        intraday = yf.download(
+            symbol,
+            period="10d",
+            interval="5m",
+            auto_adjust=True,
+            progress=False,
+        )
+        for frame in (daily, intraday):
+            if isinstance(frame.columns, pd.MultiIndex):
+                frame.columns = frame.columns.get_level_values(0)
+        return daily.dropna(subset=["Close"]), intraday.dropna(subset=["Close"])
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -803,6 +831,124 @@ else:
         hide_index=True,
         use_container_width=True,
     )
+
+st.markdown("## 🎯 Short Cover Entry Hunter")
+st.caption(
+    "前回の正式ACTIVEアラートを翌営業日の5分足で監視します。"
+    "これは売買推奨ではなく、寄り後の状態整理です。Yahoo Financeの5分足は遅延する場合があります。"
+)
+
+if "short_cover_alert_history" not in st.session_state:
+    st.session_state.short_cover_alert_history = load_alert_history()
+
+_entry_history = normalize_alert_history(st.session_state.short_cover_alert_history)
+_entry_candidates = select_entry_hunter_candidates(
+    _entry_history,
+    as_of=pd.Timestamp.now(),
+    max_calendar_days=4,
+    limit=5,
+)
+
+if _entry_candidates.empty:
+    st.info("翌営業日監視の対象になる直近ACTIVEアラートはありません。")
+else:
+    _entry_rows = []
+    for _, _candidate in _entry_candidates.iterrows():
+        _ticker = str(_candidate["ticker"])
+        _daily, _intraday = load_entry_hunter_prices(_ticker)
+        _entry = build_entry_hunter_snapshot(_daily, _intraday)
+
+        _alert_date = pd.to_datetime(_candidate["alert_date"], errors="coerce")
+        _market_date = pd.to_datetime(_entry.get("market_date"), errors="coerce")
+
+        if (
+            pd.notna(_alert_date)
+            and pd.notna(_market_date)
+            and pd.Timestamp(_market_date).normalize()
+            <= pd.Timestamp(_alert_date).normalize()
+        ):
+            _entry["status"] = "🟡 WAIT"
+            _entry["score"] = 0.0
+            _entry["reason"] = "翌営業日の取引データ待ち"
+            _entry["risk"] = ""
+
+        _entry_rows.append({
+            "ticker": _ticker,
+            "name": _candidate.get("name", ""),
+            "alert_date": _alert_date,
+            "tier": _candidate.get("alert_tier", ""),
+            "status": _entry.get("status", "⚪ NO DATA"),
+            "entry_score": _entry.get("score", 0),
+            "gap_pct": _entry.get("gap_pct"),
+            "current_price": _entry.get("current_price"),
+            "vwap": _entry.get("vwap"),
+            "opening15_high": _entry.get("opening15_high"),
+            "prev_high": _entry.get("prev_high"),
+            "relvol15": _entry.get("relvol15"),
+            "reason": _entry.get("reason", ""),
+            "risk": _entry.get("risk", ""),
+            "market_date": _entry.get("market_date"),
+        })
+
+    _entry_df = pd.DataFrame(_entry_rows)
+    if not _entry_df.empty:
+        _ecols = st.columns(min(5, len(_entry_df)))
+        for _idx, (_, _r) in enumerate(_entry_df.iterrows()):
+            with _ecols[_idx]:
+                st.metric(
+                    label=str(_r["status"]),
+                    value=f"{float(_r['entry_score']):.0f}",
+                    delta=f"{_r['ticker']} {_r['name']}",
+                )
+                _gap_text = "—" if pd.isna(_r["gap_pct"]) else f"{float(_r['gap_pct']):+.1f}%"
+                _rv_text = "—" if pd.isna(_r["relvol15"]) else f"{float(_r['relvol15']):.1f}x"
+                st.caption(
+                    f"Gap {_gap_text}｜15分出来高 {_rv_text}\n"
+                    f"{_r['reason'] or '条件待ち'}"
+                    + (f"｜⚠ {_r['risk']}" if _r["risk"] else "")
+                )
+
+        _entry_show = _entry_df.copy()
+        _entry_show["監視日"] = pd.to_datetime(
+            _entry_show["market_date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+        _entry_show["GU"] = _entry_show["gap_pct"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):+.1f}%"
+        )
+        _entry_show["15分出来高"] = _entry_show["relvol15"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.1f}x"
+        )
+        _entry_show["VWAP"] = _entry_show["vwap"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.1f}"
+        )
+        _entry_show["15分高値"] = _entry_show["opening15_high"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.1f}"
+        )
+        _entry_show["前日高値"] = _entry_show["prev_high"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.1f}"
+        )
+        _entry_show["Score"] = _entry_show["entry_score"].map(
+            lambda x: f"{float(x):.0f}"
+        )
+
+        st.dataframe(
+            _entry_show[[
+                "status", "ticker", "name", "tier", "Score", "監視日",
+                "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
+                "reason", "risk",
+            ]].rename(columns={
+                "status": "判定", "ticker": "コード", "name": "銘柄",
+                "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
+            }),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.caption(
+            "目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
+            " 🟡 WAIT＝条件未成立。🔴 CANCEL＝VWAP/15分安値など初動崩れ。"
+            " 大幅GUは追いかけず注意側に評価します。"
+        )
 
 # 正式な実績追跡は ACTIVE 条件だけ。未有効の最適条件は画面プレビューに留める。
 if "short_cover_alert_history" not in st.session_state:
@@ -1730,6 +1876,15 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 - **🟡 WATCH**：弱含み。再検証を優先
 - **🔴 DEGRADED**：バックテストから大きく悪化
 - 実運用5件未満は **⚪ DATA BUILDING** として判定保留
+
+### Short Cover Entry Hunter
+
+- 前回の正式ACTIVE A/A+候補を翌営業日の5分足で監視
+- **🟢 ENTRY READY**：15分経過後もVWAP上、ブレイク、出来高継続が揃う
+- **🟡 WAIT**：15分未確定、VWAP回復待ち、ブレイク待ちなど
+- **🔴 CANCEL**：大幅GD、前日終値からの大幅下落、15分安値割れ＋VWAP下など
+- 大幅GUは追いかけ防止のため加点を抑える
+- Yahoo Finance 5分足は遅延する場合があるため、実際の発注前は証券会社/TradingViewの現在値で再確認
 
 ### アラート履歴・追跡
 

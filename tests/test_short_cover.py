@@ -9,6 +9,7 @@ from short_cover import (
     apply_optimizer_condition,
     build_operational_health,
     build_priority_alerts,
+    evaluate_entry_hunter,
     business_day_lag,
     clean_issue_name,
     compare_live_vs_backtest,
@@ -100,6 +101,53 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertIn(row["alert_tier"], {"🚨 A+ 最優先確認", "🔥 A 優先確認"})
         self.assertIn("ROBUST MATCH", row["alert_reason"])
         self.assertIn("今日昇格", row["alert_reason"])
+
+    def test_entry_hunter_ready_when_strength_holds(self):
+        result = evaluate_entry_hunter(
+            prev_close=1000,
+            prev_high=1030,
+            session_open=1020,
+            current_price=1050,
+            vwap=1035,
+            opening15_high=1040,
+            opening15_low=1015,
+            relvol15=1.8,
+            minutes_from_open=25,
+        )
+        self.assertEqual(result["status"], "🟢 ENTRY READY")
+        self.assertGreaterEqual(float(result["score"]), 70)
+        self.assertTrue(result["above_vwap"])
+        self.assertTrue(result["opening15_break"])
+
+    def test_entry_hunter_waits_before_15_minutes(self):
+        result = evaluate_entry_hunter(
+            prev_close=1000,
+            prev_high=1030,
+            session_open=1015,
+            current_price=1035,
+            vwap=1025,
+            opening15_high=1040,
+            opening15_low=1010,
+            relvol15=1.4,
+            minutes_from_open=8,
+        )
+        self.assertEqual(result["status"], "🟡 WAIT")
+        self.assertIn("15分未確定", result["risk"])
+
+    def test_entry_hunter_cancels_failed_open(self):
+        result = evaluate_entry_hunter(
+            prev_close=1000,
+            prev_high=1030,
+            session_open=980,
+            current_price=945,
+            vwap=975,
+            opening15_high=990,
+            opening15_low=955,
+            relvol15=1.6,
+            minutes_from_open=30,
+        )
+        self.assertEqual(result["status"], "🔴 CANCEL")
+        self.assertFalse(result["above_vwap"])
 
     def test_business_day_lag_ignores_weekend(self):
         self.assertEqual(
