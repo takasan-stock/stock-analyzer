@@ -1614,6 +1614,7 @@ ALERT_HISTORY_COLUMNS = [
     "cover_score", "ignition_score", "long_demand_score",
     "short_pressure", "confidence", "vol_ratio", "rs_watch",
     "alert_price", "alert_reason", "promotion_reason", "condition_text",
+    "tracking_mode", "condition_version",
     "entry_date", "entry_price", "ret_1d", "ret_3d",
     "ret_5d", "ret_10d", "mfe_10d", "mae_10d",
     "outcome_status", "last_updated",
@@ -1645,6 +1646,14 @@ def normalize_alert_history(history: pd.DataFrame | None) -> pd.DataFrame:
     out["ticker"] = out["ticker"].map(normalize_ticker)
     out = out[out["ticker"] != ""].copy()
 
+    # Rows created before ACTIVE-only tracking are preserved for audit/history
+    # but excluded from official live-performance statistics.
+    out["tracking_mode"] = (
+        out["tracking_mode"].fillna("").astype(str).str.strip()
+    )
+    out.loc[out["tracking_mode"] == "", "tracking_mode"] = "LEGACY"
+    out["condition_version"] = out["condition_version"].fillna("").astype(str)
+
     # If the same alert is merged from local/GitHub copies, prefer the most
     # recently updated record, then the higher alert score. This preserves
     # newly calculated outcomes instead of accidentally keeping an older row.
@@ -1663,6 +1672,8 @@ def append_priority_alert_history(
     history: pd.DataFrame | None,
     priority_alerts: pd.DataFrame,
     min_tiers: tuple[str, ...] = ("🚨 A+ 最優先確認", "🔥 A 優先確認"),
+    tracking_mode: str = "ACTIVE",
+    condition_version: str = "",
 ) -> tuple[pd.DataFrame, int]:
     """Append today's actionable alerts once per alert-date/ticker.
 
@@ -1710,6 +1721,8 @@ def append_priority_alert_history(
             "alert_reason": r.get("alert_reason", ""),
             "promotion_reason": r.get("promotion_reason", ""),
             "condition_text": r.get("condition_text", ""),
+            "tracking_mode": str(tracking_mode or "ACTIVE"),
+            "condition_version": str(condition_version or ""),
             "entry_date": pd.NaT,
             "entry_price": None,
             "ret_1d": None,
@@ -1816,8 +1829,10 @@ def update_alert_history_outcomes(
 
 
 def summarize_alert_history(history: pd.DataFrame | None) -> dict:
-    """Headline performance metrics for the persisted real alert log."""
+    """Headline performance metrics for official ACTIVE live alerts only."""
     h = normalize_alert_history(history)
+    if not h.empty:
+        h = h[h["tracking_mode"].astype(str) == "ACTIVE"].copy()
     if h.empty:
         return {
             "alerts": 0, "tracked": 0, "win_5d": None,
@@ -1921,6 +1936,8 @@ def compare_live_vs_backtest(
         return result
 
     hist = normalize_alert_history(history)
+    if not hist.empty:
+        hist = hist[hist["tracking_mode"].astype(str) == "ACTIVE"].copy()
     if hist.empty:
         result["backtest_n"] = int(len(bt_ret))
         result["backtest_avg"] = float(bt_ret.mean())
