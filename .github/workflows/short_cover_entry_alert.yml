@@ -50,14 +50,21 @@ jobs:
           fi
 
       - name: Commit Entry Hunter status
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.test_email == true) }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test_email }}" = "true" ]; then
+            git add data/short_cover_entry_status.json
+            COMMIT_MESSAGE="Update Short Cover email test status"
+          else
+            git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
+            COMMIT_MESSAGE="Update Short Cover Entry alerts"
+          fi
+
           if git diff --cached --quiet; then
             echo "No Entry Hunter data changes"
             exit 0
           fi
-          git commit -m "Update Short Cover Entry alerts"
+          git commit -m "$COMMIT_MESSAGE"
           git push
