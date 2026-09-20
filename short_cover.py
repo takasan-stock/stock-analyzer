@@ -2434,6 +2434,326 @@ def build_operational_health(
     return result
 
 
+
+def select_entry_hunter_candidates(
+    history: pd.DataFrame | None,
+    *,
+    as_of=None,
+    max_calendar_days: int = 4,
+    limit: int = 5,
+) -> pd.DataFrame:
+    """Return the latest prior ACTIVE alert cohort for next-session monitoring."""
+    h = normalize_alert_history(history)
+    if h.empty:
+        return h
+
+    h = h[h["tracking_mode"].astype(str) == "ACTIVE"].copy()
+    h["alert_date"] = pd.to_datetime(h["alert_date"], errors="coerce").dt.normalize()
+    h = h.dropna(subset=["alert_date"])
+    if h.empty:
+        return h
+
+    ref = pd.Timestamp(as_of if as_of is not None else datetime.now()).normalize()
+    h = h[h["alert_date"] < ref].copy()
+    if h.empty:
+        return h
+
+    latest = h["alert_date"].max()
+    if (ref - latest).days > int(max_calendar_days):
+        return h.iloc[0:0].copy()
+
+    h = h[h["alert_date"] == latest].copy()
+    h = h.sort_values(
+        ["alert_score", "match_strength"],
+        ascending=False,
+        na_position="last",
+    )
+    return h.head(int(limit)).reset_index(drop=True)
+
+
+def evaluate_entry_hunter(
+    *,
+    prev_close,
+    prev_high,
+    session_open,
+    current_price,
+    vwap,
+    opening15_high,
+    opening15_low,
+    relvol15=None,
+    minutes_from_open: int = 0,
+) -> dict:
+    """Evaluate next-session execution quality for an existing A/A+ alert.
+
+    This is an execution-support state, not a buy recommendation.
+    """
+    vals = {
+        "prev_close": _to_float(prev_close),
+        "prev_high": _to_float(prev_high),
+        "session_open": _to_float(session_open),
+        "current_price": _to_float(current_price),
+        "vwap": _to_float(vwap),
+        "opening15_high": _to_float(opening15_high),
+        "opening15_low": _to_float(opening15_low),
+        "relvol15": _to_float(relvol15),
+    }
+
+    required = [
+        "prev_close", "prev_high", "session_open",
+        "current_price", "vwap",
+    ]
+    if any(vals[k] is None or vals[k] <= 0 for k in required):
+        return {
+            "status": "⚪ NO DATA",
+            "score": 0.0,
+            "gap_pct": None,
+            "above_vwap": False,
+            "prev_high_break": False,
+            "opening15_break": False,
+            "relvol15": vals["relvol15"],
+            "reason": "必要な価格データが不足",
+            "risk": "",
+        }
+
+    gap_pct = (vals["session_open"] / vals["prev_close"] - 1.0) * 100.0
+    above_vwap = vals["current_price"] >= vals["vwap"]
+    prev_high_break = vals["current_price"] > vals["prev_high"]
+    opening15_ready = (
+        int(minutes_from_open) >= 15
+        and vals["opening15_high"] is not None
+        and vals["opening15_low"] is not None
+    )
+    opening15_break = bool(
+        opening15_ready
+        and vals["current_price"] > vals["opening15_high"]
+    )
+
+    score = 0.0
+    reasons = []
+    risks = []
+
+    # Gap quality: modest strength is preferred to an already extended open.
+    if -1.0 <= gap_pct <= 3.0:
+        score += 15
+        reasons.append(f"GU {gap_pct:+.1f}%")
+    elif 3.0 < gap_pct <= 5.0:
+        score += 10
+        reasons.append(f"GU {gap_pct:+.1f}%")
+    elif 5.0 < gap_pct <= 8.0:
+        score += 3
+        risks.append(f"GU大 {gap_pct:+.1f}%")
+    elif -3.0 <= gap_pct < -1.0:
+        score += 5
+        risks.append(f"GD {gap_pct:+.1f}%")
+    else:
+        risks.append(f"寄り乖離 {gap_pct:+.1f}%")
+
+    if above_vwap:
+        score += 25
+        reasons.append("VWAP上")
+    else:
+        risks.append("VWAP下")
+
+    if prev_high_break:
+        score += 20
+        reasons.append("前日高値突破")
+
+    if opening15_break:
+        score += 25
+        reasons.append("15分高値突破")
+    elif not opening15_ready:
+        risks.append("15分未確定")
+
+    rv = vals["relvol15"]
+    if rv is not None:
+        if rv >= 1.5:
+            score += 15
+            reasons.append(f"15分出来高 {rv:.1f}x")
+        elif rv >= 1.0:
+            score += 10
+            reasons.append(f"15分出来高 {rv:.1f}x")
+        elif rv >= 0.7:
+            score += 5
+            risks.append(f"15分出来高 {rv:.1f}x")
+        else:
+            risks.append(f"出来高弱 {rv:.1f}x")
+
+    score = round(max(0.0, min(100.0, score)), 1)
+
+    hard_cancel = (
+        gap_pct <= -5.0
+        or vals["current_price"] <= vals["prev_close"] * 0.96
+        or (
+            opening15_ready
+            and vals["opening15_low"] is not None
+            and vals["current_price"] < vals["opening15_low"]
+            and not above_vwap
+        )
+    )
+
+    ready = (
+        not hard_cancel
+        and opening15_ready
+        and score >= 70.0
+        and above_vwap
+        and (prev_high_break or opening15_break)
+        and (rv is None or rv >= 1.0)
+        and gap_pct <= 8.0
+    )
+
+    if hard_cancel:
+        status = "🔴 CANCEL"
+    elif ready:
+        status = "🟢 ENTRY READY"
+    else:
+        status = "🟡 WAIT"
+
+    return {
+        "status": status,
+        "score": score,
+        "gap_pct": round(gap_pct, 2),
+        "above_vwap": bool(above_vwap),
+        "prev_high_break": bool(prev_high_break),
+        "opening15_break": bool(opening15_break),
+        "relvol15": rv,
+        "reason": " / ".join(reasons) if reasons else "条件待ち",
+        "risk": " / ".join(risks),
+    }
+
+
+def build_entry_hunter_snapshot(
+    daily: pd.DataFrame | None,
+    intraday: pd.DataFrame | None,
+) -> dict:
+    """Build Entry Hunter metrics from daily and 5-minute OHLCV frames."""
+    if daily is None or daily.empty or intraday is None or intraday.empty:
+        return evaluate_entry_hunter(
+            prev_close=None, prev_high=None, session_open=None,
+            current_price=None, vwap=None, opening15_high=None,
+            opening15_low=None, relvol15=None, minutes_from_open=0,
+        )
+
+    d = daily.copy()
+    i = intraday.copy()
+    for frame in (d, i):
+        if isinstance(frame.columns, pd.MultiIndex):
+            frame.columns = frame.columns.get_level_values(0)
+
+    needed = {"Open", "High", "Low", "Close", "Volume"}
+    if not needed.issubset(set(d.columns)) or not needed.issubset(set(i.columns)):
+        return evaluate_entry_hunter(
+            prev_close=None, prev_high=None, session_open=None,
+            current_price=None, vwap=None, opening15_high=None,
+            opening15_low=None, relvol15=None, minutes_from_open=0,
+        )
+
+    idx = pd.to_datetime(i.index)
+    if getattr(idx, "tz", None) is None:
+        idx = idx.tz_localize("Asia/Tokyo")
+    else:
+        idx = idx.tz_convert("Asia/Tokyo")
+    i.index = idx
+    i = i.sort_index()
+
+    session_date = i.index[-1].date()
+    session = i[
+        (i.index.date == session_date)
+        & (i.index.time >= pd.Timestamp("09:00").time())
+        & (i.index.time <= pd.Timestamp("15:30").time())
+    ].copy()
+    if session.empty:
+        return evaluate_entry_hunter(
+            prev_close=None, prev_high=None, session_open=None,
+            current_price=None, vwap=None, opening15_high=None,
+            opening15_low=None, relvol15=None, minutes_from_open=0,
+        )
+
+    d_idx = pd.to_datetime(d.index)
+    d_dates = pd.Series(d_idx.date, index=d.index)
+    previous = d[d_dates < session_date]
+    if previous.empty:
+        return evaluate_entry_hunter(
+            prev_close=None, prev_high=None, session_open=None,
+            current_price=None, vwap=None, opening15_high=None,
+            opening15_low=None, relvol15=None, minutes_from_open=0,
+        )
+    prev = previous.iloc[-1]
+
+    typical = (
+        pd.to_numeric(session["High"], errors="coerce")
+        + pd.to_numeric(session["Low"], errors="coerce")
+        + pd.to_numeric(session["Close"], errors="coerce")
+    ) / 3.0
+    volume = pd.to_numeric(session["Volume"], errors="coerce").fillna(0.0)
+    vol_sum = float(volume.sum())
+    vwap = float((typical * volume).sum() / vol_sum) if vol_sum > 0 else None
+
+    first_ts = session.index[0]
+    last_ts = session.index[-1]
+    market_open = first_ts.normalize() + pd.Timedelta(hours=9)
+    minutes_from_open = max(0, int((last_ts - market_open).total_seconds() // 60))
+
+    opening15 = session[
+        (session.index >= market_open)
+        & (session.index < market_open + pd.Timedelta(minutes=15))
+    ]
+    opening15_high = (
+        float(pd.to_numeric(opening15["High"], errors="coerce").max())
+        if not opening15.empty else None
+    )
+    opening15_low = (
+        float(pd.to_numeric(opening15["Low"], errors="coerce").min())
+        if not opening15.empty else None
+    )
+    today_open15_volume = (
+        float(pd.to_numeric(opening15["Volume"], errors="coerce").fillna(0).sum())
+        if not opening15.empty else None
+    )
+
+    hist_open15_volumes = []
+    prior_dates = sorted({x.date() for x in i.index if x.date() < session_date})[-10:]
+    for day in prior_dates:
+        day_open = pd.Timestamp(day, tz="Asia/Tokyo") + pd.Timedelta(hours=9)
+        chunk = i[
+            (i.index >= day_open)
+            & (i.index < day_open + pd.Timedelta(minutes=15))
+        ]
+        if not chunk.empty:
+            vol = float(pd.to_numeric(chunk["Volume"], errors="coerce").fillna(0).sum())
+            if vol > 0:
+                hist_open15_volumes.append(vol)
+
+    relvol15 = None
+    if today_open15_volume is not None and hist_open15_volumes:
+        baseline = float(pd.Series(hist_open15_volumes).median())
+        if baseline > 0:
+            relvol15 = today_open15_volume / baseline
+
+    result = evaluate_entry_hunter(
+        prev_close=prev["Close"],
+        prev_high=prev["High"],
+        session_open=session.iloc[0]["Open"],
+        current_price=session.iloc[-1]["Close"],
+        vwap=vwap,
+        opening15_high=opening15_high,
+        opening15_low=opening15_low,
+        relvol15=relvol15,
+        minutes_from_open=minutes_from_open,
+    )
+    result.update({
+        "market_date": pd.Timestamp(session_date),
+        "current_price": _to_float(session.iloc[-1]["Close"]),
+        "vwap": _to_float(vwap),
+        "opening15_high": _to_float(opening15_high),
+        "opening15_low": _to_float(opening15_low),
+        "prev_close": _to_float(prev["Close"]),
+        "prev_high": _to_float(prev["High"]),
+        "session_open": _to_float(session.iloc[0]["Open"]),
+        "minutes_from_open": minutes_from_open,
+    })
+    return result
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
