@@ -1,0 +1,51 @@
+name: Short Cover Entry Alerts
+
+on:
+  schedule:
+    - cron: "*/5 0-1 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  entry-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Entry Hunter alert scan
+        env:
+          SHORT_COVER_EMAIL_TO: ${{ secrets.SHORT_COVER_EMAIL_TO }}
+          SHORT_COVER_EMAIL_USER: ${{ secrets.SHORT_COVER_EMAIL_USER }}
+          SHORT_COVER_EMAIL_APP_PASSWORD: ${{ secrets.SHORT_COVER_EMAIL_APP_PASSWORD }}
+          SHORT_COVER_SMTP_HOST: ${{ secrets.SHORT_COVER_SMTP_HOST }}
+          SHORT_COVER_SMTP_PORT: ${{ secrets.SHORT_COVER_SMTP_PORT }}
+        run: python scripts/short_cover_entry_alert.py
+
+      - name: Commit Entry Hunter status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
+          if git diff --cached --quiet; then
+            echo "No Entry Hunter data changes"
+            exit 0
+          fi
+          git commit -m "Update Short Cover Entry alerts"
+          git push
