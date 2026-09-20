@@ -226,3 +226,10 @@ st.success(
     "まず実績から仮説を作り、過学習を避けながら検証する仕組みです。",
     icon="🧪",
 )
+
+if st.button(
+    "🧭 Calibration Backtestを開く",
+    use_container_width=True,
+    key="open_calibration_backtest",
+):
+    st.switch_page("pages/12_Calibration_Backtest.py")
