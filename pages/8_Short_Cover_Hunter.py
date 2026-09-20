@@ -893,9 +893,22 @@ _eas1.metric(
     "Entry自動監視",
     "未実行" if pd.isna(_eas_run) else _eas_run.strftime("%Y-%m-%d %H:%M"),
 )
+_last_test_email = pd.to_datetime(
+    _entry_alert_status.get("last_test_email_at"),
+    errors="coerce",
+    utc=True,
+)
+if pd.notna(_last_test_email):
+    _last_test_email = pd.Timestamp(_last_test_email).tz_convert("Asia/Tokyo")
+
 _eas2.metric(
     "メール通知",
     "✅ 設定済み" if bool(_entry_alert_status.get("email_configured")) else "⚪ 未設定",
+    delta=(
+        None
+        if pd.isna(_last_test_email)
+        else f"テスト成功 {_last_test_email.strftime('%m-%d %H:%M')}"
+    ),
 )
 _eas3.metric(
     "READY / WAIT / CANCEL",
@@ -916,8 +929,12 @@ if not bool(_entry_alert_status.get("email_configured")):
         " GitHub Secretsに通知先メール設定を追加すると、ENTRY READY初回検知時だけメール送信します。"
     )
 else:
+    _test_note = ""
+    if pd.notna(_last_test_email):
+        _test_note = f"｜最終テスト成功 {_last_test_email.strftime('%Y-%m-%d %H:%M')} JST"
     st.caption(
         "平日9:15〜10:00 JSTを5分間隔で監視し、同一銘柄・同一日はENTRY READY初回だけ通知します。"
+        + _test_note
     )
 
 if "short_cover_alert_history" not in st.session_state:
