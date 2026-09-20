@@ -199,6 +199,24 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertEqual(added2, 0)
         self.assertEqual(len(second), 1)
 
+    def test_old_history_schema_migrates_without_missing_columns(self):
+        old = pd.DataFrame([{
+            "alert_date": "2026-09-18",
+            "ticker": "4565",
+            "name": "ネクセラファーマ",
+            "alert_tier": "🔥 A 優先確認",
+            "alert_score": 76,
+            "ret_5d": None,
+            "outcome_status": "⏳ 追跡中",
+            "last_updated": "2026-09-18 18:00:00",
+        }])
+        migrated = normalize_alert_history(old)
+
+        self.assertIn("tracking_mode", migrated.columns)
+        self.assertIn("condition_version", migrated.columns)
+        self.assertEqual(migrated.iloc[0]["tracking_mode"], "LEGACY")
+        self.assertEqual(migrated.iloc[0]["condition_version"], "")
+
     def test_official_summary_excludes_legacy_preview_rows(self):
         history = pd.DataFrame([
             {
