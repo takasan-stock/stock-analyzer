@@ -68,7 +68,7 @@ def load_detail_price(ticker: str) -> pd.DataFrame:
 def load_watchlist_codes() -> list[str]:
     """Load portfolio tickers even when this Streamlit page is opened directly."""
     path = "portfolio_data.csv"
-    config = _github_history_config()
+    config = _github_shared_config()
 
     # Multipage pages can be opened before dashboard_app.py synchronizes the CSV.
     # In that case, fetch the same persistent portfolio file directly from GitHub.
@@ -114,12 +114,32 @@ ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
 CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 
 
-def _github_history_config():
+def _github_shared_config():
+    """Existing dashboard-wide GitHub storage (watchlist etc.)."""
     try:
         return {
             "token": st.secrets["GITHUB_TOKEN"],
             "repo": st.secrets["GITHUB_REPO"],
             "branch": st.secrets.get("GITHUB_BRANCH", "main"),
+        }
+    except Exception:
+        return None
+
+
+def _github_history_config():
+    """Dedicated Short Cover persistence in this repository.
+
+    Keeping condition/history files next to the code lets Streamlit and the
+    scheduled GitHub Action read exactly the same source of truth.
+    """
+    try:
+        return {
+            "token": st.secrets["GITHUB_TOKEN"],
+            "repo": st.secrets.get(
+                "SHORT_COVER_GITHUB_REPO",
+                "takasan-stock/stock-analyzer",
+            ),
+            "branch": st.secrets.get("SHORT_COVER_GITHUB_BRANCH", "main"),
         }
     except Exception:
         return None
