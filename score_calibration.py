@@ -196,7 +196,10 @@ def _bounded_reweight(
     # Re-normalize while preserving the guard rails closely.
     total2 = sum(clipped.values()) or 100.0
     scaled = {k: v / total2 * 100.0 for k, v in clipped.items()}
-    return {k: round(v, 1) for k, v in scaled.items()}
+    rounded = {k: round(v, 1) for k, v in scaled.items()}
+    residual = round(100.0 - sum(rounded.values()), 1)
+    rounded["Risk Control"] = round(rounded["Risk Control"] + residual, 1)
+    return rounded
 
 
 def build_calibration_report(
