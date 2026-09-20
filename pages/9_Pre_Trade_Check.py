@@ -115,6 +115,113 @@ def load_portfolio() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+PLAN_HISTORY_FILE = "data/pretrade_trade_plans.csv"
+PLAN_HISTORY_COLUMNS = [
+    "plan_id", "confirmed_at", "ticker", "name", "source",
+    "verdict", "total_score", "setup_score", "entry_score", "risk_score",
+    "stage", "rs_proxy", "volume_ratio", "ema20_gap_pct",
+    "hunter_status", "hunter_score", "earnings_mode",
+    "capital", "risk_percent", "entry", "stop", "target", "rr",
+    "shares", "position_value", "actual_max_loss", "memo",
+]
+
+
+def _github_headers(config):
+    return {
+        "Authorization": f"Bearer {config['token']}",
+        "Accept": "application/vnd.github+json",
+    }
+
+
+def load_trade_plan_history() -> pd.DataFrame:
+    config = _github_config()
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{PLAN_HISTORY_FILE}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                raw = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(raw).decode("utf-8-sig")
+                df = pd.read_csv(io.StringIO(text), dtype=str).fillna("")
+                for col in PLAN_HISTORY_COLUMNS:
+                    if col not in df.columns:
+                        df[col] = ""
+                return df[PLAN_HISTORY_COLUMNS]
+        except Exception:
+            pass
+
+    if os.path.exists(PLAN_HISTORY_FILE):
+        try:
+            df = pd.read_csv(PLAN_HISTORY_FILE, dtype=str).fillna("")
+            for col in PLAN_HISTORY_COLUMNS:
+                if col not in df.columns:
+                    df[col] = ""
+            return df[PLAN_HISTORY_COLUMNS]
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=PLAN_HISTORY_COLUMNS)
+
+
+def save_trade_plan_history(df: pd.DataFrame) -> tuple[bool, str]:
+    os.makedirs(os.path.dirname(PLAN_HISTORY_FILE), exist_ok=True)
+    out = df.copy()
+    for col in PLAN_HISTORY_COLUMNS:
+        if col not in out.columns:
+            out[col] = ""
+    out = out[PLAN_HISTORY_COLUMNS]
+    out.to_csv(PLAN_HISTORY_FILE, index=False, encoding="utf-8-sig")
+
+    config = _github_config()
+    if not config:
+        return True, "ローカル保存"
+
+    url = f"https://api.github.com/repos/{config['repo']}/contents/{PLAN_HISTORY_FILE}"
+    current_sha = None
+    try:
+        get_resp = requests.get(
+            url,
+            headers=_github_headers(config),
+            params={"ref": config["branch"]},
+            timeout=10,
+        )
+        if get_resp.status_code == 200:
+            current_sha = get_resp.json().get("sha")
+
+        csv_bytes = out.to_csv(index=False).encode("utf-8-sig")
+        payload = {
+            "message": "Save confirmed pre-trade plan",
+            "content": base64.b64encode(csv_bytes).decode("ascii"),
+            "branch": config["branch"],
+        }
+        if current_sha:
+            payload["sha"] = current_sha
+
+        put_resp = requests.put(
+            url,
+            headers=_github_headers(config),
+            json=payload,
+            timeout=15,
+        )
+        if put_resp.status_code in (200, 201):
+            return True, "GitHubへ保存"
+        return True, f"ローカル保存（GitHub保存失敗: {put_resp.status_code}）"
+    except Exception as exc:
+        return True, f"ローカル保存（GitHub保存失敗: {exc}）"
+
+
+def append_trade_plan(record: dict) -> tuple[bool, str]:
+    history = load_trade_plan_history()
+    new_row = {col: record.get(col, "") for col in PLAN_HISTORY_COLUMNS}
+    history = pd.concat([history, pd.DataFrame([new_row])], ignore_index=True)
+    return save_trade_plan_history(history)
+
+
 def _price(value, fallback=0.0) -> float:
     try:
         text = str(value).replace(",", "").replace("円", "").strip()
@@ -293,6 +400,7 @@ with p1:
         min_value=0.0,
         value=float(round(price, 1)),
         step=max(1.0, round(price * 0.001, 1)),
+        key=f"pretrade_entry_{ticker}",
     )
 with p2:
     stop = st.number_input(
@@ -300,6 +408,7 @@ with p2:
         min_value=0.0,
         value=float(round(default_stop, 1)) if default_stop > 0 else 0.0,
         step=max(1.0, round(price * 0.001, 1)),
+        key=f"pretrade_stop_{ticker}",
     )
 with p3:
     target = st.number_input(
@@ -307,6 +416,7 @@ with p3:
         min_value=0.0,
         value=float(round(default_target, 1)),
         step=max(1.0, round(price * 0.001, 1)),
+        key=f"pretrade_target_{ticker}",
     )
 
 if stop_suggestions:
@@ -373,11 +483,11 @@ earnings_days = earnings_days_map[earnings_mode]
 st.markdown("#### チャート形状（TradingViewで確認したものだけON）")
 f1, f2, f3 = st.columns(3)
 with f1:
-    vcp = st.checkbox("VCP")
+    vcp = st.checkbox("VCP", key=f"pretrade_vcp_{ticker}")
 with f2:
-    pp = st.checkbox("PP / Pivot")
+    pp = st.checkbox("PP / Pivot", key=f"pretrade_pp_{ticker}")
 with f3:
-    c3 = st.checkbox("3C")
+    c3 = st.checkbox("3C", key=f"pretrade_3c_{ticker}")
 
 result = evaluate_pretrade(
     tech,
@@ -440,8 +550,168 @@ with col_risk:
     else:
         st.caption("大きな注意項目は検出されていません。")
 
+st.divider()
+st.markdown("## ⑤ 注文直前5秒チェック")
+
+_rr_value = result.get("rr")
+_shares = int(result["position"].get("shares") or 0)
+_confirmation_gate_ok = (
+    not result.get("blocked")
+    and _rr_value is not None
+    and float(_rr_value) >= 2.0
+    and _shares >= 100
+)
+
+g1, g2, g3 = st.columns(3)
+g1.metric(
+    "強制NG",
+    "✅ なし" if not result.get("blocked") else "⛔ あり",
+)
+g2.metric(
+    "RR確認ゲート",
+    f"✅ 1:{float(_rr_value):.2f}" if _rr_value is not None and float(_rr_value) >= 2.0
+    else (f"⚠️ 1:{float(_rr_value):.2f}" if _rr_value is not None else "⚠️ 未計算"),
+)
+g3.metric(
+    "単元株",
+    f"✅ {_shares:,}株" if _shares >= 100 else "⚠️ 100株未満",
+)
+
+if not _confirmation_gate_ok:
+    st.warning(
+        "TRADE PLAN CONFIRMの条件は「強制NGなし・RR 1:2以上・100株以上」です。"
+        "条件未達の場合は、Entry / Stop / Target / 許容損失を見直してください。",
+        icon="⚠️",
+    )
+
+q1, q2 = st.columns(2)
+with q1:
+    check_stop = st.checkbox(
+        f"損切り価格 {_yen(stop)} を確認した",
+        key=f"pretrade_check_stop_{ticker}",
+    )
+    check_target = st.checkbox(
+        f"利確目標 {_yen(target)} を確認した",
+        key=f"pretrade_check_target_{ticker}",
+    )
+    check_earnings = st.checkbox(
+        f"決算日を確認した（{earnings_mode}）",
+        key=f"pretrade_check_earnings_{ticker}",
+    )
+with q2:
+    check_chase = st.checkbox(
+        "追いかけ買いではないことを確認した",
+        key=f"pretrade_check_chase_{ticker}",
+    )
+    check_loss = st.checkbox(
+        f"最大想定損失 {_yen(result['position'].get('actual_max_loss'))} を許容できる",
+        key=f"pretrade_check_loss_{ticker}",
+    )
+    check_shares = st.checkbox(
+        f"発注株数 {_shares:,}株 を確認した",
+        key=f"pretrade_check_shares_{ticker}",
+    )
+
+all_manual_checks = all([
+    check_stop, check_target, check_earnings,
+    check_chase, check_loss, check_shares,
+])
+
+trade_memo = st.text_area(
+    "発注前メモ（任意）",
+    placeholder="例：寄り後15分高値を維持した場合のみ。VWAP割れで見送り。",
+    key=f"pretrade_memo_{ticker}",
+    height=80,
+)
+
+confirm_disabled = not (_confirmation_gate_ok and all_manual_checks)
+if st.button(
+    "✅ TRADE PLAN CONFIRMED",
+    type="primary",
+    use_container_width=True,
+    disabled=confirm_disabled,
+    key=f"pretrade_confirm_{ticker}",
+):
+    now = pd.Timestamp.now(tz="Asia/Tokyo")
+    company_name = str(row.get("銘柄名", "") or incoming_name or "")
+    record = {
+        "plan_id": f"{now.strftime('%Y%m%d-%H%M%S')}-{ticker}",
+        "confirmed_at": now.isoformat(),
+        "ticker": ticker,
+        "name": company_name,
+        "source": _active_source if _source_ticker == ticker else "Pre-Trade Check",
+        "verdict": result.get("verdict", ""),
+        "total_score": result.get("total_score", ""),
+        "setup_score": result.get("setup_score", ""),
+        "entry_score": result.get("entry_score", ""),
+        "risk_score": result.get("risk_score", ""),
+        "stage": tech.get("stage", ""),
+        "rs_proxy": tech.get("rs_proxy", ""),
+        "volume_ratio": tech.get("volume_ratio", ""),
+        "ema20_gap_pct": tech.get("ema20_gap_pct", ""),
+        "hunter_status": hunter.get("status", "") if hunter else "",
+        "hunter_score": hunter.get("score", "") if hunter else "",
+        "earnings_mode": earnings_mode,
+        "capital": capital,
+        "risk_percent": risk_percent,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "rr": result.get("rr", ""),
+        "shares": _shares,
+        "position_value": result["position"].get("position_value", ""),
+        "actual_max_loss": result["position"].get("actual_max_loss", ""),
+        "memo": trade_memo.strip(),
+    }
+    ok, message = append_trade_plan(record)
+    if ok:
+        st.session_state[f"pretrade_last_confirmed_{ticker}"] = record["plan_id"]
+        st.success(
+            f"✅ TRADE PLAN CONFIRMED｜{ticker}｜{_shares:,}株｜"
+            f"Entry {_yen(entry)} / Stop {_yen(stop)} / Target {_yen(target)}"
+            f"（{message}）"
+        )
+    else:
+        st.error(f"売買計画を保存できませんでした：{message}")
+
+_last_plan_id = st.session_state.get(f"pretrade_last_confirmed_{ticker}")
+if _last_plan_id:
+    st.caption(f"このセッションの最終確認済みPlan ID: {_last_plan_id}")
+
+with st.expander("📚 確認済み売買プラン履歴", expanded=False):
+    _history = load_trade_plan_history()
+    if _history.empty:
+        st.caption("まだ確認済みプランはありません。")
+    else:
+        _ticker_history = _history[_history["ticker"].astype(str) == str(ticker)].copy()
+        if _ticker_history.empty:
+            st.caption(f"{ticker} の確認済みプランはまだありません。")
+        else:
+            _ticker_history = _ticker_history.tail(20).iloc[::-1]
+            show_cols = [
+                "confirmed_at", "verdict", "total_score", "entry", "stop",
+                "target", "rr", "shares", "actual_max_loss", "memo",
+            ]
+            st.dataframe(
+                _ticker_history[show_cols].rename(columns={
+                    "confirmed_at": "確認日時",
+                    "verdict": "判定",
+                    "total_score": "Score",
+                    "entry": "Entry",
+                    "stop": "Stop",
+                    "target": "Target",
+                    "rr": "RR",
+                    "shares": "株数",
+                    "actual_max_loss": "最大損失",
+                    "memo": "メモ",
+                }),
+                hide_index=True,
+                use_container_width=True,
+            )
+
 st.info(
     "運用順序：今日見るべき銘柄 → Entry Hunter → Pre-Trade Check → "
-    "Entry / Stop / Target / 株数を確認 → 発注判断。",
+    "5秒チェック → TRADE PLAN CONFIRMED。"
+    "CONFIRMEDは『発注前の計画を確認した記録』で、実際の約定記録とは分けて保存します。",
     icon="🧭",
 )
