@@ -208,7 +208,17 @@ def build_calibration_backtest(
     comparison = _comparison_rows(current_metrics, experimental_metrics)
 
     # Descriptive validation status. This does not auto-approve production changes.
-    comparable = comparison.dropna(subset=["delta"])
+    # For validation status, use only metrics where "higher is better".
+    # Bottom-quartile average R remains visible diagnostically, but is not a vote.
+    decision_metrics = {
+        "ScoreとRの順位相関",
+        "上位25% 平均R",
+        "上位25% 勝率%",
+        "上位-下位 R差",
+    }
+    comparable = comparison[
+        comparison["metric"].isin(decision_metrics)
+    ].dropna(subset=["delta"])
     positive_count = int((comparable["delta"] > 0).sum()) if not comparable.empty else 0
     negative_count = int((comparable["delta"] < 0).sum()) if not comparable.empty else 0
 
