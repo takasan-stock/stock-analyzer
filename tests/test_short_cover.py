@@ -7,7 +7,9 @@ from short_cover import (
     append_condition_version,
     append_priority_alert_history,
     apply_optimizer_condition,
+    build_operational_health,
     build_priority_alerts,
+    business_day_lag,
     clean_issue_name,
     compare_live_vs_backtest,
     get_active_condition_version,
@@ -98,6 +100,58 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertIn(row["alert_tier"], {"🚨 A+ 最優先確認", "🔥 A 優先確認"})
         self.assertIn("ROBUST MATCH", row["alert_reason"])
         self.assertIn("今日昇格", row["alert_reason"])
+
+    def test_business_day_lag_ignores_weekend(self):
+        self.assertEqual(
+            business_day_lag("2026-09-18", today="2026-09-20"),
+            0,
+        )
+        self.assertEqual(
+            business_day_lag("2026-09-18", today="2026-09-21"),
+            1,
+        )
+
+    def test_operational_health_ready_with_fresh_active_data(self):
+        events = pd.DataFrame([{
+            "calc_date": pd.Timestamp("2026-09-18"),
+            "publication_date": pd.Timestamp("2026-09-18"),
+        }])
+        prices = pd.DataFrame([{
+            "ticker": "1111",
+            "snapshot_date": pd.Timestamp("2026-09-18"),
+        }])
+        health = build_operational_health(
+            events,
+            prices,
+            active_condition=robust_condition(),
+            files_loaded=3,
+            source_mode="JPX",
+            today="2026-09-20",
+        )
+        self.assertEqual(health["status"], "🟢 READY")
+        self.assertEqual(health["jpx_lag"], 0)
+        self.assertEqual(health["market_lag"], 0)
+
+    def test_operational_health_flags_stale_data(self):
+        events = pd.DataFrame([{
+            "calc_date": pd.Timestamp("2026-09-01"),
+            "publication_date": pd.Timestamp("2026-09-01"),
+        }])
+        prices = pd.DataFrame([{
+            "ticker": "1111",
+            "snapshot_date": pd.Timestamp("2026-09-10"),
+        }])
+        health = build_operational_health(
+            events,
+            prices,
+            active_condition=robust_condition(),
+            files_loaded=3,
+            source_mode="JPX",
+            today="2026-09-20",
+        )
+        self.assertEqual(health["status"], "🔴 STALE")
+        self.assertGreaterEqual(int(health["jpx_lag"]), 5)
+        self.assertGreaterEqual(int(health["market_lag"]), 3)
 
     def test_first_run_priority_is_provisional_without_validation(self):
         current = pd.DataFrame([{

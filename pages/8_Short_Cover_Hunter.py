@@ -16,6 +16,7 @@ from short_cover import (
     append_priority_alert_history,
     backtest_short_cover,
     build_price_feature_snapshots,
+    build_operational_health,
     build_priority_alerts,
     build_reoptimization_comparison,
     append_condition_version,
@@ -512,6 +513,57 @@ promotions = promotions.merge(
     on="ticker",
     how="left",
 ) if not promotions.empty else promotions
+
+_source_mode = "JPX" if jpx.files_loaded > 0 else "UPLOAD"
+_operational = build_operational_health(
+    events,
+    prices,
+    active_condition=_saved_active,
+    files_loaded=jpx.files_loaded,
+    source_mode=_source_mode,
+)
+
+st.markdown("## 🩺 データ鮮度・運用ヘルス")
+_oh1, _oh2, _oh3, _oh4 = st.columns(4)
+_oh1.metric("運用状態", _operational["status"])
+_oh2.metric(
+    "JPX最終日",
+    "—" if pd.isna(_operational["jpx_date"]) else pd.Timestamp(_operational["jpx_date"]).strftime("%Y-%m-%d"),
+    delta=(
+        None if _operational["jpx_lag"] is None
+        else f"{_operational['jpx_lag']}営業日"
+    ),
+)
+_oh3.metric(
+    "価格最終日",
+    "—" if pd.isna(_operational["market_date"]) else pd.Timestamp(_operational["market_date"]).strftime("%Y-%m-%d"),
+    delta=(
+        None if _operational["market_lag"] is None
+        else f"{_operational['market_lag']}営業日"
+    ),
+)
+_oh4.metric(
+    "ACTIVE条件",
+    (
+        str(_saved_active.get("version_id", ""))
+        if _saved_active is not None
+        else "未設定"
+    ),
+    delta=(
+        condition_text_from_row(_saved_active)
+        if _saved_active is not None
+        else None
+    ),
+)
+
+if _operational["warnings"]:
+    _warning_text = " / ".join(_operational["warnings"])
+    if str(_operational["status"]).startswith("🔴"):
+        st.error(f"データ鮮度警告：{_warning_text}")
+    elif str(_operational["status"]).startswith("🟡"):
+        st.warning(f"確認事項：{_warning_text}")
+else:
+    st.success("JPX・価格データとも運用基準内です。")
 
 priority_alerts = build_priority_alerts(
     scored,
@@ -1489,6 +1541,17 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### データ鮮度・運用ヘルス
+
+- JPX公表データの最終日と経過営業日を表示
+- 価格データの最終日と経過営業日を表示
+- ACTIVE条件のVersion / C-I-L-P-Qを表示
+- **🟢 READY**：運用基準内
+- **🟡 CAUTION**：データがやや古い、または確認事項あり
+- **🔴 STALE**：ランキングの鮮度に注意が必要
+- **🟡 PREVIEW**：ACTIVE条件がまだない
+- 土日は営業日として数えないため、金曜データを日曜に見ても不要なSTALE警告を出しません
 
 ### 正式運用開始
 
