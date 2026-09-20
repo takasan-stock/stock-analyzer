@@ -7,37 +7,44 @@ on:
       - "trade_journal.py"
       - "score_calibration.py"
       - "calibration_backtest.py"
+      - "walk_forward_calibration.py"
       - "pages/9_Pre_Trade_Check.py"
       - "pages/10_Trade_Journal.py"
       - "pages/11_Score_Calibration.py"
       - "pages/12_Calibration_Backtest.py"
+      - "pages/13_Walk_Forward_Calibration.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "dashboard_app.py"
       - "tests/test_pretrade.py"
       - "tests/test_trade_journal.py"
       - "tests/test_score_calibration.py"
       - "tests/test_calibration_backtest.py"
+      - "tests/test_walk_forward_calibration.py"
       - ".github/workflows/pretrade_tests.yml"
   push:
     branches:
       - pretrade-check-v1
       - score-calibration-v1
       - calibration-backtest-v1
+      - walk-forward-calibration-v1
     paths:
       - "pretrade.py"
       - "trade_journal.py"
       - "score_calibration.py"
       - "calibration_backtest.py"
+      - "walk_forward_calibration.py"
       - "pages/9_Pre_Trade_Check.py"
       - "pages/10_Trade_Journal.py"
       - "pages/11_Score_Calibration.py"
       - "pages/12_Calibration_Backtest.py"
+      - "pages/13_Walk_Forward_Calibration.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "dashboard_app.py"
       - "tests/test_pretrade.py"
       - "tests/test_trade_journal.py"
       - "tests/test_score_calibration.py"
       - "tests/test_calibration_backtest.py"
+      - "tests/test_walk_forward_calibration.py"
       - ".github/workflows/pretrade_tests.yml"
 
 jobs:
@@ -63,10 +70,12 @@ jobs:
           python -m py_compile trade_journal.py
           python -m py_compile score_calibration.py
           python -m py_compile calibration_backtest.py
+          python -m py_compile walk_forward_calibration.py
           python -m py_compile pages/9_Pre_Trade_Check.py
           python -m py_compile pages/10_Trade_Journal.py
           python -m py_compile pages/11_Score_Calibration.py
           python -m py_compile pages/12_Calibration_Backtest.py
+          python -m py_compile pages/13_Walk_Forward_Calibration.py
           python -m py_compile pages/8_Short_Cover_Hunter.py
           python -m py_compile dashboard_app.py
 
@@ -76,3 +85,4 @@ jobs:
           python -m unittest tests.test_trade_journal -v
           python -m unittest tests.test_score_calibration -v
           python -m unittest tests.test_calibration_backtest -v
+          python -m unittest tests.test_walk_forward_calibration -v
