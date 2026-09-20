@@ -33,7 +33,6 @@ from short_cover import (
     normalize_ticker,
     apply_optimizer_condition,
     optimize_short_cover_thresholds,
-    save_or_activate_condition_version,
     score_short_cover,
     summarize_alert_history,
     summarize_backtest,
@@ -830,13 +829,36 @@ if optimizer_live is not None and not optimizer_live.empty:
                 type="primary",
                 use_container_width=False,
             ):
-                _versions, _version_id, _created_new = save_or_activate_condition_version(
-                    _versions,
-                    _best_for_save,
-                    source="optimizer",
-                    horizon=opt_horizon,
-                    note="初回正式運用開始",
-                )
+                _condition_text = condition_text_from_row(_best_for_save)
+                _same = _versions[
+                    (_versions["condition_text"].fillna("").astype(str) == _condition_text)
+                    & (
+                        pd.to_numeric(_versions["horizon"], errors="coerce")
+                        .fillna(-1)
+                        .astype(int)
+                        == int(opt_horizon)
+                    )
+                ].copy()
+
+                if not _same.empty:
+                    _same = _same.sort_values(
+                        ["created_at", "version_id"],
+                        ascending=[False, False],
+                    )
+                    _version_id = str(_same.iloc[0]["version_id"])
+                    _versions = activate_condition_version(_versions, _version_id)
+                    _created_new = False
+                else:
+                    _versions, _version_id = append_condition_version(
+                        _versions,
+                        _best_for_save,
+                        source="optimizer",
+                        horizon=opt_horizon,
+                        note="初回正式運用開始",
+                        activate=True,
+                    )
+                    _created_new = True
+
                 st.session_state.short_cover_condition_versions = _versions
                 _ok, _msg = save_condition_versions(_versions)
                 if _ok:
