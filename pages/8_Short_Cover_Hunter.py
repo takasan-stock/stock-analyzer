@@ -4,6 +4,8 @@ import base64
 import io
 import json
 import os
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
@@ -152,6 +154,38 @@ def _github_headers(config):
         "Authorization": f"Bearer {config['token']}",
         "Accept": "application/vnd.github+json",
     }
+
+
+def next_short_cover_run_jst(now=None) -> pd.Timestamp:
+    """Return the next weekday 19:30 JST scheduled run."""
+    tz = ZoneInfo("Asia/Tokyo")
+    current = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz=tz)
+    if current.tzinfo is None:
+        current = current.tz_localize(tz)
+    else:
+        current = current.tz_convert(tz)
+
+    candidate = current.normalize() + pd.Timedelta(hours=19, minutes=30)
+    if current >= candidate:
+        candidate += pd.Timedelta(days=1)
+
+    while candidate.weekday() >= 5:
+        candidate += pd.Timedelta(days=1)
+
+    return candidate
+
+
+def format_automation_status(value) -> str:
+    mapping = {
+        "WAITING_FIRST_RUN": "🕒 初回実行待ち",
+        "NO_ACTIVE_CONDITION": "🟡 ACTIVE条件なし",
+        "NO_JPX_DATA": "🔴 JPX取得失敗",
+        "NO_CANDIDATES": "🟢 候補なし",
+        "NO_SCORED_ROWS": "🟡 スコア対象なし",
+        "UNKNOWN": "⚪ 状態不明",
+    }
+    text = str(value or "UNKNOWN")
+    return mapping.get(text, text)
 
 
 def load_daily_status() -> dict:
@@ -626,21 +660,34 @@ _daily_status = load_daily_status()
 st.markdown("### 🤖 自動運用ステータス")
 _ds1, _ds2, _ds3, _ds4 = st.columns(4)
 
-_run_at = pd.to_datetime(_daily_status.get("run_at"), errors="coerce")
+_run_at = pd.to_datetime(_daily_status.get("run_at"), errors="coerce", utc=True)
+if pd.notna(_run_at):
+    _run_at_jst = pd.Timestamp(_run_at).tz_convert("Asia/Tokyo")
+else:
+    _run_at_jst = pd.NaT
+
+_raw_auto_status = str(_daily_status.get("status", "UNKNOWN"))
+_auto_status_label = format_automation_status(_raw_auto_status)
+_next_run = next_short_cover_run_jst()
+
 _ds1.metric(
     "最終自動実行",
-    "未実行" if pd.isna(_run_at) else pd.Timestamp(_run_at).strftime("%Y-%m-%d %H:%M"),
+    "未実行" if pd.isna(_run_at_jst) else _run_at_jst.strftime("%Y-%m-%d %H:%M"),
 )
-_ds2.metric("自動実行状態", str(_daily_status.get("status", "UNKNOWN")))
+_ds2.metric("自動実行状態", _auto_status_label)
 _ds3.metric("候補 / 優先", f"{int(_daily_status.get('candidates', 0) or 0)} / {int(_daily_status.get('priority_count', 0) or 0)}")
 _ds4.metric("新規ACTIVE", f"{int(_daily_status.get('new_alerts', 0) or 0)}件")
 
-if str(_daily_status.get("status", "")) == "WAITING_FIRST_RUN":
-    st.caption("初回のGitHub Actions日次実行待ちです。平日19:30 JSTごろに自動更新します。")
+if _raw_auto_status == "WAITING_FIRST_RUN":
+    st.info(
+        f"正常です。初回の自動実行待ちです。次回予定："
+        f"{_next_run.strftime('%Y-%m-%d %H:%M')} JST"
+    )
 elif _daily_status.get("warnings"):
     st.caption("自動実行メモ：" + " / ".join(map(str, _daily_status.get("warnings", []))))
 else:
     st.caption(
+        f"次回予定：{_next_run.strftime('%Y-%m-%d %H:%M')} JST｜"
         f"自動追跡：正式アラート {int(_daily_status.get('official_alerts', 0) or 0)}件｜"
         f"追跡開始 {int(_daily_status.get('tracked_alerts', 0) or 0)}件"
     )
