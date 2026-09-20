@@ -1,0 +1,2 @@
+version_id,created_at,activated_at,is_active,source,note,condition_text,cover_min,ignition_min,long_min,pressure_min,confidence_min,horizon,robustness,stability_score,test_signals,test_win,test_avg,test_mfe,test_mae
+v1.0,2026-09-20 00:00:00,2026-09-20 00:00:00,True,optimizer,初回正式運用開始,C50/I0/L70/P40/Q0,50,0,70,40,0,5,🟢 ROBUST,71.2,27,55.6,3.5,,
