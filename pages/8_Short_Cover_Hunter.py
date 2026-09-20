@@ -695,7 +695,12 @@ if _history_needs_migration and not _history.empty:
         st.toast("🧩 旧アラート履歴を新形式へ移行しました", icon="🧩")
 
 _new_alerts = 0
-if _saved_active is not None:
+_tracking_ready = (
+    _saved_active is not None
+    and str(_operational.get("status", "")) == "🟢 READY"
+)
+
+if _tracking_ready:
     _history, _new_alerts = append_priority_alert_history(
         _history,
         priority_alerts,
@@ -709,8 +714,15 @@ if _saved_active is not None:
             st.toast(f"📌 ACTIVE条件のアラートを{_new_alerts}件記録しました", icon="📌")
         else:
             st.warning(f"アラート履歴の保存に失敗しました：{_msg}")
+elif _saved_active is None:
+    st.caption(
+        "🧪 現在はプレビュー運用です。条件を有効化するまで新規アラートは正式履歴へ保存しません。"
+    )
 else:
-    st.caption("🧪 現在はプレビュー運用です。条件を有効化するまで新規アラートは正式履歴へ保存しません。")
+    st.warning(
+        f"⏸ 正式履歴の記録を停止中です。運用状態が {_operational['status']} のため、"
+        "ランキングは表示しますが新規アラートをACTIVE実績へ保存しません。"
+    )
 
 st.markdown("## 🗂️ アラート履歴・追跡")
 _history = normalize_alert_history(st.session_state.short_cover_alert_history)
@@ -1587,6 +1599,8 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 ### アラート履歴・追跡
 
+- **🟢 READYのときだけ**ACTIVE条件の新規アラートを正式履歴へ保存
+- CAUTION / STALE / PREVIEWではランキング表示は続けますが、正式実績への記録は停止
 - A+ / A、またはROBUST / PROMISING一致を発生日ごとに自動保存
 - 同じ日・同じ銘柄は重複保存しません
 - 既存ダッシュボードと同じGitHub SecretsがあればGitHubへ永続保存
