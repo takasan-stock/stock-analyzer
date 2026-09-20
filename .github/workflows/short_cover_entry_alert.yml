@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "*/5 0-1 * * 1-5"
   workflow_dispatch:
+    inputs:
+      test_email:
+        description: "Send one test email only"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -36,9 +42,15 @@ jobs:
           SHORT_COVER_EMAIL_APP_PASSWORD: ${{ secrets.SHORT_COVER_EMAIL_APP_PASSWORD }}
           SHORT_COVER_SMTP_HOST: ${{ secrets.SHORT_COVER_SMTP_HOST }}
           SHORT_COVER_SMTP_PORT: ${{ secrets.SHORT_COVER_SMTP_PORT }}
-        run: python scripts/short_cover_entry_alert.py
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test_email }}" = "true" ]; then
+            python scripts/short_cover_entry_alert.py --test-email
+          else
+            python scripts/short_cover_entry_alert.py
+          fi
 
       - name: Commit Entry Hunter status
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.test_email == true) }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
