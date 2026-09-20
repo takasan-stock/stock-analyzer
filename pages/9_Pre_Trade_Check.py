@@ -677,6 +677,13 @@ if st.button(
 _last_plan_id = st.session_state.get(f"pretrade_last_confirmed_{ticker}")
 if _last_plan_id:
     st.caption(f"このセッションの最終確認済みPlan ID: {_last_plan_id}")
+    if st.button(
+        "📓 このプランをTrade Journalへ",
+        use_container_width=True,
+        key=f"pretrade_to_journal_{ticker}",
+    ):
+        st.session_state["journal_plan_id"] = _last_plan_id
+        st.switch_page("pages/10_Trade_Journal.py")
 
 with st.expander("📚 確認済み売買プラン履歴", expanded=False):
     _history = load_trade_plan_history()
