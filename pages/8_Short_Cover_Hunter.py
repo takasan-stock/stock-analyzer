@@ -1006,6 +1006,17 @@ else:
                     f"{_r['reason'] or '条件待ち'}"
                     + (f"｜⚠ {_r['risk']}" if _r["risk"] else "")
                 )
+                if st.button(
+                    "🛡️ 購入前チェック",
+                    key=f"pretrade_entry_hunter_{_r['ticker']}_{_idx}",
+                    use_container_width=True,
+                ):
+                    st.session_state["pretrade_ticker"] = str(_r["ticker"])
+                    st.session_state["pretrade_name"] = str(_r.get("name", ""))
+                    st.session_state["pretrade_source"] = (
+                        f"Entry Hunter {_r.get('status', '')}"
+                    )
+                    st.switch_page("pages/9_Pre_Trade_Check.py")
 
         _entry_show = _entry_df.copy()
         _entry_show["監視日"] = pd.to_datetime(
