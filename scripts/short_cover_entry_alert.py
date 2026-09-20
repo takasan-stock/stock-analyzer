@@ -183,6 +183,17 @@ VWAP: {vwap}
 
 def main() -> int:
     now = pd.Timestamp.now(tz="Asia/Tokyo")
+
+    # Scheduled workflow runs a wider UTC window. Keep the actual monitoring
+    # window strictly between 09:15 and 10:00 JST on weekdays.
+    if now.weekday() >= 5:
+        print("Short Cover Entry Alert: weekend skip")
+        return 0
+    hhmm = now.hour * 60 + now.minute
+    if hhmm < 9 * 60 + 15 or hhmm > 10 * 60:
+        print(f"Short Cover Entry Alert: outside monitoring window ({now:%H:%M} JST)")
+        return 0
+
     history = load_history()
     notifications = load_notifications()
     cfg = email_config()
