@@ -2328,6 +2328,112 @@ def get_active_condition_version(versions: pd.DataFrame | None):
     return row
 
 
+
+def business_day_lag(value, today=None) -> int | None:
+    """Return elapsed weekdays after value, ignoring weekends.
+
+    This is an operational freshness heuristic, not an exchange calendar.
+    Holidays may therefore count as one weekday until fresh data arrives.
+    """
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return None
+    start = pd.Timestamp(ts).normalize()
+    end = pd.Timestamp(today if today is not None else datetime.now()).normalize()
+    if start >= end:
+        return 0
+    first = start + pd.offsets.BDay(1)
+    if first > end:
+        return 0
+    return int(len(pd.bdate_range(first, end)))
+
+
+def build_operational_health(
+    events: pd.DataFrame | None,
+    price_features: pd.DataFrame | None,
+    active_condition=None,
+    *,
+    files_loaded: int = 0,
+    source_mode: str = "JPX",
+    today=None,
+) -> dict:
+    """Summarize whether Short Cover data is fresh enough for daily operation."""
+    result = {
+        "status": "🔴 NO DATA",
+        "jpx_date": pd.NaT,
+        "jpx_lag": None,
+        "market_date": pd.NaT,
+        "market_lag": None,
+        "source_mode": source_mode,
+        "active": active_condition is not None,
+        "condition_text": condition_text_from_row(active_condition),
+        "warnings": [],
+    }
+
+    ev = events.copy() if events is not None else pd.DataFrame()
+    pf = price_features.copy() if price_features is not None else pd.DataFrame()
+
+    if not ev.empty:
+        pub = (
+            pd.to_datetime(ev["publication_date"], errors="coerce")
+            if "publication_date" in ev.columns
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        calc = (
+            pd.to_datetime(ev["calc_date"], errors="coerce")
+            if "calc_date" in ev.columns
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        if not pub.empty and pub.notna().any():
+            result["jpx_date"] = pub.max()
+        elif not calc.empty and calc.notna().any():
+            result["jpx_date"] = calc.max()
+
+    if not pf.empty and "snapshot_date" in pf.columns:
+        snaps = pd.to_datetime(pf["snapshot_date"], errors="coerce")
+        if snaps.notna().any():
+            result["market_date"] = snaps.max()
+
+    result["jpx_lag"] = business_day_lag(result["jpx_date"], today=today)
+    result["market_lag"] = business_day_lag(result["market_date"], today=today)
+
+    critical = []
+    cautions = []
+
+    if result["jpx_lag"] is None:
+        critical.append("JPX日付なし")
+    elif result["jpx_lag"] >= 5:
+        critical.append(f"JPX {result['jpx_lag']}営業日遅れ")
+    elif result["jpx_lag"] > 2:
+        cautions.append(f"JPX {result['jpx_lag']}営業日遅れ")
+
+    if result["market_lag"] is None:
+        critical.append("価格日付なし")
+    elif result["market_lag"] >= 3:
+        critical.append(f"価格 {result['market_lag']}営業日遅れ")
+    elif result["market_lag"] > 1:
+        cautions.append(f"価格 {result['market_lag']}営業日遅れ")
+
+    if source_mode == "JPX" and int(files_loaded or 0) <= 0:
+        cautions.append("JPX自動取得0件")
+
+    if active_condition is None:
+        cautions.append("ACTIVE条件なし")
+
+    result["warnings"] = critical + cautions
+
+    if critical:
+        result["status"] = "🔴 STALE"
+    elif active_condition is None:
+        result["status"] = "🟡 PREVIEW"
+    elif cautions:
+        result["status"] = "🟡 CAUTION"
+    else:
+        result["status"] = "🟢 READY"
+
+    return result
+
+
 def candidate_tickers(short_metrics: pd.DataFrame, limit: int = 60) -> list[str]:
     if short_metrics is None or short_metrics.empty:
         return []
