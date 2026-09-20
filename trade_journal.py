@@ -249,12 +249,14 @@ def build_group_summary(
         group_col, "trades", "wins", "win_rate",
         "avg_r", "median_r", "avg_return_pct", "total_pnl",
     ]
-    if trades.empty or group_col not in trades.columns:
+    if trades.empty:
         return pd.DataFrame(columns=columns)
 
     if group_col == "score_bucket":
         trades = trades.copy()
         trades["score_bucket"] = trades["total_score"].map(score_bucket)
+    elif group_col not in trades.columns:
+        return pd.DataFrame(columns=columns)
 
     rows = []
     for key, group in trades.groupby(group_col, dropna=False):
