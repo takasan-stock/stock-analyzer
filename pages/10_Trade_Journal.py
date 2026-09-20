@@ -582,3 +582,10 @@ st.info(
     "必要なら重みを再調整するための土台として使います。",
     icon="🧪",
 )
+
+if st.button(
+    "🧪 Score Calibrationを開く",
+    use_container_width=True,
+    key="open_score_calibration",
+):
+    st.switch_page("pages/11_Score_Calibration.py")
