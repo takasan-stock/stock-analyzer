@@ -23,6 +23,7 @@ from short_cover import (
     build_short_metrics,
     candidate_tickers,
     compare_live_vs_backtest,
+    condition_text_from_row,
     load_jpx_events,
     load_uploaded_workbooks,
     get_active_condition_version,
@@ -561,9 +562,13 @@ else:
 st.markdown("## 🚨 今日の最優先チェック")
 st.caption(
     (
-        "検証済み条件＋今日の昇格・Phase・資金フロー・信頼度・出来高を統合した確認優先度です。"
-        if active_condition is not None
-        else "初回は未検証の暫定優先度です。バックテスト後にROBUST/PROMISING条件を反映します。"
+        "ACTIVE条件＋今日の昇格・Phase・資金フロー・信頼度・出来高を統合した正式優先度です。"
+        if _saved_active is not None
+        else (
+            "ROBUST/PROMISING候補をプレビュー中です。条件を保存・有効化するまでは実績履歴へ記録しません。"
+            if active_condition is not None
+            else "初回は未検証の暫定優先度です。バックテスト後にROBUST/PROMISING条件を反映します。"
+        )
     )
 )
 if priority_alerts.empty:
@@ -608,21 +613,28 @@ else:
         use_container_width=True,
     )
 
-# A+/A と検証済み条件マッチを、同一日・同一銘柄で重複しないよう履歴へ自動記録。
+# 正式な実績追跡は ACTIVE 条件だけ。未有効の最適条件は画面プレビューに留める。
 if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
 
-_history, _new_alerts = append_priority_alert_history(
-    st.session_state.short_cover_alert_history,
-    priority_alerts,
-)
-if _new_alerts > 0:
-    st.session_state.short_cover_alert_history = _history
-    _ok, _msg = save_alert_history(_history)
-    if _ok:
-        st.toast(f"📌 Short Coverアラートを{_new_alerts}件記録しました", icon="📌")
-    else:
-        st.warning(f"アラート履歴の保存に失敗しました：{_msg}")
+_history = st.session_state.short_cover_alert_history
+_new_alerts = 0
+if _saved_active is not None:
+    _history, _new_alerts = append_priority_alert_history(
+        _history,
+        priority_alerts,
+        tracking_mode="ACTIVE",
+        condition_version=str(_saved_active.get("version_id", "") or ""),
+    )
+    if _new_alerts > 0:
+        st.session_state.short_cover_alert_history = _history
+        _ok, _msg = save_alert_history(_history)
+        if _ok:
+            st.toast(f"📌 ACTIVE条件のアラートを{_new_alerts}件記録しました", icon="📌")
+        else:
+            st.warning(f"アラート履歴の保存に失敗しました：{_msg}")
+else:
+    st.caption("🧪 現在はプレビュー運用です。条件を有効化するまで新規アラートは正式履歴へ保存しません。")
 
 st.markdown("## 🗂️ アラート履歴・追跡")
 _history = st.session_state.short_cover_alert_history
@@ -775,12 +787,13 @@ st.markdown("### 🧾 条件バージョン管理")
 _versions = st.session_state.short_cover_condition_versions
 
 if active_condition is not None:
-    _active_version_label = "一時条件"
+    _active_version_label = "一時条件（プレビュー）"
     if _saved_active is not None:
         _active_version_label = str(_saved_active.get("version_id", "保存済み条件"))
+    _active_condition_text = condition_text_from_row(active_condition)
     st.caption(
         f"現在適用中：{_active_version_label}｜"
-        f"{active_condition.get('condition_text', '') or 'C/I/L/P/Q条件'}"
+        f"{_active_condition_text or 'C/I/L/P/Q条件'}"
     )
 
 if optimizer_live is not None and not optimizer_live.empty:
@@ -897,8 +910,9 @@ with _hcol1:
 with _hcol2:
     _storage_mode = "GitHub永続保存" if _github_history_config() else "ローカル保存"
     st.caption(
-        f"保存先：{_storage_mode}｜A+/AまたはROBUST/PROMISING一致を自動記録。"
-        "成績更新はシグナル翌営業日始値を基準に1/3/5/10日を追跡します。"
+        f"保存先：{_storage_mode}｜ACTIVE条件のA+/AまたはROBUST/PROMISING一致だけを正式記録。"
+        " PREVIEW/LEGACY行は履歴に残しても勝率・Health集計から除外します。"
+        " 成績更新はシグナル翌営業日始値を基準に1/3/5/10日を追跡します。"
     )
 
 if _history.empty:
@@ -915,13 +929,14 @@ else:
         lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
     )
     _hist_cols = [
-        "alert_date", "ticker", "name", "alert_tier", "alert_score",
-        "optimizer_label", "phase", "regime", "outcome_status",
-        "entry_date", "ret_1d", "ret_3d", "ret_5d", "ret_10d",
-        "mfe_10d", "mae_10d",
+        "alert_date", "ticker", "name", "tracking_mode", "condition_version",
+        "alert_tier", "alert_score", "optimizer_label", "phase", "regime",
+        "outcome_status", "entry_date", "ret_1d", "ret_3d", "ret_5d",
+        "ret_10d", "mfe_10d", "mae_10d",
     ]
     _hist_labels = {
         "alert_date": "発生日", "ticker": "コード", "name": "銘柄",
+        "tracking_mode": "記録区分", "condition_version": "条件Ver",
         "alert_tier": "Tier", "alert_score": "優先度",
         "optimizer_label": "検証条件", "phase": "Phase",
         "regime": "資金フロー", "outcome_status": "追跡",
