@@ -69,7 +69,11 @@ def _spearman(x: pd.Series, y: pd.Series) -> tuple[float | None, int]:
         return None, len(pair)
     if pair.iloc[:, 0].nunique() < 2 or pair.iloc[:, 1].nunique() < 2:
         return None, len(pair)
-    value = pair.iloc[:, 0].corr(pair.iloc[:, 1], method="spearman")
+    # Spearman = Pearson correlation of ranks.
+    # Implement directly so the app does not need scipy as an extra dependency.
+    ranked_x = pair.iloc[:, 0].rank(method="average")
+    ranked_y = pair.iloc[:, 1].rank(method="average")
+    value = ranked_x.corr(ranked_y, method="pearson")
     if pd.isna(value):
         return None, len(pair)
     return float(value), len(pair)
