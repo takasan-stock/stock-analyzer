@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import smtplib
@@ -181,8 +182,45 @@ VWAP: {vwap}
         return False, f"{type(exc).__name__}: {exc}"[:500]
 
 
+def send_test_email(cfg: dict) -> tuple[bool, str]:
+    row = {
+        "ticker": "TEST",
+        "name": "Short Cover Entry Hunter",
+        "entry_score": 88,
+        "gap_pct": 1.8,
+        "relvol15": 1.7,
+        "current_price": 1234.5,
+        "vwap": 1228.0,
+        "alert_date": pd.Timestamp.now().normalize(),
+        "condition_version": "TEST",
+        "reason": "VWAP上 / 15分高値突破 / 出来高継続",
+        "risk": "テストメールです",
+    }
+    return send_ready_email(row, cfg)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--test-email",
+        action="store_true",
+        help="Send one test email and exit without touching Entry Hunter history.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     now = pd.Timestamp.now(tz="Asia/Tokyo")
+
+    if args.test_email:
+        cfg = email_config()
+        ok, error = send_test_email(cfg)
+        if ok:
+            print("Short Cover Email Test: SUCCESS")
+            return 0
+        print(f"Short Cover Email Test: FAILED - {error}")
+        return 1
 
     # Scheduled workflow runs a wider UTC window. Keep the actual monitoring
     # window strictly between 09:15 and 10:00 JST on weekdays.
