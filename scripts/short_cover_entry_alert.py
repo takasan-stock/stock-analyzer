@@ -4,8 +4,13 @@ import argparse
 import json
 import os
 import smtplib
+import sys
 from email.message import EmailMessage
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 import yfinance as yf
@@ -16,7 +21,6 @@ from short_cover import (
     select_entry_hunter_candidates,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 HISTORY_FILE = DATA_DIR / "short_cover_alert_history.csv"
 NOTIFICATION_FILE = DATA_DIR / "short_cover_entry_notifications.csv"
@@ -121,8 +125,8 @@ def email_config() -> dict:
         "to": os.getenv("SHORT_COVER_EMAIL_TO", "").strip(),
         "user": os.getenv("SHORT_COVER_EMAIL_USER", "").strip(),
         "password": os.getenv("SHORT_COVER_EMAIL_APP_PASSWORD", "").strip(),
-        "host": os.getenv("SHORT_COVER_SMTP_HOST", "smtp.gmail.com").strip(),
-        "port": int(os.getenv("SHORT_COVER_SMTP_PORT", "465")),
+        "host": (os.getenv("SHORT_COVER_SMTP_HOST", "").strip() or "smtp.gmail.com"),
+        "port": int(os.getenv("SHORT_COVER_SMTP_PORT", "").strip() or "465"),
     }
 
 
