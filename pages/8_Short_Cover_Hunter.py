@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
 
 import pandas as pd
@@ -112,6 +113,7 @@ def load_watchlist_codes() -> list[str]:
 
 ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
 CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
+DAILY_STATUS_FILE = "data/short_cover_daily_status.json"
 
 
 def _github_shared_config():
@@ -149,6 +151,41 @@ def _github_headers(config):
     return {
         "Authorization": f"Bearer {config['token']}",
         "Accept": "application/vnd.github+json",
+    }
+
+
+def load_daily_status() -> dict:
+    """Load the latest scheduled Short Cover automation status."""
+    config = _github_history_config()
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{DAILY_STATUS_FILE}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(content).decode("utf-8")
+                return json.loads(text)
+        except Exception:
+            pass
+
+    if os.path.exists(DAILY_STATUS_FILE):
+        try:
+            with open(DAILY_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "run_at": None,
+        "status": "UNKNOWN",
+        "new_alerts": 0,
+        "candidates": 0,
+        "priority_count": 0,
     }
 
 
@@ -584,6 +621,29 @@ if _operational["warnings"]:
         st.warning(f"確認事項：{_warning_text}")
 else:
     st.success("JPX・価格データとも運用基準内です。")
+
+_daily_status = load_daily_status()
+st.markdown("### 🤖 自動運用ステータス")
+_ds1, _ds2, _ds3, _ds4 = st.columns(4)
+
+_run_at = pd.to_datetime(_daily_status.get("run_at"), errors="coerce")
+_ds1.metric(
+    "最終自動実行",
+    "未実行" if pd.isna(_run_at) else pd.Timestamp(_run_at).strftime("%Y-%m-%d %H:%M"),
+)
+_ds2.metric("自動実行状態", str(_daily_status.get("status", "UNKNOWN")))
+_ds3.metric("候補 / 優先", f"{int(_daily_status.get('candidates', 0) or 0)} / {int(_daily_status.get('priority_count', 0) or 0)}")
+_ds4.metric("新規ACTIVE", f"{int(_daily_status.get('new_alerts', 0) or 0)}件")
+
+if str(_daily_status.get("status", "")) == "WAITING_FIRST_RUN":
+    st.caption("初回のGitHub Actions日次実行待ちです。平日19:30 JSTごろに自動更新します。")
+elif _daily_status.get("warnings"):
+    st.caption("自動実行メモ：" + " / ".join(map(str, _daily_status.get("warnings", []))))
+else:
+    st.caption(
+        f"自動追跡：正式アラート {int(_daily_status.get('official_alerts', 0) or 0)}件｜"
+        f"追跡開始 {int(_daily_status.get('tracked_alerts', 0) or 0)}件"
+    )
 
 priority_alerts = build_priority_alerts(
     scored,
@@ -1573,6 +1633,13 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 
 **これは「前営業日の空売り残高を完全再現したバックテスト」ではありません。**
 公表残高を固定したまま、価格・出来高側で何が新しく点火したかを見るためのデイリー変化検知です。
+
+### 自動運用ステータス
+
+- 平日19:30 JSTごろにGitHub Actionsで自動スキャン
+- 最終実行時刻、状態、候補数、優先候補数、新規ACTIVE件数を表示
+- 実行結果は data/short_cover_daily_status.json に保存
+- Web画面を開かなくてもACTIVE履歴と追跡成績を更新
 
 ### データ鮮度・運用ヘルス
 

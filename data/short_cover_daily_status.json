@@ -1,0 +1,16 @@
+{
+  "run_at": null,
+  "status": "WAITING_FIRST_RUN",
+  "active_version": "v1.0",
+  "condition_text": "C50/I0/L70/P40/Q0",
+  "jpx_date": null,
+  "jpx_lag": null,
+  "market_date": null,
+  "market_lag": null,
+  "warnings": [],
+  "candidates": 0,
+  "priority_count": 0,
+  "new_alerts": 0,
+  "official_alerts": 0,
+  "tracked_alerts": 0
+}
