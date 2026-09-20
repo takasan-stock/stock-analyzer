@@ -1,11 +1,14 @@
 {
-  "run_at": null,
-  "email_configured": false,
+  "run_at": "2026-09-20T11:43:36.100011+09:00",
+  "email_configured": true,
   "candidate_count": 0,
   "ready_count": 0,
   "wait_count": 0,
   "cancel_count": 0,
   "new_ready": 0,
   "emails_sent": 0,
-  "rows": []
+  "rows": [],
+  "last_test_email_at": "2026-09-20T11:43:36.100011+09:00",
+  "last_test_email_ok": true,
+  "last_test_email_error": ""
 }
