@@ -220,6 +220,25 @@ def main() -> int:
     if args.test_email:
         cfg = email_config()
         ok, error = send_test_email(cfg)
+
+        # Test mode must not touch alert/notification history, but it should
+        # update the UI-facing status so a successful test is reflected there.
+        status = {}
+        if STATUS_FILE.exists():
+            try:
+                status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                status = {}
+
+        status.update({
+            "run_at": now.isoformat(),
+            "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
+            "last_test_email_at": now.isoformat() if ok else status.get("last_test_email_at"),
+            "last_test_email_ok": bool(ok),
+            "last_test_email_error": "" if ok else error,
+        })
+        save_status(status)
+
         if ok:
             print("Short Cover Email Test: SUCCESS")
             return 0
