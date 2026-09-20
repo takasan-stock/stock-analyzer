@@ -144,6 +144,7 @@ def load_watchlist_codes() -> list[str]:
 ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
 CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 DAILY_STATUS_FILE = "data/short_cover_daily_status.json"
+ENTRY_STATUS_FILE = "data/short_cover_entry_status.json"
 
 
 def _github_shared_config():
@@ -214,6 +215,45 @@ def format_automation_status(value) -> str:
     }
     text = str(value or "UNKNOWN")
     return mapping.get(text, text)
+
+
+def load_entry_alert_status() -> dict:
+    """Load the latest scheduled Entry Hunter notification status."""
+    config = _github_history_config()
+    if config:
+        url = f"https://api.github.com/repos/{config['repo']}/contents/{ENTRY_STATUS_FILE}"
+        try:
+            resp = requests.get(
+                url,
+                headers=_github_headers(config),
+                params={"ref": config["branch"]},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("content", "").replace("\n", "")
+                text = base64.b64decode(content).decode("utf-8")
+                return json.loads(text)
+        except Exception:
+            pass
+
+    if os.path.exists(ENTRY_STATUS_FILE):
+        try:
+            with open(ENTRY_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return {
+        "run_at": None,
+        "email_configured": False,
+        "candidate_count": 0,
+        "ready_count": 0,
+        "wait_count": 0,
+        "cancel_count": 0,
+        "new_ready": 0,
+        "emails_sent": 0,
+        "rows": [],
+    }
 
 
 def load_daily_status() -> dict:
@@ -837,6 +877,48 @@ st.caption(
     "前回の正式ACTIVEアラートを翌営業日の5分足で監視します。"
     "これは売買推奨ではなく、寄り後の状態整理です。Yahoo Financeの5分足は遅延する場合があります。"
 )
+
+_entry_alert_status = load_entry_alert_status()
+_eas1, _eas2, _eas3, _eas4 = st.columns(4)
+
+_eas_run = pd.to_datetime(
+    _entry_alert_status.get("run_at"),
+    errors="coerce",
+    utc=True,
+)
+if pd.notna(_eas_run):
+    _eas_run = pd.Timestamp(_eas_run).tz_convert("Asia/Tokyo")
+
+_eas1.metric(
+    "Entry自動監視",
+    "未実行" if pd.isna(_eas_run) else _eas_run.strftime("%Y-%m-%d %H:%M"),
+)
+_eas2.metric(
+    "メール通知",
+    "✅ 設定済み" if bool(_entry_alert_status.get("email_configured")) else "⚪ 未設定",
+)
+_eas3.metric(
+    "READY / WAIT / CANCEL",
+    (
+        f"{int(_entry_alert_status.get('ready_count', 0) or 0)} / "
+        f"{int(_entry_alert_status.get('wait_count', 0) or 0)} / "
+        f"{int(_entry_alert_status.get('cancel_count', 0) or 0)}"
+    ),
+)
+_eas4.metric(
+    "今回メール送信",
+    f"{int(_entry_alert_status.get('emails_sent', 0) or 0)}件",
+)
+
+if not bool(_entry_alert_status.get("email_configured")):
+    st.info(
+        "Entry Hunterの自動監視は動作できますが、メール通知はまだ未設定です。"
+        " GitHub Secretsに通知先メール設定を追加すると、ENTRY READY初回検知時だけメール送信します。"
+    )
+else:
+    st.caption(
+        "平日9:15〜10:00 JSTを5分間隔で監視し、同一銘柄・同一日はENTRY READY初回だけ通知します。"
+    )
 
 if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
@@ -1880,6 +1962,10 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 ### Short Cover Entry Hunter
 
 - 前回の正式ACTIVE A/A+候補を翌営業日の5分足で監視
+- GitHub Actionsが平日9:15〜10:00 JSTを5分間隔で自動確認
+- 同一銘柄・同一日のENTRY READYは初回だけ通知履歴に保存
+- メールSecrets設定済みならENTRY READY初回検知時だけメール送信
+- メール未設定でも判定履歴・監視ステータスはGitHubへ保存
 - **🟢 ENTRY READY**：15分経過後もVWAP上、ブレイク、出来高継続が揃う
 - **🟡 WAIT**：15分未確定、VWAP回復待ち、ブレイク待ちなど
 - **🔴 CANCEL**：大幅GD、前日終値からの大幅下落、15分安値割れ＋VWAP下など

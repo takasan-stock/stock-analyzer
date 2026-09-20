@@ -7,7 +7,9 @@ on:
       - "pages/8_Short_Cover_Hunter.py"
       - "tests/test_short_cover.py"
       - "scripts/short_cover_daily.py"
+      - "scripts/short_cover_entry_alert.py"
       - ".github/workflows/short_cover_daily.yml"
+      - ".github/workflows/short_cover_entry_alert.yml"
       - "requirements.txt"
       - "dashboard_app.py"
       - ".github/workflows/short_cover_check.yml"
@@ -36,6 +38,7 @@ jobs:
           python -m py_compile pages/8_Short_Cover_Hunter.py
           python -m py_compile tests/test_short_cover.py
           python -m py_compile scripts/short_cover_daily.py
+          python -m py_compile scripts/short_cover_entry_alert.py
 
       - name: Run Short Cover regression tests
         run: python -m unittest tests.test_short_cover -v

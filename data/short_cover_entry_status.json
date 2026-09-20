@@ -1,0 +1,11 @@
+{
+  "run_at": null,
+  "email_configured": false,
+  "candidate_count": 0,
+  "ready_count": 0,
+  "wait_count": 0,
+  "cancel_count": 0,
+  "new_ready": 0,
+  "emails_sent": 0,
+  "rows": []
+}
