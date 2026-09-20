@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
@@ -23,7 +28,6 @@ from short_cover import (
     update_alert_history_outcomes,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 CONDITION_FILE = DATA_DIR / "short_cover_condition_versions.csv"
 HISTORY_FILE = DATA_DIR / "short_cover_alert_history.csv"
