@@ -12,6 +12,7 @@ from short_cover import (
     compare_live_vs_backtest,
     get_active_condition_version,
     normalize_alert_history,
+    summarize_alert_history,
     normalize_condition_versions,
 )
 
@@ -198,6 +199,63 @@ class ShortCoverCoreTests(unittest.TestCase):
         self.assertEqual(added2, 0)
         self.assertEqual(len(second), 1)
 
+    def test_official_summary_excludes_legacy_preview_rows(self):
+        history = pd.DataFrame([
+            {
+                "alert_date": "2026-09-10",
+                "ticker": "1111",
+                "tracking_mode": "LEGACY",
+                "ret_5d": 20.0,
+                "entry_price": 1000,
+                "last_updated": "2026-09-18",
+            },
+            {
+                "alert_date": "2026-09-11",
+                "ticker": "2222",
+                "tracking_mode": "ACTIVE",
+                "condition_version": "v1.0",
+                "ret_5d": -2.0,
+                "entry_price": 1000,
+                "last_updated": "2026-09-18",
+            },
+        ])
+        summary = summarize_alert_history(history)
+        self.assertEqual(summary["alerts"], 1)
+        self.assertEqual(summary["tracked"], 1)
+        self.assertAlmostEqual(float(summary["avg_5d"]), -2.0)
+        self.assertAlmostEqual(float(summary["win_5d"]), 0.0)
+
+    def test_active_history_stores_condition_version(self):
+        priority = pd.DataFrame([{
+            "snapshot_date": pd.Timestamp("2026-09-18"),
+            "ticker": "3333",
+            "name": "ACTIVE",
+            "alert_tier": "🔥 A 優先確認",
+            "alert_score": 75,
+            "phase": "🔥 COVER EARLY",
+            "regime": "🔥 COVER + NEW MONEY",
+            "optimizer_label": "⭐ ROBUST MATCH",
+            "match_strength": 70,
+            "cover_score": 75,
+            "ignition_score": 70,
+            "long_demand_score": 70,
+            "short_pressure": 60,
+            "confidence": 70,
+            "vol_ratio": 1.8,
+            "rs_watch": 85,
+            "price": 1200,
+            "condition_text": "C50/I0/L70/P40/Q0",
+        }])
+        history, added = append_priority_alert_history(
+            None,
+            priority,
+            tracking_mode="ACTIVE",
+            condition_version="v1.0",
+        )
+        self.assertEqual(added, 1)
+        self.assertEqual(history.iloc[0]["tracking_mode"], "ACTIVE")
+        self.assertEqual(history.iloc[0]["condition_version"], "v1.0")
+
     def test_condition_versions_require_explicit_activation(self):
         versions, v10 = append_condition_version(
             None,
@@ -244,6 +302,8 @@ class ShortCoverCoreTests(unittest.TestCase):
             "alert_date": live_dates,
             "ticker": [f"{1000+i}" for i in range(6)],
             "condition_text": ["C70/I60/L60/P50/Q40"] * 6,
+            "tracking_mode": ["ACTIVE"] * 6,
+            "condition_version": ["v1.0"] * 6,
             "ret_5d": [-2.0, -1.5, -3.0, -2.5, -1.0, -2.0],
             "mfe_10d": [1.0] * 6,
             "mae_10d": [-5.0] * 6,
