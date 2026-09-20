@@ -1,0 +1,58 @@
+name: Pre-Trade Tests
+
+on:
+  pull_request:
+    paths:
+      - "pretrade.py"
+      - "trade_journal.py"
+      - "pages/9_Pre_Trade_Check.py"
+      - "pages/10_Trade_Journal.py"
+      - "pages/8_Short_Cover_Hunter.py"
+      - "dashboard_app.py"
+      - "tests/test_pretrade.py"
+      - "tests/test_trade_journal.py"
+      - ".github/workflows/pretrade_tests.yml"
+  push:
+    branches:
+      - pretrade-check-v1
+    paths:
+      - "pretrade.py"
+      - "trade_journal.py"
+      - "pages/9_Pre_Trade_Check.py"
+      - "pages/10_Trade_Journal.py"
+      - "pages/8_Short_Cover_Hunter.py"
+      - "dashboard_app.py"
+      - "tests/test_pretrade.py"
+      - "tests/test_trade_journal.py"
+      - ".github/workflows/pretrade_tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile modified Python files
+        run: |
+          python -m py_compile pretrade.py
+          python -m py_compile trade_journal.py
+          python -m py_compile pages/9_Pre_Trade_Check.py
+          python -m py_compile pages/10_Trade_Journal.py
+          python -m py_compile pages/8_Short_Cover_Hunter.py
+          python -m py_compile dashboard_app.py
+
+      - name: Run Pre-Trade and Trade Journal unit tests
+        run: |
+          python -m unittest tests.test_pretrade -v
+          python -m unittest tests.test_trade_journal -v

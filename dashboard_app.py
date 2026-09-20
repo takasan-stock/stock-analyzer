@@ -2285,6 +2285,20 @@ if not _focus_df.empty:
                     + f"\n↳ {_reason_text}"
                 )
 
+                if st.button(
+                    "🛡️ 購入前チェック",
+                    key=f"pretrade_focus_{_item['ticker']}_{_item.get('focus_type', '')}_{_rank}",
+                    use_container_width=True,
+                ):
+                    st.session_state["pretrade_ticker"] = str(_item["ticker"])
+                    st.session_state["pretrade_name"] = str(_item.get("name", ""))
+                    st.session_state["pretrade_source"] = (
+                        f"今日見るべき銘柄 {_priority_rank}ランク"
+                    )
+                    if _item.get("earnings_days") is not None:
+                        st.session_state["pretrade_earnings_days"] = int(_item["earnings_days"])
+                    st.switch_page("pages/9_Pre_Trade_Check.py")
+
             _col_opp, _col_warn = st.columns(2)
 
             with _col_opp:
