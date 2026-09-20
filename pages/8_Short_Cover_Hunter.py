@@ -561,6 +561,17 @@ else:
     )
 
 st.markdown("## 🚨 今日の最優先チェック")
+
+if _saved_active is not None:
+    _live_version = str(_saved_active.get("version_id", "") or "")
+    _live_condition = condition_text_from_row(_saved_active)
+    _live_robustness = str(_saved_active.get("robustness", "") or "")
+    _live_stability = fmt_num(_saved_active.get("stability_score"), 0)
+    st.success(
+        f"🟢 正式運用 ACTIVE｜{_live_version}｜{_live_condition}｜"
+        f"{_live_robustness}｜安定度 {_live_stability}/100"
+    )
+
 st.caption(
     (
         "ACTIVE条件＋今日の昇格・Phase・資金フロー・信頼度・出来高を統合した正式優先度です。"
@@ -889,37 +900,60 @@ if _versions.empty:
     st.info("保存済みの条件バージョンはまだありません。")
 else:
     _version_labels = _versions.apply(
-        lambda r: f"{r['version_id']}｜{r['condition_text']}｜{r['source']}",
+        lambda r: (
+            f"{'✅ ' if bool(r['is_active']) else ''}"
+            f"{r['version_id']}｜{r['condition_text']}｜{r['source']}"
+        ),
         axis=1,
     ).tolist()
+
+    _active_indices = [
+        i for i, (_, r) in enumerate(_versions.iterrows())
+        if bool(r["is_active"])
+    ]
+    _default_version_index = _active_indices[0] if _active_indices else 0
+
     _selected_version_label = st.selectbox(
         "保存済み条件",
         _version_labels,
+        index=_default_version_index,
         key="short_cover_condition_version_select",
     )
     _selected_idx = _version_labels.index(_selected_version_label)
     _selected_version = _versions.iloc[_selected_idx]
+    _selected_is_active = bool(_selected_version["is_active"])
 
     _vc1, _vc2 = st.columns([1, 2])
     with _vc1:
-        if st.button("✅ このバージョンを有効化", key="activate_condition_version_btn"):
-            _versions = activate_condition_version(
-                _versions,
-                str(_selected_version["version_id"]),
+        if _selected_is_active:
+            st.button(
+                "✅ 現在ACTIVE",
+                key="active_condition_version_btn",
+                disabled=True,
             )
-            st.session_state.short_cover_condition_versions = _versions
-            _ok, _msg = save_condition_versions(_versions)
-            if _ok:
-                st.success(f"{_selected_version['version_id']} を有効化しました。")
-                st.rerun()
-            else:
-                st.warning(f"保存に失敗しました：{_msg}")
+        else:
+            if st.button(
+                "✅ このバージョンを有効化",
+                key="activate_condition_version_btn",
+            ):
+                _versions = activate_condition_version(
+                    _versions,
+                    str(_selected_version["version_id"]),
+                )
+                st.session_state.short_cover_condition_versions = _versions
+                _ok, _msg = save_condition_versions(_versions)
+                if _ok:
+                    st.success(f"{_selected_version['version_id']} を有効化しました。")
+                    st.rerun()
+                else:
+                    st.warning(f"保存に失敗しました：{_msg}")
     with _vc2:
+        _active_note = "｜🟢 正式運用中" if _selected_is_active else ""
         st.caption(
             f"{_selected_version['robustness']}｜安定度 "
             f"{fmt_num(_selected_version['stability_score'], 0)}/100｜"
             f"検証 {_selected_version['test_signals'] if pd.notna(_selected_version['test_signals']) else '—'}件｜"
-            f"メモ：{_selected_version['note'] or '—'}"
+            f"メモ：{_selected_version['note'] or '—'}{_active_note}"
         )
 
     _version_show = _versions.copy()
