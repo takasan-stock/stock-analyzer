@@ -1,13 +1,15 @@
 {
-  "run_at": "2026-09-21T16:32:16.088724",
-  "status": "🟢 READY",
+  "run_at": "2026-09-22T15:05:06.302174",
+  "status": "🟡 CAUTION",
   "active_version": "v1.0",
   "condition_text": "C50/I0/L70/P40/Q0",
   "jpx_date": "2026-09-18 00:00:00",
-  "jpx_lag": 1,
+  "jpx_lag": 2,
   "market_date": "2026-09-18 00:00:00",
-  "market_lag": 1,
-  "warnings": [],
+  "market_lag": 2,
+  "warnings": [
+    "価格 2営業日遅れ"
+  ],
   "candidates": 60,
   "priority_count": 5,
   "new_alerts": 0,
