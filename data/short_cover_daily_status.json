@@ -1,19 +1,16 @@
 {
-  "run_at": "2026-09-23T15:08:26.929844",
-  "status": "🔴 STALE",
+  "run_at": "2026-09-24T15:19:29.224485",
+  "status": "🟢 READY",
   "active_version": "v1.0",
   "condition_text": "C50/I0/L70/P40/Q0",
-  "jpx_date": "2026-09-18 00:00:00",
-  "jpx_lag": 3,
-  "market_date": "2026-09-18 00:00:00",
-  "market_lag": 3,
-  "warnings": [
-    "価格 3営業日遅れ",
-    "JPX 3営業日遅れ"
-  ],
+  "jpx_date": "2026-09-24 00:00:00",
+  "jpx_lag": 0,
+  "market_date": "2026-09-24 00:00:00",
+  "market_lag": 0,
+  "warnings": [],
   "candidates": 60,
   "priority_count": 5,
-  "new_alerts": 0,
-  "official_alerts": 0,
+  "new_alerts": 3,
+  "official_alerts": 3,
   "tracked_alerts": 0
 }
