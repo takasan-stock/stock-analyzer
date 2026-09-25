@@ -162,12 +162,27 @@ def _github_shared_config():
 def _github_history_config():
     """Dedicated Short Cover persistence in this repository.
 
-    Keeping condition/history files next to the code lets Streamlit and the
-    scheduled GitHub Action read exactly the same source of truth.
+    Prefer a Short Cover-specific PAT so dashboard-wide GitHub settings can
+    keep their existing repository scope. Fall back to GITHUB_TOKEN for
+    backwards compatibility.
     """
     try:
+        token = str(
+            st.secrets.get(
+                "SHORT_COVER_GITHUB_TOKEN",
+                st.secrets.get("GITHUB_TOKEN", ""),
+            )
+            or ""
+        ).strip()
+        if not token:
+            return None
         return {
-            "token": st.secrets["GITHUB_TOKEN"],
+            "token": token,
+            "token_source": (
+                "SHORT_COVER_GITHUB_TOKEN"
+                if str(st.secrets.get("SHORT_COVER_GITHUB_TOKEN", "") or "").strip()
+                else "GITHUB_TOKEN"
+            ),
             "repo": st.secrets.get(
                 "SHORT_COVER_GITHUB_REPO",
                 "takasan-stock/stock-analyzer",
@@ -176,6 +191,23 @@ def _github_history_config():
         }
     except Exception:
         return None
+
+
+def _github_save_error(resp) -> str:
+    """Return a safe, user-facing GitHub API error without exposing secrets."""
+    message = ""
+    try:
+        payload = resp.json()
+        message = str(payload.get("message", "") or "").strip()
+    except Exception:
+        message = ""
+    if resp.status_code == 403:
+        detail = message or "書き込み権限がありません"
+        return (
+            f"GitHub保存失敗 HTTP 403: {detail}。"
+            " Short Cover専用Tokenに stock-analyzer の Contents: Read and write 権限が必要です。"
+        )
+    return f"GitHub保存失敗 HTTP {resp.status_code}" + (f": {message}" if message else "")
 
 
 def _github_headers(config):
@@ -401,7 +433,7 @@ def save_alert_history(history: pd.DataFrame) -> tuple[bool, str]:
                         f.write(merged_text)
                     return True, "GitHub競合をマージして保存"
 
-        return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
+        return False, _github_save_error(put_resp)
     except requests.exceptions.RequestException as e:
         return False, f"GitHub通信エラー: {e}"
 
@@ -528,7 +560,7 @@ def save_condition_versions(versions: pd.DataFrame) -> tuple[bool, str]:
                         f.write(merged_text)
                     return True, "GitHub競合をマージして保存"
 
-        return False, f"GitHub保存失敗 HTTP {put_resp.status_code}"
+        return False, _github_save_error(put_resp)
     except requests.exceptions.RequestException as e:
         return False, f"GitHub通信エラー: {e}"
 
