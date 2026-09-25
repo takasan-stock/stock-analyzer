@@ -879,7 +879,7 @@ st.caption(
 )
 
 _entry_alert_status = load_entry_alert_status()
-_eas1, _eas2, _eas3, _eas4 = st.columns(4)
+_eas1, _eas2, _eas3, _eas4, _eas5 = st.columns(5)
 
 _eas_run = pd.to_datetime(
     _entry_alert_status.get("run_at"),
@@ -922,6 +922,15 @@ _eas4.metric(
     "今回メール送信",
     f"{int(_entry_alert_status.get('emails_sent', 0) or 0)}件",
 )
+_eas5.metric(
+    "追跡状態",
+    (
+        f"C {int(_entry_alert_status.get('confirmed_count', 0) or 0)} / "
+        f"W {int(_entry_alert_status.get('weakening_count', 0) or 0)} / "
+        f"X {int(_entry_alert_status.get('exit_watch_count', 0) or 0)}"
+    ),
+    help="C=ENTRY CONFIRMED / W=WEAKENING / X=EXIT WATCH",
+)
 
 if not bool(_entry_alert_status.get("email_configured")):
     st.info(
@@ -933,7 +942,7 @@ else:
     if pd.notna(_last_test_email):
         _test_note = f"｜最終テスト成功 {_last_test_email.strftime('%Y-%m-%d %H:%M')} JST"
     st.caption(
-        "平日9:15〜10:00 JSTを5分間隔で監視し、同一銘柄・同一日はENTRY READY初回だけ通知します。"
+        "平日9:15〜11:00 JSTを5分間隔で監視し、ENTRY READY後もCONFIRMED / WEAKENING / EXIT WATCHへの状態変化を各1回だけ通知します."
         + _test_note
     )
 
@@ -1990,9 +1999,10 @@ Phase上昇、Cover 65突破、Ignition 65突破、新規5日高値突破、新�
 ### Short Cover Entry Hunter
 
 - 前回の正式ACTIVE A/A+候補を翌営業日の5分足で監視
-- GitHub Actionsが平日9:15〜10:00 JSTを5分間隔で自動確認
+- GitHub Actionsが平日9:15〜11:00 JSTを5分間隔で自動確認
 - 同一銘柄・同一日のENTRY READYは初回だけ通知履歴に保存
-- メールSecrets設定済みならENTRY READY初回検知時だけメール送信
+- ENTRY READY後も **ENTRY CONFIRMED / WEAKENING / EXIT WATCH** への状態変化を追跡
+- 各フォローアップ状態は同一銘柄・同一日につき初回だけメール送信
 - メール未設定でも判定履歴・監視ステータスはGitHubへ保存
 - **🟢 ENTRY READY**：15分経過後もVWAP上、ブレイク、出来高継続が揃う
 - **🟡 WAIT**：15分未確定、VWAP回復待ち、ブレイク待ちなど

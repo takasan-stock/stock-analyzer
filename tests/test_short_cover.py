@@ -9,6 +9,7 @@ from short_cover import (
     apply_optimizer_condition,
     build_operational_health,
     build_priority_alerts,
+    evaluate_entry_followup,
     evaluate_entry_hunter,
     business_day_lag,
     clean_issue_name,
@@ -148,6 +149,52 @@ class ShortCoverCoreTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "🔴 CANCEL")
         self.assertFalse(result["above_vwap"])
+
+    def test_entry_followup_confirms_continuation(self):
+        result = evaluate_entry_followup(
+            entry_price=4580,
+            current_price=4620,
+            vwap=4595,
+            opening15_high=4560,
+            opening15_low=4405,
+            prev_high=4445,
+            high_since_entry=4635,
+            low_since_entry=4560,
+            minutes_since_entry=35,
+        )
+        self.assertEqual(result["status"], "🟢 ENTRY CONFIRMED")
+        self.assertGreaterEqual(float(result["mfe_pct"]), 0.5)
+        self.assertTrue(result["above_vwap"])
+
+    def test_entry_followup_detects_weakening(self):
+        result = evaluate_entry_followup(
+            entry_price=4580,
+            current_price=4540,
+            vwap=4560,
+            opening15_high=4560,
+            opening15_low=4405,
+            prev_high=4445,
+            high_since_entry=4620,
+            low_since_entry=4535,
+            minutes_since_entry=55,
+        )
+        self.assertEqual(result["status"], "🟡 WEAKENING")
+        self.assertFalse(result["above_vwap"])
+
+    def test_entry_followup_exit_watch_after_material_reversal(self):
+        result = evaluate_entry_followup(
+            entry_price=4580,
+            current_price=4500,
+            vwap=4550,
+            opening15_high=4560,
+            opening15_low=4405,
+            prev_high=4445,
+            high_since_entry=4620,
+            low_since_entry=4500,
+            minutes_since_entry=255,
+        )
+        self.assertEqual(result["status"], "🔴 EXIT WATCH")
+        self.assertLessEqual(float(result["return_pct"]), -1.5)
 
     def test_business_day_lag_ignores_weekend(self):
         self.assertEqual(

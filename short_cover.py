@@ -2621,6 +2621,247 @@ def evaluate_entry_hunter(
     }
 
 
+def evaluate_entry_followup(
+    *,
+    entry_price,
+    current_price,
+    vwap,
+    opening15_high=None,
+    opening15_low=None,
+    prev_high=None,
+    high_since_entry=None,
+    low_since_entry=None,
+    minutes_since_entry: int = 0,
+) -> dict:
+    """Evaluate post-entry continuation / deterioration.
+
+    These states are monitoring aids only. EXIT WATCH is not an automatic
+    sell instruction.
+    """
+    vals = {
+        "entry_price": _to_float(entry_price),
+        "current_price": _to_float(current_price),
+        "vwap": _to_float(vwap),
+        "opening15_high": _to_float(opening15_high),
+        "opening15_low": _to_float(opening15_low),
+        "prev_high": _to_float(prev_high),
+        "high_since_entry": _to_float(high_since_entry),
+        "low_since_entry": _to_float(low_since_entry),
+    }
+
+    required = ["entry_price", "current_price", "vwap"]
+    if any(vals[k] is None or vals[k] <= 0 for k in required):
+        return {
+            "status": "⚪ NO DATA",
+            "return_pct": None,
+            "mfe_pct": None,
+            "mae_pct": None,
+            "drawdown_from_high_pct": None,
+            "minutes_since_entry": int(minutes_since_entry or 0),
+            "above_vwap": False,
+            "reason": "追跡に必要な価格データが不足",
+            "risk": "",
+        }
+
+    entry = vals["entry_price"]
+    current = vals["current_price"]
+    high = vals["high_since_entry"] or max(entry, current)
+    low = vals["low_since_entry"] or min(entry, current)
+
+    return_pct = (current / entry - 1.0) * 100.0
+    mfe_pct = (high / entry - 1.0) * 100.0
+    mae_pct = (low / entry - 1.0) * 100.0
+    drawdown_from_high_pct = (current / high - 1.0) * 100.0 if high > 0 else 0.0
+    above_vwap = current >= vals["vwap"]
+    mins = int(minutes_since_entry or 0)
+
+    reasons = []
+    risks = []
+
+    if above_vwap:
+        reasons.append("VWAP上")
+    else:
+        risks.append("VWAP下")
+
+    if return_pct >= 0:
+        reasons.append(f"Entry比 {return_pct:+.1f}%")
+    else:
+        risks.append(f"Entry比 {return_pct:+.1f}%")
+
+    if mfe_pct >= 0.5:
+        reasons.append(f"MFE {mfe_pct:+.1f}%")
+    if drawdown_from_high_pct <= -1.0:
+        risks.append(f"高値から {drawdown_from_high_pct:.1f}%")
+
+    broke_opening_low = (
+        vals["opening15_low"] is not None
+        and current < vals["opening15_low"]
+    )
+    lost_prev_high = (
+        vals["prev_high"] is not None
+        and current < vals["prev_high"] * 0.995
+    )
+
+    exit_watch = (
+        return_pct <= -1.5
+        or (broke_opening_low and not above_vwap)
+        or (lost_prev_high and return_pct <= -0.8 and not above_vwap)
+    )
+
+    weakening = (
+        not exit_watch
+        and mins >= 10
+        and (
+            (return_pct <= -0.5 and not above_vwap)
+            or (return_pct < 0 and not above_vwap)
+            or (mfe_pct >= 0.5 and drawdown_from_high_pct <= -1.0)
+        )
+    )
+
+    breakout_evidence = (
+        (
+            vals["opening15_high"] is not None
+            and high > vals["opening15_high"]
+        )
+        or (
+            vals["prev_high"] is not None
+            and high > vals["prev_high"]
+        )
+        or mfe_pct >= 0.8
+    )
+
+    confirmed = (
+        not exit_watch
+        and not weakening
+        and mins >= 10
+        and above_vwap
+        and return_pct >= 0.3
+        and mfe_pct >= 0.5
+        and breakout_evidence
+    )
+
+    if exit_watch:
+        status = "🔴 EXIT WATCH"
+        if return_pct <= -1.5:
+            risks.append("Entry比-1.5%到達")
+        if broke_opening_low:
+            risks.append("15分安値割れ")
+        if lost_prev_high:
+            risks.append("前日高値失速")
+    elif weakening:
+        status = "🟡 WEAKENING"
+    elif confirmed:
+        status = "🟢 ENTRY CONFIRMED"
+    else:
+        status = "🟦 MONITORING"
+
+    return {
+        "status": status,
+        "return_pct": round(return_pct, 2),
+        "mfe_pct": round(mfe_pct, 2),
+        "mae_pct": round(mae_pct, 2),
+        "drawdown_from_high_pct": round(drawdown_from_high_pct, 2),
+        "minutes_since_entry": mins,
+        "above_vwap": bool(above_vwap),
+        "reason": " / ".join(reasons) if reasons else "継続確認中",
+        "risk": " / ".join(dict.fromkeys(risks)),
+    }
+
+
+def build_entry_followup_snapshot(
+    daily: pd.DataFrame | None,
+    intraday: pd.DataFrame | None,
+    *,
+    entry_price,
+    entry_time,
+) -> dict:
+    """Build a post-entry monitoring snapshot from 5-minute bars."""
+    base = build_entry_hunter_snapshot(daily, intraday)
+    if (
+        intraday is None
+        or intraday.empty
+        or base.get("status") == "⚪ NO DATA"
+    ):
+        return evaluate_entry_followup(
+            entry_price=entry_price,
+            current_price=None,
+            vwap=None,
+        )
+
+    i = intraday.copy()
+    if isinstance(i.columns, pd.MultiIndex):
+        i.columns = i.columns.get_level_values(0)
+
+    idx = pd.to_datetime(i.index)
+    if getattr(idx, "tz", None) is None:
+        idx = idx.tz_localize("Asia/Tokyo")
+    else:
+        idx = idx.tz_convert("Asia/Tokyo")
+    i.index = idx
+    i = i.sort_index()
+
+    session_date = pd.to_datetime(base.get("market_date"), errors="coerce")
+    if pd.isna(session_date):
+        return evaluate_entry_followup(
+            entry_price=entry_price,
+            current_price=None,
+            vwap=None,
+        )
+
+    session = i[i.index.date == pd.Timestamp(session_date).date()].copy()
+    if session.empty:
+        return evaluate_entry_followup(
+            entry_price=entry_price,
+            current_price=None,
+            vwap=None,
+        )
+
+    entry_ts = pd.to_datetime(entry_time, errors="coerce")
+    if pd.isna(entry_ts):
+        entry_ts = session.index[0]
+    elif getattr(entry_ts, "tzinfo", None) is None:
+        entry_ts = pd.Timestamp(entry_ts).tz_localize("Asia/Tokyo")
+    else:
+        entry_ts = pd.Timestamp(entry_ts).tz_convert("Asia/Tokyo")
+
+    tracked = session[session.index >= entry_ts].copy()
+    if tracked.empty:
+        tracked = session.tail(1)
+
+    last_ts = tracked.index[-1]
+    high_since = float(pd.to_numeric(tracked["High"], errors="coerce").max())
+    low_since = float(pd.to_numeric(tracked["Low"], errors="coerce").min())
+
+    result = evaluate_entry_followup(
+        entry_price=entry_price,
+        current_price=base.get("current_price"),
+        vwap=base.get("vwap"),
+        opening15_high=base.get("opening15_high"),
+        opening15_low=base.get("opening15_low"),
+        prev_high=base.get("prev_high"),
+        high_since_entry=high_since,
+        low_since_entry=low_since,
+        minutes_since_entry=max(
+            0,
+            int((last_ts - entry_ts).total_seconds() // 60),
+        ),
+    )
+    result.update({
+        "market_date": base.get("market_date"),
+        "bar_time": last_ts,
+        "current_price": base.get("current_price"),
+        "vwap": base.get("vwap"),
+        "opening15_high": base.get("opening15_high"),
+        "opening15_low": base.get("opening15_low"),
+        "prev_high": base.get("prev_high"),
+        "high_since_entry": high_since,
+        "low_since_entry": low_since,
+        "entry_price": _to_float(entry_price),
+        "entry_time": entry_ts,
+    })
+    return result
+
+
 def build_entry_hunter_snapshot(
     daily: pd.DataFrame | None,
     intraday: pd.DataFrame | None,
@@ -2742,6 +2983,7 @@ def build_entry_hunter_snapshot(
     )
     result.update({
         "market_date": pd.Timestamp(session_date),
+        "bar_time": last_ts,
         "current_price": _to_float(session.iloc[-1]["Close"]),
         "vwap": _to_float(vwap),
         "opening15_high": _to_float(opening15_high),
@@ -2749,6 +2991,8 @@ def build_entry_hunter_snapshot(
         "prev_close": _to_float(prev["Close"]),
         "prev_high": _to_float(prev["High"]),
         "session_open": _to_float(session.iloc[0]["Open"]),
+        "session_high": _to_float(pd.to_numeric(session["High"], errors="coerce").max()),
+        "session_low": _to_float(pd.to_numeric(session["Low"], errors="coerce").min()),
         "minutes_from_open": minutes_from_open,
     })
     return result
