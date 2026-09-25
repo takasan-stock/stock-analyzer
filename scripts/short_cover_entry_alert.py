@@ -16,6 +16,7 @@ import pandas as pd
 import yfinance as yf
 
 from short_cover import (
+    build_entry_followup_snapshot,
     build_entry_hunter_snapshot,
     normalize_alert_history,
     select_entry_hunter_candidates,
@@ -130,14 +131,19 @@ def email_config() -> dict:
     }
 
 
-def send_ready_email(row: dict, cfg: dict) -> tuple[bool, str]:
+def send_entry_email(row: dict, cfg: dict) -> tuple[bool, str]:
     if not (cfg["to"] and cfg["user"] and cfg["password"]):
         return False, "EMAIL_SECRETS_NOT_CONFIGURED"
 
     msg = EmailMessage()
-    msg["Subject"] = (
-        f"🚨 Short Cover ENTRY READY: {row['ticker']} {row['name']}"
-    )
+    status = str(row.get("entry_status", "🟢 ENTRY READY"))
+    subject_prefix = {
+        "🟢 ENTRY READY": "🚨 ENTRY READY",
+        "🟢 ENTRY CONFIRMED": "✅ ENTRY CONFIRMED",
+        "🟡 WEAKENING": "⚠️ WEAKENING",
+        "🔴 EXIT WATCH": "🛑 EXIT WATCH",
+    }.get(status, "📌 ENTRY UPDATE")
+    msg["Subject"] = f"{subject_prefix}: {row['ticker']} {row['name']}"
     msg["From"] = cfg["user"]
     msg["To"] = cfg["to"]
 
@@ -200,7 +206,8 @@ def send_test_email(cfg: dict) -> tuple[bool, str]:
         "reason": "VWAP上 / 15分高値突破 / 出来高継続",
         "risk": "テストメールです",
     }
-    return send_ready_email(row, cfg)
+    row["entry_status"] = "🟢 ENTRY READY"
+    return send_entry_email(row, cfg)
 
 
 def parse_args():
@@ -246,12 +253,13 @@ def main() -> int:
         return 1
 
     # Scheduled workflow runs a wider UTC window. Keep the actual monitoring
-    # window strictly between 09:15 and 10:00 JST on weekdays.
+    # window strictly between 09:15 and 11:00 JST on weekdays. This covers
+    # READY detection plus roughly 30-90 minutes of post-entry follow-up.
     if now.weekday() >= 5:
         print("Short Cover Entry Alert: weekend skip")
         return 0
     hhmm = now.hour * 60 + now.minute
-    if hhmm < 9 * 60 + 15 or hhmm > 10 * 60:
+    if hhmm < 9 * 60 + 15 or hhmm > 11 * 60:
         print(f"Short Cover Entry Alert: outside monitoring window ({now:%H:%M} JST)")
         return 0
 
@@ -360,12 +368,106 @@ def main() -> int:
         already_sent = _to_bool(notifications.at[idx, "email_sent"])
         if not already_sent:
             email_row = notifications.loc[idx].to_dict()
-            ok, error = send_ready_email(email_row, cfg)
+            ok, error = send_entry_email(email_row, cfg)
             notifications.at[idx, "email_sent"] = bool(ok)
             notifications.at[idx, "email_error"] = error
             if ok:
                 notifications.at[idx, "email_sent_at"] = now.tz_localize(None)
                 emails_sent += 1
+
+    # Follow up every READY detected today. Each follow-up state is stored and
+    # emailed at most once per ticker/day/status.
+    ready_rows = notifications[
+        (notifications["entry_status"].astype(str) == "🟢 ENTRY READY")
+        & (
+            pd.to_datetime(notifications["market_date"], errors="coerce").dt.normalize()
+            == now.tz_localize(None).normalize()
+        )
+    ].copy()
+
+    for _, ready_row in ready_rows.iterrows():
+        ticker = str(ready_row["ticker"])
+        try:
+            daily, intraday = load_prices(ticker)
+            followup = build_entry_followup_snapshot(
+                daily,
+                intraday,
+                entry_price=ready_row.get("current_price"),
+                entry_time=ready_row.get("first_detected_at"),
+            )
+        except Exception:
+            continue
+
+        follow_status = str(followup.get("status", "🟦 MONITORING"))
+        if follow_status not in {
+            "🟢 ENTRY CONFIRMED",
+            "🟡 WEAKENING",
+            "🔴 EXIT WATCH",
+        }:
+            continue
+
+        market_date_n = pd.to_datetime(
+            ready_row.get("market_date"),
+            errors="coerce",
+        )
+        if pd.isna(market_date_n):
+            continue
+        market_date_n = pd.Timestamp(market_date_n).normalize()
+
+        follow_mask = (
+            (
+                pd.to_datetime(
+                    notifications["market_date"],
+                    errors="coerce",
+                ).dt.normalize()
+                == market_date_n
+            )
+            & (notifications["ticker"].astype(str) == ticker)
+            & (notifications["entry_status"].astype(str) == follow_status)
+        )
+        if follow_mask.any():
+            continue
+
+        follow_row = {
+            "market_date": market_date_n,
+            "ticker": ticker,
+            "name": ready_row.get("name", ""),
+            "alert_date": ready_row.get("alert_date"),
+            "condition_version": ready_row.get("condition_version", ""),
+            "entry_status": follow_status,
+            "entry_score": ready_row.get("entry_score"),
+            "gap_pct": ready_row.get("gap_pct"),
+            "relvol15": ready_row.get("relvol15"),
+            "current_price": followup.get("current_price"),
+            "vwap": followup.get("vwap"),
+            "reason": (
+                f"{followup.get('reason', '')} | "
+                f"MFE {followup.get('mfe_pct', '—')}% | "
+                f"MAE {followup.get('mae_pct', '—')}% | "
+                f"Entry比 {followup.get('return_pct', '—')}%"
+            ),
+            "risk": followup.get("risk", ""),
+            "first_detected_at": now.tz_localize(None),
+            "email_sent": False,
+            "email_sent_at": pd.NaT,
+            "email_error": "",
+        }
+
+        notifications = pd.concat(
+            [notifications, pd.DataFrame([follow_row])],
+            ignore_index=True,
+        )
+        idx = notifications.index[-1]
+
+        ok, error = send_entry_email(
+            notifications.loc[idx].to_dict(),
+            cfg,
+        )
+        notifications.at[idx, "email_sent"] = bool(ok)
+        notifications.at[idx, "email_error"] = error
+        if ok:
+            notifications.at[idx, "email_sent_at"] = now.tz_localize(None)
+            emails_sent += 1
 
     save_notifications(notifications)
 
@@ -383,6 +485,18 @@ def main() -> int:
             1 for row in status_rows if row.get("status") == "🔴 CANCEL"
         )),
         "new_ready": int(new_ready),
+        "confirmed_count": int(sum(
+            1 for x in notifications["entry_status"].astype(str)
+            if x == "🟢 ENTRY CONFIRMED"
+        )),
+        "weakening_count": int(sum(
+            1 for x in notifications["entry_status"].astype(str)
+            if x == "🟡 WEAKENING"
+        )),
+        "exit_watch_count": int(sum(
+            1 for x in notifications["entry_status"].astype(str)
+            if x == "🔴 EXIT WATCH"
+        )),
         "emails_sent": int(emails_sent),
         "rows": status_rows,
     })
