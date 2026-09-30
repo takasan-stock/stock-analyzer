@@ -14,6 +14,11 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from credit_supply import (
+    analyze_credit_supply,
+    build_signal_confluence,
+    load_jpx_margin_history,
+)
 from short_cover import (
     ALERT_HISTORY_COLUMNS,
     append_priority_alert_history,
@@ -56,6 +61,11 @@ def load_jpx_cached(archive_pages: int, max_files: int):
 @st.cache_data(ttl=900, show_spinner=False)
 def price_features_cached(tickers: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return build_price_feature_snapshots(list(tickers))
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_credit_margin_cached(max_files: int = 16):
+    return load_jpx_margin_history(max_files=max_files)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -799,6 +809,61 @@ priority_alerts = build_priority_alerts(
     validation_ready=active_condition is not None,
 )
 
+_credit_margin_result = load_credit_margin_cached(16)
+_credit_margin_df = _credit_margin_result.balances
+_credit_snapshot_cache: dict[str, dict] = {}
+
+
+def _credit_snapshot_for(ticker: str) -> dict:
+    ticker = normalize_ticker(ticker)
+    if ticker in _credit_snapshot_cache:
+        return _credit_snapshot_cache[ticker]
+
+    prices = load_detail_price(ticker)
+    latest_close = previous_close = avg_volume_5 = avg_volume_25 = None
+    if prices is not None and not prices.empty:
+        close = pd.to_numeric(prices.get("Close"), errors="coerce").dropna()
+        volume = pd.to_numeric(prices.get("Volume"), errors="coerce").dropna()
+        if len(close) >= 1:
+            latest_close = float(close.iloc[-1])
+        if len(close) >= 2:
+            previous_close = float(close.iloc[-2])
+        if len(volume) >= 1:
+            avg_volume_5 = float(volume.tail(5).mean())
+            avg_volume_25 = float(volume.tail(25).mean())
+
+    snapshot = analyze_credit_supply(
+        _credit_margin_df,
+        ticker,
+        latest_close=latest_close,
+        previous_close=previous_close,
+        avg_volume_5=avg_volume_5,
+        avg_volume_25=avg_volume_25,
+    )
+    _credit_snapshot_cache[ticker] = snapshot
+    return snapshot
+
+
+if not priority_alerts.empty:
+    _credit_rows = []
+    for _, _row in priority_alerts.iterrows():
+        _credit = _credit_snapshot_for(str(_row.get("ticker", "")))
+        _confluence = build_signal_confluence(
+            cover_score=_row.get("cover_score"),
+            credit_score=_credit.get("score"),
+        )
+        _credit_rows.append({
+            "ticker": str(_row.get("ticker", "")),
+            "credit_score": _credit.get("score"),
+            "credit_status": _credit.get("status", "NO DATA"),
+            "credit_ratio": _credit.get("credit_ratio"),
+            "credit_long_delta": _credit.get("long_delta"),
+            "confluence_score": _confluence.get("score"),
+            "confluence_status": _confluence.get("status"),
+        })
+    _credit_df = pd.DataFrame(_credit_rows)
+    priority_alerts = priority_alerts.merge(_credit_df, on="ticker", how="left")
+
 st.markdown("## 🧭 初回セットアップ")
 _has_backtest = st.session_state.get("short_cover_backtest") is not None
 _has_saved_version = _versions is not None and not _versions.empty
@@ -885,8 +950,14 @@ else:
     _priority_show["出来高"] = _priority_show["vol_ratio"].map(lambda x: fmt_num(x, 2, "x"))
     _priority_show["検証条件"] = _priority_show["optimizer_label"].replace("", "—")
     _priority_show["今日昇格"] = _priority_show["is_promotion"].map(lambda x: "⚡" if bool(x) else "—")
+    _priority_show["信用需給"] = _priority_show["credit_score"].map(
+        lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+    )
+    _priority_show["一致度"] = _priority_show["confluence_score"].map(
+        lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+    )
     _priority_cols = [
-        "alert_tier", "ticker", "name", "優先度", "検証条件", "今日昇格",
+        "alert_tier", "ticker", "name", "優先度", "信用需給", "一致度", "検証条件", "今日昇格",
         "phase", "regime", "cover_score", "ignition_score",
         "long_demand_score", "short_pressure", "出来高", "confidence",
         "alert_reason",
@@ -1012,6 +1083,13 @@ else:
             _entry["reason"] = "翌営業日の取引データ待ち"
             _entry["risk"] = ""
 
+        _credit = _credit_snapshot_for(_ticker)
+        _confluence = build_signal_confluence(
+            cover_score=_candidate.get("cover_score"),
+            credit_score=_credit.get("score"),
+            entry_score=_entry.get("score"),
+        )
+
         _entry_rows.append({
             "ticker": _ticker,
             "name": _candidate.get("name", ""),
@@ -1019,6 +1097,12 @@ else:
             "tier": _candidate.get("alert_tier", ""),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
+            "cover_score": _candidate.get("cover_score"),
+            "credit_score": _credit.get("score"),
+            "credit_status": _credit.get("status", "NO DATA"),
+            "credit_ratio": _credit.get("credit_ratio"),
+            "confluence_score": _confluence.get("score"),
+            "confluence_status": _confluence.get("status"),
             "gap_pct": _entry.get("gap_pct"),
             "current_price": _entry.get("current_price"),
             "vwap": _entry.get("vwap"),
@@ -1042,8 +1126,12 @@ else:
                 )
                 _gap_text = "—" if pd.isna(_r["gap_pct"]) else f"{float(_r['gap_pct']):+.1f}%"
                 _rv_text = "—" if pd.isna(_r["relvol15"]) else f"{float(_r['relvol15']):.1f}x"
+                _cover_text = "—" if pd.isna(_r.get("cover_score")) else f"{float(_r['cover_score']):.0f}"
+                _credit_text = "—" if pd.isna(_r.get("credit_score")) else f"{float(_r['credit_score']):.0f}"
+                _agree_text = "—" if pd.isna(_r.get("confluence_score")) else f"{float(_r['confluence_score']):.0f}"
                 st.caption(
-                    f"Gap {_gap_text}｜15分出来高 {_rv_text}\n"
+                    f"Cover {_cover_text}｜Credit {_credit_text}｜Entry {float(_r['entry_score']):.0f}｜一致度 {_agree_text}\n"
+                    f"{_r.get('confluence_status', '⚪ 材料不足')}｜Gap {_gap_text}｜15分出来高 {_rv_text}\n"
                     f"{_r['reason'] or '条件待ち'}"
                     + (f"｜⚠ {_r['risk']}" if _r["risk"] else "")
                 )
@@ -1081,24 +1169,33 @@ else:
         _entry_show["Score"] = _entry_show["entry_score"].map(
             lambda x: f"{float(x):.0f}"
         )
+        _entry_show["Cover"] = _entry_show["cover_score"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+        )
+        _entry_show["Credit"] = _entry_show["credit_score"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+        )
+        _entry_show["一致度"] = _entry_show["confluence_score"].map(
+            lambda x: "—" if pd.isna(x) else f"{float(x):.0f}"
+        )
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "tier", "Score", "監視日",
+                "status", "ticker", "name", "tier", "Cover", "Credit", "Score", "一致度", "confluence_status", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
+                "tier": "前日Tier", "Score": "Entry", "confluence_status": "3点一致", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
         )
 
         st.caption(
-            "目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
-            " 🟡 WAIT＝条件未成立。🔴 CANCEL＝VWAP/15分安値など初動崩れ。"
-            " 大幅GUは追いかけず注意側に評価します。"
+            "一致度は Short Cover 40%・信用需給 30%・Entry Hunter 30% を基本ウェイトにし、"
+            "欠損項目は除外して再正規化します。🔥 3点一致は3項目すべて65以上かつ総合75以上。"
+            " 売買推奨ではなく、複数の需給・初動条件が同時に揃ったかを確認する指標です。"
         )
 
 # 正式な実績追跡は ACTIVE 条件だけ。未有効の最適条件は画面プレビューに留める。
