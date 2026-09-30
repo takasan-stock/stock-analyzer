@@ -408,6 +408,59 @@ def _weighted_score(parts: list[tuple[float | None, float]]) -> tuple[float | No
     return round(score, 1), round(coverage * 100.0, 1)
 
 
+def build_signal_confluence(
+    *,
+    cover_score=None,
+    credit_score=None,
+    entry_score=None,
+) -> dict:
+    """Combine Short Cover, credit supply and Entry Hunter into one agreement score.
+
+    This is an attention/confirmation score, not a return forecast or buy signal.
+    Missing components are excluded and the available weights are re-normalized.
+    """
+    raw = [
+        ("Short Cover", _safe_float(cover_score), 40.0),
+        ("信用需給", _safe_float(credit_score), 30.0),
+        ("Entry Hunter", _safe_float(entry_score), 30.0),
+    ]
+    available = [(name, max(0.0, min(100.0, value)), weight) for name, value, weight in raw if value is not None]
+    if not available:
+        return {
+            "score": None,
+            "coverage": 0.0,
+            "available_count": 0,
+            "status": "⚪ 材料不足",
+            "reason": "一致度を計算できるデータがありません",
+        }
+
+    total_weight = sum(weight for _, _, weight in available)
+    score = sum(value * weight for _, value, weight in available) / total_weight
+    coverage = total_weight / 100.0 * 100.0
+    count = len(available)
+    values = [value for _, value, _ in available]
+
+    if count == 3 and min(values) >= 65.0 and score >= 75.0:
+        status = "🔥 3点一致"
+    elif count >= 2 and score >= 70.0:
+        status = "🟢 高一致"
+    elif count >= 2 and score >= 55.0:
+        status = "🟡 一部一致"
+    elif count == 1:
+        status = "⚪ 単独シグナル"
+    else:
+        status = "⚪ 低一致"
+
+    detail = " / ".join(f"{name} {value:.0f}" for name, value, _ in available)
+    return {
+        "score": round(score, 1),
+        "coverage": round(coverage, 1),
+        "available_count": count,
+        "status": status,
+        "reason": detail,
+    }
+
+
 def analyze_credit_supply(
     history: pd.DataFrame,
     ticker: str,
