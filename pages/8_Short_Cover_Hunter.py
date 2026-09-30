@@ -939,10 +939,18 @@ else:
                 value=f"{_r['alert_score']:.0f}",
                 delta=f"{_r['ticker']} {_r['name']}",
             )
+            _credit_text = (
+                "—" if pd.isna(_r.get("credit_score"))
+                else f"{float(_r.get('credit_score')):.0f}"
+            )
+            _agree_text = (
+                "—" if pd.isna(_r.get("confluence_score"))
+                else f"{float(_r.get('confluence_score')):.0f}"
+            )
             st.markdown(
                 f"{_r['alert_reason']}  \n"
-                f"Cover {_r['cover_score']:.0f}｜Ignition {_r['ignition_score']:.0f}｜"
-                f"Long {_r['long_demand_score']:.0f}"
+                f"Cover {_r['cover_score']:.0f}｜Credit {_credit_text}｜一致度 {_agree_text}  \n"
+                f"Ignition {_r['ignition_score']:.0f}｜Long {_r['long_demand_score']:.0f}"
             )
 
     _priority_show = _priority.copy()
@@ -973,6 +981,10 @@ else:
         _priority_show[_priority_cols].rename(columns=_priority_labels),
         hide_index=True,
         use_container_width=True,
+    )
+    st.caption(
+        "一致度はこの段階では Short Cover＋信用需給の2点一致。"
+        " Entry Hunter監視に入ると3点一致へ更新します。"
     )
 
 st.markdown("## 🎯 Short Cover Entry Hunter")
