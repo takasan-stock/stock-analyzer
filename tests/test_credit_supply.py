@@ -3,7 +3,7 @@ import unittest
 
 import pandas as pd
 
-from credit_supply import analyze_credit_supply, parse_jpx_margin_workbook
+from credit_supply import analyze_credit_supply, build_signal_confluence, parse_jpx_margin_workbook
 
 
 class CreditSupplyTests(unittest.TestCase):
@@ -79,6 +79,28 @@ class CreditSupplyTests(unittest.TestCase):
         self.assertEqual(result["status"], "🟠 悪化注意")
         self.assertGreater(result["long_delta"], 0)
         self.assertTrue(any("株価下落中" in x for x in result["risks"]))
+
+
+    def test_three_way_confluence(self):
+        result = build_signal_confluence(
+            cover_score=82,
+            credit_score=78,
+            entry_score=76,
+        )
+        self.assertEqual(result["status"], "🔥 3点一致")
+        self.assertEqual(result["available_count"], 3)
+        self.assertGreaterEqual(result["score"], 75)
+
+    def test_confluence_renormalizes_missing_credit(self):
+        result = build_signal_confluence(
+            cover_score=80,
+            credit_score=None,
+            entry_score=70,
+        )
+        self.assertEqual(result["available_count"], 2)
+        self.assertEqual(result["coverage"], 70.0)
+        self.assertIsNotNone(result["score"])
+
 
 
 if __name__ == "__main__":
