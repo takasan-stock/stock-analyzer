@@ -593,6 +593,11 @@ def classify_fcf_quality(df: pd.DataFrame) -> pd.DataFrame:
             and (dilution is None or dilution <= 0.02)
         )
         if structural:
+            # Summary-only CFO+CFI is useful as a conservative FCF proxy,
+            # but it is not identical to CFO-CAPEX. Never grade proxy-based
+            # cash flow as top-quality A.
+            if str(row.get("fcf_basis") or "") == "CFO_PLUS_CFI_PROXY":
+                return "B"
             return "A"
 
         if (
