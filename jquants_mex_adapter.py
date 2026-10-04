@@ -676,6 +676,108 @@ def build_point_in_time_financial_events(
     ).reset_index(drop=True)
 
 
+
+def add_financial_event_growth_features(
+    events: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add PIT-safe 1Y/3Y growth features using only earlier event snapshots.
+
+    Comparison rows are selected from snapshots that were already available
+    around the target anniversary. No future disclosure is pulled backward.
+    """
+    if events is None or events.empty:
+        return pd.DataFrame() if events is None else events.copy()
+
+    out_rows = []
+    for _, group in events.groupby("ticker", sort=False):
+        g = group.copy().sort_values("available_datetime").reset_index(drop=True)
+
+        # Calculate margins/conversion directly from each as-known snapshot.
+        revenue = pd.to_numeric(g.get("revenue_ttm"), errors="coerce")
+        op = pd.to_numeric(g.get("operating_income_ttm"), errors="coerce")
+        cfo = pd.to_numeric(g.get("cfo_ttm"), errors="coerce")
+        fcf = pd.to_numeric(g.get("fcf_ttm"), errors="coerce")
+        shares = pd.to_numeric(g.get("shares_outstanding_pti"), errors="coerce")
+
+        g["fcf_margin"] = (fcf / revenue).where(revenue > 0)
+        g["operating_margin"] = (op / revenue).where(revenue > 0)
+        g["cash_conversion"] = (fcf / op).where(op > 0)
+
+        # Use latest snapshot available on or before the anniversary target.
+        times = pd.to_datetime(g["available_datetime"], errors="coerce")
+
+        def prior_index(i: int, years: int) -> int | None:
+            now = times.iloc[i]
+            if pd.isna(now):
+                return None
+            target = now - pd.DateOffset(years=years)
+            candidates = times.iloc[:i]
+            valid = candidates[candidates <= target]
+            if valid.empty:
+                return None
+            j = int(valid.index[-1])
+            # Avoid matching a very stale snapshot when event history is sparse.
+            gap_days = (target - times.iloc[j]).days
+            if gap_days > 220:
+                return None
+            return j
+
+        fcf_yoy = []
+        cfo_yoy = []
+        share_yoy = []
+        revenue_yoy = []
+        op_yoy = []
+        fcf_cagr3 = []
+
+        for i in range(len(g)):
+            j1 = prior_index(i, 1)
+            j3 = prior_index(i, 3)
+
+            def growth(col: str, j: int | None) -> float | None:
+                if j is None:
+                    return None
+                cur = _num(g.iloc[i].get(col))
+                prev = _num(g.iloc[j].get(col))
+                if cur is None or prev is None or prev <= 0:
+                    return None
+                return cur / prev - 1.0
+
+            fcf_yoy.append(growth("fcf_per_share_ttm", j1))
+            cfo_yoy.append(growth("cfo_ttm", j1))
+            share_yoy.append(growth("shares_outstanding_pti", j1))
+            revenue_yoy.append(growth("revenue_ttm", j1))
+            op_yoy.append(growth("operating_income_ttm", j1))
+
+            if j3 is None:
+                fcf_cagr3.append(None)
+            else:
+                cur = _num(g.iloc[i].get("fcf_per_share_ttm"))
+                prev = _num(g.iloc[j3].get("fcf_per_share_ttm"))
+                if cur is None or prev is None or cur <= 0 or prev <= 0:
+                    fcf_cagr3.append(None)
+                else:
+                    days = (
+                        times.iloc[i] - times.iloc[j3]
+                    ).days
+                    years = days / 365.25 if days > 0 else 0
+                    if years < 2.4:
+                        fcf_cagr3.append(None)
+                    else:
+                        fcf_cagr3.append(
+                            (cur / prev) ** (1.0 / years) - 1.0
+                        )
+
+        g["fcf_per_share_yoy"] = fcf_yoy
+        g["cfo_yoy"] = cfo_yoy
+        g["share_count_1y_change"] = share_yoy
+        g["revenue_yoy"] = revenue_yoy
+        g["operating_income_yoy"] = op_yoy
+        g["fcf_per_share_3y_cagr"] = fcf_cagr3
+        out_rows.append(g)
+
+    return pd.concat(out_rows, ignore_index=True)
+
+
 def normalize_jquants_daily_market(
     bars: pd.DataFrame,
     valuation: pd.DataFrame,
@@ -722,10 +824,12 @@ def normalize_jquants_daily_market(
             "Code",
             pd.Series("", index=val.index),
         ).map(_to_code4)
-        # J-Quants V2 MktCap is expressed in million yen.
-        val["market_cap_pti"] = (
-            pd.to_numeric(val.get("MktCap"), errors="coerce")
-            * 1_000_000.0
+        # J-Quants V2 MktCap is expressed in million yen. Keep the native
+        # unit because /fins/summary monetary values are also consumed in
+        # their API-native monetary unit for ratio calculations.
+        val["market_cap_pti"] = pd.to_numeric(
+            val.get("MktCap"),
+            errors="coerce",
         )
         val["jquants_per"] = pd.to_numeric(
             val.get("PER"),
@@ -867,6 +971,7 @@ def fetch_ticker_bundle(
     details = normalize_jquants_details(details_raw)
     disclosures = merge_summary_and_details(summary, details)
     financial_events = build_point_in_time_financial_events(disclosures)
+    financial_events = add_financial_event_growth_features(financial_events)
     market = normalize_jquants_daily_market(bars, valuation)
     market = add_simple_rs_proxy(market, topix)
 
