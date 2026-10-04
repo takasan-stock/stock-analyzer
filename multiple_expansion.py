@@ -109,15 +109,23 @@ def build_point_in_time_financials(
     market = trading_dates.copy()
     fin = financial_df.copy()
     market["trade_date"] = pd.to_datetime(market["trade_date"], errors="coerce")
-    fin["available_date"] = pd.to_datetime(fin["available_date"], errors="coerce")
+    effective_col = (
+        "pit_available_date"
+        if "pit_available_date" in fin.columns
+        else "available_date"
+    )
+    fin["_pit_effective_date"] = pd.to_datetime(
+        fin[effective_col],
+        errors="coerce",
+    )
     market = market.dropna(subset=["ticker", "trade_date"])
-    fin = fin.dropna(subset=["ticker", "available_date"])
+    fin = fin.dropna(subset=["ticker", "_pit_effective_date"])
 
     results = []
     financial_payload_cols = [c for c in fin.columns if c != "ticker"]
 
     for ticker, mg in market.groupby("ticker", sort=False):
-        fg = fin[fin["ticker"] == ticker].sort_values("available_date").copy()
+        fg = fin[fin["ticker"] == ticker].sort_values("_pit_effective_date").copy()
         mg = mg.sort_values("trade_date").copy()
 
         if fg.empty:
@@ -127,13 +135,13 @@ def build_point_in_time_financials(
             results.append(mg)
             continue
 
-        fg = fg.drop_duplicates(subset=["available_date"], keep="last")
+        fg = fg.drop_duplicates(subset=["_pit_effective_date"], keep="last")
         fg = fg.drop(columns=["ticker"])
         aligned = pd.merge_asof(
             mg,
             fg,
             left_on="trade_date",
-            right_on="available_date",
+            right_on="_pit_effective_date",
             direction="backward",
             allow_exact_matches=True,
         )
