@@ -514,6 +514,9 @@ def _derive_event_snapshot(
             "cfo_q": _quarter_from_cumulative(
                 state, fy_end, order, "cfo_cumulative"
             ),
+            "cfi_q": _quarter_from_cumulative(
+                state, fy_end, order, "cfi_cumulative"
+            ),
             "capex_q": _quarter_from_cumulative(
                 state, fy_end, order, "capex_cumulative"
             ),
@@ -547,19 +550,96 @@ def _derive_event_snapshot(
     revenue_ttm = rolling4("revenue_q")
     op_ttm = rolling4("operating_income_q")
     net_income_ttm = rolling4("net_income_q")
-    cfo_ttm = rolling4("cfo_q")
-    capex_ttm = rolling4("capex_q")
-    fcf_ttm = rolling4("fcf_q")
-    depreciation_ttm = rolling4("depreciation_q")
+
+    latest_state = state[
+        (latest["fiscal_year_end"], int(latest["period_order"]))
+    ]
+
+    def cashflow_ttm(field: str) -> float | None:
+        """Build TTM for cash-flow items commonly disclosed at 2Q and FY.
+
+        - Latest FY: use the full-year cumulative figure.
+        - Latest 2Q: current H1 + previous FY - previous H1.
+        - Latest 1Q/3Q: keep the latest previously known 2Q/FY TTM snapshot.
+        """
+        cf_rows = []
+        for (fy_end, order), r in state.items():
+            if order not in {2, 4}:
+                continue
+            value = _num(r.get(field))
+            period_end = pd.to_datetime(
+                r.get("fiscal_period_end"),
+                errors="coerce",
+            )
+            if value is None or pd.isna(period_end):
+                continue
+            cf_rows.append((period_end, fy_end, order, value))
+
+        if not cf_rows:
+            return None
+        cf_rows.sort(key=lambda x: (x[0], x[2]))
+
+        latest_period_end = pd.to_datetime(
+            latest["fiscal_period_end"],
+            errors="coerce",
+        )
+        known = [x for x in cf_rows if x[0] <= latest_period_end]
+        if not known:
+            return None
+
+        _, fy_end, order, value = known[-1]
+        if order == 4:
+            return value
+
+        # H1 latest: combine with the second half of the previous FY.
+        previous_fys = [
+            x for x in known
+            if x[2] == 4 and x[1] < fy_end
+        ]
+        if not previous_fys:
+            return None
+        _, prev_fy_end, _, prev_fy_value = previous_fys[-1]
+        prev_h1 = next(
+            (
+                x[3]
+                for x in reversed(known)
+                if x[1] == prev_fy_end and x[2] == 2
+            ),
+            None,
+        )
+        if prev_h1 is None:
+            return None
+        return value + (prev_fy_value - prev_h1)
+
+    cfo_ttm = cashflow_ttm("cfo_cumulative")
+    cfi_ttm = cashflow_ttm("cfi_cumulative")
+    capex_ttm = cashflow_ttm("capex_cumulative")
+    depreciation_ttm = cashflow_ttm("depreciation_cumulative")
+
+    if cfo_ttm is not None and capex_ttm is not None:
+        fcf_ttm = cfo_ttm - capex_ttm
+        fcf_basis = "CFO_MINUS_CAPEX"
+        fcf_exact = True
+    elif (
+        cfo_ttm is not None
+        and cfi_ttm is not None
+        and cfi_ttm < 0
+    ):
+        # Summary-only fallback for non-Premium plans. This is deliberately
+        # labeled a proxy because investing CF includes more than capex.
+        fcf_ttm = cfo_ttm + cfi_ttm
+        fcf_basis = "CFO_PLUS_CFI_PROXY"
+        fcf_exact = False
+    else:
+        fcf_ttm = None
+        fcf_basis = "UNAVAILABLE"
+        fcf_exact = False
+
     ebitda_ttm = (
         op_ttm + depreciation_ttm
         if op_ttm is not None and depreciation_ttm is not None
         else None
     )
-
-    latest_state = state[
-        (latest["fiscal_year_end"], int(latest["period_order"]))
-    ]
 
     shares_out = _num(latest_state.get("shares_outstanding_fy"))
     treasury = _num(latest_state.get("treasury_shares_fy"))
@@ -588,8 +668,11 @@ def _derive_event_snapshot(
         "operating_income_ttm": op_ttm,
         "net_income_ttm": net_income_ttm,
         "cfo_ttm": cfo_ttm,
+        "cfi_ttm": cfi_ttm,
         "capex_ttm": capex_ttm,
         "fcf_ttm": fcf_ttm,
+        "fcf_basis": fcf_basis,
+        "fcf_exact": fcf_exact,
         "depreciation_ttm": depreciation_ttm,
         "ebitda_ttm": ebitda_ttm,
         "fcf_per_share_ttm": fcf_per_share_ttm,
@@ -983,6 +1066,12 @@ def fetch_ticker_bundle(
         "detail_rows": len(details_raw),
         "financial_event_rows": len(financial_events),
         "market_rows": len(market),
+        "fcf_proxy_events": (
+            int((financial_events.get("fcf_basis") == "CFO_PLUS_CFI_PROXY").sum())
+            if not financial_events.empty
+            and "fcf_basis" in financial_events.columns
+            else 0
+        ),
         "fcf_ttm_complete_events": (
             int(financial_events["fcf_ttm_complete"].fillna(False).sum())
             if not financial_events.empty
