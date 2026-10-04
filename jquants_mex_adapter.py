@@ -735,11 +735,19 @@ def build_point_in_time_financial_events(
             if not snapshot:
                 continue
 
+            disclosed_date = pd.to_datetime(
+                event.get("available_date"),
+                errors="coerce",
+            )
             out = {
                 "ticker": ticker,
-                "available_date": pd.to_datetime(
-                    event.get("available_date"),
-                    errors="coerce",
+                "available_date": disclosed_date,
+                # Daily backtests use a conservative next-calendar-day gate.
+                # merge_asof will naturally pick the next actual trading day.
+                "pit_available_date": (
+                    disclosed_date + pd.Timedelta(days=1)
+                    if pd.notna(disclosed_date)
+                    else pd.NaT
                 ),
                 "available_datetime": pd.to_datetime(
                     event.get("available_datetime"),
