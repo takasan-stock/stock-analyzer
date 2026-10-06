@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from daily_command_center import (
     build_command_center_handoff,
     build_command_center_session,
+    build_score_breakdown_rows,
     tradingview_url,
 )
 from email.utils import parsedate_to_datetime
@@ -2078,6 +2079,30 @@ _cc_session = build_command_center_session(
 )
 
 
+def _render_score_breakdown(row):
+    _items = build_score_breakdown_rows(row)
+    if not _items:
+        return
+
+    st.caption("Score Breakdown")
+    for _item in _items:
+        _label = _item["label"]
+        _value = float(_item["value"])
+        _pct = float(_item["percent"])
+        _direction = _item["direction"]
+
+        _left, _right = st.columns([1.2, 2.8])
+        with _left:
+            st.caption(f"{_label} {_value:+.1f}")
+        with _right:
+            if _direction == "positive":
+                st.progress(_pct / 100.0, text=f"+{_pct:.0f}%")
+            elif _direction == "negative":
+                st.progress(_pct / 100.0, text=f"-{_pct:.0f}%")
+            else:
+                st.progress(0.0, text="0")
+
+
 def _render_command_center_cards(frame, *, key_prefix):
     if frame is None or frame.empty:
         st.caption("表示できる候補はまだありません。次回のME / Entry Hunter更新後に反映されます。")
@@ -2100,6 +2125,7 @@ def _render_command_center_cards(frame, *, key_prefix):
             _breakdown = str(_row.get("adaptive_breakdown", "") or "")
             if _breakdown:
                 st.caption(f"🧮 {_breakdown}")
+                _render_score_breakdown(_row)
 
             _handoff = build_command_center_handoff(_row)
             st.link_button(
