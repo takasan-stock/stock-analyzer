@@ -21,17 +21,20 @@ from short_cover import (
     normalize_alert_history,
     select_entry_hunter_candidates,
 )
+from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
 
 DATA_DIR = ROOT / "data"
 HISTORY_FILE = DATA_DIR / "short_cover_alert_history.csv"
 NOTIFICATION_FILE = DATA_DIR / "short_cover_entry_notifications.csv"
 STATUS_FILE = DATA_DIR / "short_cover_entry_status.json"
+ME_SCREENER_FILE = DATA_DIR / "multiple_expansion" / "me_screener_latest.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
     "entry_status", "entry_score", "gap_pct", "relvol15",
     "current_price", "vwap", "reason", "risk",
     "first_detected_at", "email_sent", "email_sent_at", "email_error",
+    "source", "source_detail",
 ]
 
 
@@ -47,6 +50,15 @@ def load_history() -> pd.DataFrame:
     return normalize_alert_history(
         pd.read_csv(HISTORY_FILE, encoding="utf-8-sig")
     )
+
+
+def load_me_screener() -> pd.DataFrame:
+    if not ME_SCREENER_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
+    except Exception:
+        return pd.DataFrame()
 
 
 def load_notifications() -> pd.DataFrame:
@@ -171,6 +183,8 @@ VWAP: {vwap}
 15分相対出来高: {relvol}
 前日アラート日: {pd.Timestamp(row['alert_date']).strftime('%Y-%m-%d')}
 条件Version: {row.get('condition_version', '')}
+監視ソース: {row.get('source', '')}
+ソース理由: {row.get('source_detail', '')}
 
 成立条件:
 {row.get('reason', '')}
@@ -267,11 +281,22 @@ def main() -> int:
     notifications = load_notifications()
     cfg = email_config()
 
-    candidates = select_entry_hunter_candidates(
+    short_candidates = select_entry_hunter_candidates(
         history,
         as_of=now.tz_localize(None),
         max_calendar_days=4,
         limit=5,
+    )
+    me_candidates = select_me_entry_candidates(
+        load_me_screener(),
+        as_of=now.tz_localize(None),
+        max_calendar_days=4,
+        limit=5,
+    )
+    candidates = combine_entry_candidates(
+        short_candidates,
+        me_candidates,
+        limit=8,
     )
 
     status_rows = []
@@ -290,6 +315,8 @@ def main() -> int:
                 "status": "⚪ NO DATA",
                 "score": 0,
                 "error": f"{type(exc).__name__}: {exc}"[:300],
+                "source": candidate.get("source", ""),
+                "source_detail": candidate.get("source_detail", ""),
             })
             continue
 
@@ -317,6 +344,8 @@ def main() -> int:
             "relvol15": entry.get("relvol15"),
             "reason": entry.get("reason", ""),
             "risk": entry.get("risk", ""),
+            "source": candidate.get("source", ""),
+            "source_detail": candidate.get("source_detail", ""),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
@@ -347,6 +376,8 @@ def main() -> int:
             "email_sent": False,
             "email_sent_at": pd.NaT,
             "email_error": "",
+            "source": candidate.get("source", ""),
+            "source_detail": candidate.get("source_detail", ""),
         }
 
         if not mask.any():
@@ -451,6 +482,8 @@ def main() -> int:
             "email_sent": False,
             "email_sent_at": pd.NaT,
             "email_error": "",
+            "source": ready_row.get("source", ""),
+            "source_detail": ready_row.get("source_detail", ""),
         }
 
         notifications = pd.concat(
@@ -475,6 +508,9 @@ def main() -> int:
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
         "candidate_count": int(len(candidates)),
+        "short_cover_candidates": int(len(short_candidates)),
+        "me_candidates": int(len(me_candidates)),
+        "confluence_candidates": int(sum(1 for x in candidates.get("source", pd.Series(dtype=str)).astype(str) if x == "SHORT+ME")),
         "ready_count": int(sum(
             1 for row in status_rows if row.get("status") == "🟢 ENTRY READY"
         )),
