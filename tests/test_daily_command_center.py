@@ -26,6 +26,12 @@ def test_command_center_prefers_live_entry_status():
                 "status": "🟢 ENTRY READY",
                 "opportunity_coverage": 100,
                 "opportunity_reason": "SHORT+ME / 寄り後READY",
+                "source_bonus": 3.2,
+                "setup_bonus": 1.4,
+                "trait_bonus": 0.6,
+                "fast_bonus": 0.8,
+                "adaptive_total": 6.0,
+                "adaptive_breakdown": "Source +3.2｜Setup +1.4｜Trait +0.6｜Fast0D +0.8",
             },
             {
                 "ticker": "6146",
@@ -291,3 +297,41 @@ def test_session_after_close_separates_today_and_next_session():
     assert session["secondary"].iloc[0]["ticker"] == "6857"
     assert session["secondary"].iloc[0]["mode"] == "NEXT SESSION"
     assert session["me_status"] == "UPDATED"
+
+
+def test_command_center_keeps_adaptive_breakdown():
+    status = {
+        "run_at": "2026-10-06T09:30:00+09:00",
+        "rows": [{
+            "ticker": "6857",
+            "name": "Advantest",
+            "opportunity_score": 91,
+            "opportunity_rating": "A+",
+            "opportunity_action": "ENTRY PRIORITY",
+            "source": "SHORT+ME",
+            "signal_key": "CONFLUENCE|R-READY|EARLY",
+            "status": "🟢 ENTRY READY",
+            "opportunity_coverage": 100,
+            "opportunity_reason": "SHORT+ME / 寄り後READY / Fast0D+",
+            "source_bonus": 3.2,
+            "setup_bonus": 1.4,
+            "trait_bonus": 0.6,
+            "fast_bonus": 0.8,
+            "adaptive_total": 6.0,
+            "adaptive_breakdown": "Source +3.2｜Setup +1.4｜Trait +0.6｜Fast0D +0.8",
+        }],
+    }
+    out = build_daily_command_center(
+        status,
+        pd.DataFrame(),
+        as_of="2026-10-06 09:35:00",
+        limit=3,
+    )
+    row = out.iloc[0]
+    assert float(row["fast_bonus"]) == 0.8
+    assert float(row["adaptive_total"]) == 6.0
+    assert "Fast0D +0.8" in row["adaptive_breakdown"]
+
+    handoff = build_command_center_handoff(row)
+    assert float(handoff["fast_bonus"]) == 0.8
+    assert "Source +3.2" in handoff["adaptive_breakdown"]
