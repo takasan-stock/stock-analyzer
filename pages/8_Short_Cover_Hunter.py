@@ -153,6 +153,7 @@ ENTRY_SOURCE_SUMMARY_FILE = "data/entry_hunter_source_summary.csv"
 ENTRY_SOURCE_PERFORMANCE_FILE = "data/entry_hunter_source_performance.csv"
 ENTRY_SIGNAL_SUMMARY_FILE = "data/entry_hunter_signal_summary.csv"
 ENTRY_TRAIT_SUMMARY_FILE = "data/entry_hunter_trait_summary.csv"
+AFTER_CLOSE_FEEDBACK_FILE = "data/after_close_feedback_summary.csv"
 ME_UNIVERSE_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
 
 
@@ -298,6 +299,15 @@ def load_me_universe_metadata() -> pd.DataFrame:
     if os.path.exists(ME_UNIVERSE_FILE):
         try:
             return pd.read_csv(ME_UNIVERSE_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_after_close_feedback() -> pd.DataFrame:
+    if os.path.exists(AFTER_CLOSE_FEEDBACK_FILE):
+        try:
+            return pd.read_csv(AFTER_CLOSE_FEEDBACK_FILE)
         except Exception:
             pass
     return pd.DataFrame()
@@ -1099,6 +1109,7 @@ _entry_candidates = combine_entry_candidates(
     signal_summary=load_entry_signal_summary(),
     trait_summary=load_entry_trait_summary(),
     universe_meta=load_me_universe_metadata(),
+    fast_feedback_summary=load_after_close_feedback(),
 )
 
 if _command_focus_ticker and not _entry_candidates.empty:
@@ -1162,6 +1173,8 @@ else:
             "trait_vol": _candidate.get("trait_vol", ""),
             "trait_bonus": _candidate.get("trait_bonus", 0.0),
             "trait_confidence": _candidate.get("trait_confidence", "BASE"),
+            "fast_bonus": _candidate.get("fast_bonus", 0.0),
+            "fast_confidence": _candidate.get("fast_confidence", "BASE"),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1242,12 +1255,12 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "opportunity_rating", "opportunity_score", "opportunity_action", "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "trait_market", "trait_size", "trait_vol", "opportunity_coverage", "learning_confidence", "監視日",
+                "opportunity_rating", "opportunity_score", "opportunity_action", "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "fast_bonus", "trait_market", "trait_size", "trait_vol", "opportunity_coverage", "learning_confidence", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "opportunity_rating": "Opp", "opportunity_score": "Opportunity", "opportunity_action": "Action", "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "opportunity_coverage": "Coverage", "learning_confidence": "Learn Conf", "reason": "成立条件", "risk": "注意",
+                "opportunity_rating": "Opp", "opportunity_score": "Opportunity", "opportunity_action": "Action", "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "fast_bonus": "Fast0D", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "opportunity_coverage": "Coverage", "learning_confidence": "Learn Conf", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
