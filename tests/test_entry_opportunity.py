@@ -12,6 +12,8 @@ def _candidate(**overrides):
         "state_confidence": "WARMING",
         "trait_bonus": 1.0,
         "trait_confidence": "LOW SAMPLE",
+        "fast_bonus": 0.8,
+        "fast_confidence": "WARMING",
     }
     base.update(overrides)
     return base
@@ -54,3 +56,18 @@ def test_missing_intraday_reduces_coverage():
     assert out["opportunity_coverage"] == 55
     assert out["opportunity_action"] == "WAIT DATA"
     assert "Intraday未確定" in out["opportunity_reason"]
+
+
+def test_opportunity_exposes_adaptive_breakdown():
+    out = build_entry_opportunity(
+        _candidate(),
+        {"status": "🟢 ENTRY READY", "score": 85},
+    )
+    assert float(out["source_bonus"]) == 3.0
+    assert float(out["setup_bonus"]) == 2.0
+    assert float(out["trait_bonus"]) == 1.0
+    assert float(out["fast_bonus"]) == 0.8
+    assert round(float(out["adaptive_total"]), 1) == 6.8
+    assert "Source +3.0" in out["adaptive_breakdown"]
+    assert "Fast0D +0.8" in out["adaptive_breakdown"]
+    assert "Fast0D+" in out["opportunity_reason"]
