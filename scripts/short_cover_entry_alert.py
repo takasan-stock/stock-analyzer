@@ -23,6 +23,11 @@ from short_cover import (
 )
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
 from entry_opportunity import build_entry_opportunity
+from daily_command_center import (
+    build_daily_command_center,
+    normalize_command_center_history,
+    update_command_center_history,
+)
 from entry_source_performance import (
     build_ready_performance,
     normalize_candidate_history,
@@ -44,6 +49,8 @@ ENTRY_SOURCE_SUMMARY_FILE = DATA_DIR / "entry_hunter_source_summary.csv"
 ENTRY_SIGNAL_SUMMARY_FILE = DATA_DIR / "entry_hunter_signal_summary.csv"
 ENTRY_TRAIT_SUMMARY_FILE = DATA_DIR / "entry_hunter_trait_summary.csv"
 ME_UNIVERSE_FILE = DATA_DIR / "multiple_expansion" / "me_universe_snapshot.csv"
+COMMAND_CENTER_LATEST_FILE = DATA_DIR / "daily_command_center_latest.csv"
+COMMAND_CENTER_HISTORY_FILE = DATA_DIR / "daily_command_center_history.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -85,6 +92,26 @@ def load_me_screener() -> pd.DataFrame:
         return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
     except Exception:
         return pd.DataFrame()
+
+
+def load_command_center_history() -> pd.DataFrame:
+    if not COMMAND_CENTER_HISTORY_FILE.exists():
+        return normalize_command_center_history(None)
+    try:
+        return normalize_command_center_history(
+            pd.read_csv(COMMAND_CENTER_HISTORY_FILE, dtype={"ticker": str})
+        )
+    except Exception:
+        return normalize_command_center_history(None)
+
+
+def save_command_center_snapshot(
+    current: pd.DataFrame,
+    history: pd.DataFrame,
+) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    current.to_csv(COMMAND_CENTER_LATEST_FILE, index=False, encoding="utf-8-sig")
+    history.to_csv(COMMAND_CENTER_HISTORY_FILE, index=False, encoding="utf-8-sig")
 
 
 def load_notifications() -> pd.DataFrame:
@@ -697,7 +724,7 @@ def main() -> int:
         encoding="utf-8-sig",
     )
 
-    save_status({
+    status_payload = {
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
         "candidate_count": int(len(candidates)),
@@ -734,7 +761,26 @@ def main() -> int:
             max([float(x.get("opportunity_score", 0) or 0) for x in status_rows], default=0.0)
         ),
         "rows": status_rows,
-    })
+    }
+    save_status(status_payload)
+
+    command_history = load_command_center_history()
+    command_center = build_daily_command_center(
+        status_payload,
+        load_me_screener(),
+        as_of=now.tz_localize(None),
+        limit=3,
+        history=command_history,
+    )
+    command_history = update_command_center_history(
+        command_history,
+        command_center,
+        snapshot_at=now.tz_localize(None),
+    )
+    save_command_center_snapshot(
+        command_center,
+        command_history,
+    )
 
     print(
         "Short Cover Entry Alert:",
