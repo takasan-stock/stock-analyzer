@@ -208,3 +208,50 @@ def test_signal_adjustment_is_capped_at_four_points():
     )
     out = build_signal_adjustments(summary)
     assert 0 < float(out["ME|RE-EXP"]["bonus"]) <= 4.0
+
+
+def test_trait_classifier_builds_market_size_vol_buckets():
+    from entry_hunter_sources import classify_candidate_traits
+
+    frame = pd.DataFrame(
+        [{
+            "ticker": "6857",
+            "market_name": "Prime Market",
+            "market_cap": 3_000_000_000_000,
+            "realized_vol20_pct": 50.0,
+        }]
+    )
+    out = classify_candidate_traits(frame)
+    assert out.iloc[0]["trait_market"] == "MARKET|PRIME"
+    assert out.iloc[0]["trait_size"] == "SIZE|MEGA"
+    assert out.iloc[0]["trait_vol"] == "VOL|HIGH"
+
+
+def test_trait_adjustment_waits_for_eight_samples():
+    from entry_hunter_sources import build_trait_adjustments
+
+    summary = pd.DataFrame(
+        [{
+            "trait_key": "MARKET|GROWTH",
+            "sample_5d": 7,
+            "win_5d": 80,
+            "avg_5d": 5.0,
+        }]
+    )
+    out = build_trait_adjustments(summary)
+    assert out["MARKET|GROWTH"]["bonus"] == 0.0
+
+
+def test_trait_adjustment_is_tiny_and_capped():
+    from entry_hunter_sources import build_trait_adjustments
+
+    summary = pd.DataFrame(
+        [{
+            "trait_key": "VOL|HIGH",
+            "sample_5d": 40,
+            "win_5d": 80,
+            "avg_5d": 8.0,
+        }]
+    )
+    out = build_trait_adjustments(summary)
+    assert 0 < float(out["VOL|HIGH"]["bonus"]) <= 1.0
