@@ -29,6 +29,7 @@ on:
       - "tests/test_entry_source_performance.py"
       - "tests/test_entry_opportunity.py"
       - "tests/test_daily_command_center.py"
+      - "dashboard_app.py"
       - ".github/workflows/mex_tests.yml"
   push:
     branches:
