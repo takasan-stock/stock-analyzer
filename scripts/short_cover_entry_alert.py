@@ -173,7 +173,7 @@ def send_entry_email(row: dict, cfg: dict) -> tuple[bool, str]:
         else f"{float(row['vwap']):,.1f}"
     )
 
-    body = f"""Short Cover Entry Hunter が ENTRY READY を検知しました。
+    body = f"""Entry Hunter が監視条件成立を検知しました。
 
 銘柄: {row['ticker']} {row['name']}
 Entry Score: {float(row['entry_score']):.0f}
@@ -192,7 +192,7 @@ VWAP: {vwap}
 注意:
 {row.get('risk', '') or '特記事項なし'}
 
-※これは売買推奨ではなく、TradingView/証券会社の現在値を確認するための監視通知です。
+※これは売買推奨ではなく、ME Hunter / Short Coverの候補を寄り付き後に確認するための監視通知です。
 """
 
     msg.set_content(body)
