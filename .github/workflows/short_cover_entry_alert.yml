@@ -59,6 +59,9 @@ jobs:
             COMMIT_MESSAGE="Update Short Cover email test status"
           else
             git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
+            git add data/entry_hunter_candidate_history.csv
+            git add data/entry_hunter_source_performance.csv
+            git add data/entry_hunter_source_summary.csv
             COMMIT_MESSAGE="Update Short Cover Entry alerts"
           fi
 
