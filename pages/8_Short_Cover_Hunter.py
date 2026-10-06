@@ -15,6 +15,7 @@ import streamlit as st
 import yfinance as yf
 
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_opportunity import build_entry_opportunity
 
 from short_cover import (
     ALERT_HISTORY_COLUMNS,
@@ -1105,6 +1106,8 @@ else:
             _entry["reason"] = "翌営業日の取引データ待ち"
             _entry["risk"] = ""
 
+        _opp = build_entry_opportunity(_candidate.to_dict(), _entry)
+
         _entry_rows.append({
             "ticker": _ticker,
             "name": _candidate.get("name", ""),
@@ -1133,6 +1136,12 @@ else:
             "reason": _entry.get("reason", ""),
             "risk": _entry.get("risk", ""),
             "market_date": _entry.get("market_date"),
+            "opportunity_score": _opp.get("opportunity_score"),
+            "opportunity_rating": _opp.get("opportunity_rating"),
+            "opportunity_action": _opp.get("opportunity_action"),
+            "opportunity_reason": _opp.get("opportunity_reason"),
+            "opportunity_coverage": _opp.get("opportunity_coverage"),
+            "learning_confidence": _opp.get("learning_confidence"),
         })
 
     _entry_df = pd.DataFrame(_entry_rows)
@@ -1142,15 +1151,16 @@ else:
         for _idx, (_, _r) in enumerate(_entry_cards.iterrows()):
             with _ecols[_idx]:
                 st.metric(
-                    label=str(_r["status"]),
-                    value=f"{float(_r['entry_score']):.0f}",
+                    label=f"{_r.get('opportunity_rating', '—')}｜{_r.get('opportunity_action', '—')}",
+                    value=f"{float(_r.get('opportunity_score', 0)):.0f}",
                     delta=f"{_r['ticker']} {_r['name']} [{_r.get('source', '')}]",
                 )
                 _gap_text = "—" if pd.isna(_r["gap_pct"]) else f"{float(_r['gap_pct']):+.1f}%"
                 _rv_text = "—" if pd.isna(_r["relvol15"]) else f"{float(_r['relvol15']):.1f}x"
                 st.caption(
+                    f"Entry {_r.get('entry_score', 0):.0f}｜Coverage {_r.get('opportunity_coverage', 0)}%｜"
                     f"Gap {_gap_text}｜15分出来高 {_rv_text}\n"
-                    f"{_r['reason'] or '条件待ち'}"
+                    f"{_r.get('opportunity_reason', '') or _r['reason'] or '条件待ち'}"
                     + (f"｜⚠ {_r['risk']}" if _r["risk"] else "")
                 )
                 if st.button(
@@ -1190,12 +1200,12 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "trait_market", "trait_size", "trait_vol", "監視日",
+                "opportunity_rating", "opportunity_score", "opportunity_action", "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "trait_market", "trait_size", "trait_vol", "opportunity_coverage", "learning_confidence", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "reason": "成立条件", "risk": "注意",
+                "opportunity_rating": "Opp", "opportunity_score": "Opportunity", "opportunity_action": "Action", "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "opportunity_coverage": "Coverage", "learning_confidence": "Learn Conf", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
