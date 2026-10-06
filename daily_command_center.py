@@ -61,6 +61,42 @@ def _text(value: Any) -> str:
 
 
 
+
+SCORE_BREAKDOWN_SPECS = [
+    ("Source", "source_bonus", 8.0),
+    ("Setup", "setup_bonus", 4.0),
+    ("Trait", "trait_bonus", 2.5),
+    ("Fast0D", "fast_bonus", 2.5),
+]
+
+
+def build_score_breakdown_rows(
+    row: pd.Series | dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build compact normalized bars for the four adaptive contributions."""
+    items: list[dict[str, Any]] = []
+    for label, key, cap in SCORE_BREAKDOWN_SPECS:
+        value = _num(row.get(key)) or 0.0
+        value = max(-cap, min(cap, value))
+        ratio = 0.0 if cap <= 0 else min(1.0, abs(value) / cap)
+        items.append(
+            {
+                "label": label,
+                "key": key,
+                "value": round(float(value), 3),
+                "cap": float(cap),
+                "ratio": round(float(ratio), 4),
+                "percent": round(float(ratio * 100.0), 1),
+                "direction": (
+                    "positive"
+                    if value > 0
+                    else ("negative" if value < 0 else "neutral")
+                ),
+            }
+        )
+    return items
+
+
 def tradingview_url(ticker: Any) -> str:
     code = _text(ticker).replace(".T", "")
     return f"https://www.tradingview.com/chart/?symbol=TSE%3A{code}"
