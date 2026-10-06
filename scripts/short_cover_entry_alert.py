@@ -51,6 +51,7 @@ ENTRY_TRAIT_SUMMARY_FILE = DATA_DIR / "entry_hunter_trait_summary.csv"
 ME_UNIVERSE_FILE = DATA_DIR / "multiple_expansion" / "me_universe_snapshot.csv"
 COMMAND_CENTER_LATEST_FILE = DATA_DIR / "daily_command_center_latest.csv"
 COMMAND_CENTER_HISTORY_FILE = DATA_DIR / "daily_command_center_history.csv"
+AFTER_CLOSE_FEEDBACK_FILE = DATA_DIR / "after_close_feedback_summary.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -112,6 +113,16 @@ def save_command_center_snapshot(
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     current.to_csv(COMMAND_CENTER_LATEST_FILE, index=False, encoding="utf-8-sig")
     history.to_csv(COMMAND_CENTER_HISTORY_FILE, index=False, encoding="utf-8-sig")
+
+
+
+def load_after_close_feedback() -> pd.DataFrame:
+    if not AFTER_CLOSE_FEEDBACK_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(AFTER_CLOSE_FEEDBACK_FILE)
+    except Exception:
+        return pd.DataFrame()
 
 
 def load_notifications() -> pd.DataFrame:
@@ -409,6 +420,7 @@ def main() -> int:
         signal_summary=signal_summary_for_rank,
         trait_summary=trait_summary_for_rank,
         universe_meta=load_me_universe(),
+        fast_feedback_summary=load_after_close_feedback(),
     )
 
     status_rows = []
