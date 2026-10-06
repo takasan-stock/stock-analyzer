@@ -62,6 +62,7 @@ jobs:
             git add data/entry_hunter_candidate_history.csv
             git add data/entry_hunter_source_performance.csv
             git add data/entry_hunter_source_summary.csv
+            git add data/entry_hunter_signal_summary.csv
             COMMIT_MESSAGE="Update Short Cover Entry alerts"
           fi
 
