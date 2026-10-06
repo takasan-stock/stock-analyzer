@@ -2054,6 +2054,17 @@ def _load_command_center_history():
     return pd.DataFrame()
 
 
+def _load_after_close_review():
+    path = "data/after_close_review_latest.json"
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
 _cc_entry_status = _load_command_center_entry_status()
 _cc_me_screener = _load_command_center_me_screener()
 _cc_history = _load_command_center_history()
@@ -2148,6 +2159,88 @@ else:
         "今日のLIVE結果を残したまま、次セッション候補を別枠で表示します。"
         " 今日の結果と明日の候補を混ぜて順位付けしません。"
     )
+
+    _after_review = _load_after_close_review()
+    _review_date = str(_after_review.get("review_date", "") or "")
+    _today_text = _cc_now.tz_localize(None).strftime("%Y-%m-%d")
+
+    st.markdown("### 📊 TODAY REVIEW")
+    if not _after_review or _review_date != _today_text:
+        st.caption("今日の引け後レビューはまだ更新待ちです。ME Daily Screener完了後に反映されます。")
+    else:
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _r1.metric("ENTRY READY", int(_after_review.get("ready_count", 0) or 0))
+        _r2.metric("CONFIRMED", int(_after_review.get("confirmed_count", 0) or 0))
+        _r3.metric("WEAKENING", int(_after_review.get("weakening_count", 0) or 0))
+        _r4.metric("明日に持ち越し", int(_after_review.get("carryover_count", 0) or 0))
+
+        _p1, _p2, _p3, _p4 = st.columns(4)
+        _top3_ret = _after_review.get("top3_avg_return_pct")
+        _avg_ret = _after_review.get("avg_close_return_pct")
+        _avg_mfe = _after_review.get("avg_mfe_pct")
+        _avg_mae = _after_review.get("avg_mae_pct")
+
+        _p1.metric(
+            "TOP3平均 当日",
+            "—" if _top3_ret is None else f"{float(_top3_ret):+.2f}%",
+        )
+        _p2.metric(
+            "全READY平均 当日",
+            "—" if _avg_ret is None else f"{float(_avg_ret):+.2f}%",
+        )
+        _p3.metric(
+            "平均MFE",
+            "—" if _avg_mfe is None else f"{float(_avg_mfe):+.2f}%",
+        )
+        _p4.metric(
+            "平均MAE",
+            "—" if _avg_mae is None else f"{float(_avg_mae):+.2f}%",
+        )
+
+        _review_rows = _after_review.get("rows", [])
+        if _review_rows:
+            _review_df = pd.DataFrame(_review_rows)
+            _review_cols = [
+                col
+                for col in [
+                    "ticker",
+                    "name",
+                    "source",
+                    "signal_key",
+                    "entry_price",
+                    "close_price",
+                    "close_return_pct",
+                    "mfe_pct",
+                    "mae_pct",
+                    "latest_status",
+                    "carryover",
+                ]
+                if col in _review_df.columns
+            ]
+            _review_df = _review_df[_review_cols].rename(
+                columns={
+                    "ticker": "Code",
+                    "name": "銘柄",
+                    "source": "Source",
+                    "signal_key": "Setup",
+                    "entry_price": "Entry",
+                    "close_price": "Close",
+                    "close_return_pct": "当日%",
+                    "mfe_pct": "MFE%",
+                    "mae_pct": "MAE%",
+                    "latest_status": "最終Status",
+                    "carryover": "持越し",
+                }
+            )
+            st.dataframe(
+                _review_df,
+                hide_index=True,
+                use_container_width=True,
+            )
+        st.caption(
+            f"価格取得 {_after_review.get('price_coverage', 0)}/{_after_review.get('tracked_entries', 0)}件。"
+            " 当日損益・MFE・MAEは最初のENTRY READY価格を基準に終値/高値/安値で計算します。"
+        )
 
     st.markdown(f"### {_cc_session.get('secondary_headline', '🌅 NEXT SESSION WATCH')}")
     _me_status = str(_cc_session.get("me_status", "") or "")
