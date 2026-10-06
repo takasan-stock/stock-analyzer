@@ -7,6 +7,7 @@ on:
       - "multiple_expansion_screener.py"
       - "me_screener_alerts.py"
       - "entry_hunter_sources.py"
+      - "entry_source_performance.py"
       - "jquants_mex_adapter.py"
       - "scripts/build_mex_jquants.py"
       - "scripts/build_me_universe.py"
@@ -22,6 +23,7 @@ on:
       - "tests/test_me_universe.py"
       - "tests/test_me_screener_alerts.py"
       - "tests/test_entry_hunter_sources.py"
+      - "tests/test_entry_source_performance.py"
       - ".github/workflows/mex_tests.yml"
   push:
     branches:
@@ -74,7 +76,8 @@ jobs:
 
       - name: Run MEX / ME unit tests
         run: |
-          pytest -q             tests/test_multiple_expansion.py             tests/test_jquants_mex_adapter.py             tests/test_multiple_expansion_screener.py             tests/test_me_universe.py             tests/test_me_screener_alerts.py             tests/test_entry_hunter_sources.py
+          pytest -q             tests/test_multiple_expansion.py             tests/test_jquants_mex_adapter.py             tests/test_multiple_expansion_screener.py             tests/test_me_universe.py             tests/test_me_screener_alerts.py             tests/test_entry_hunter_sources.py \
+            tests/test_entry_source_performance.py
 
       - name: Compile MEX / ME files
         run: |
