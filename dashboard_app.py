@@ -2040,11 +2040,22 @@ def _load_command_center_me_screener():
     return pd.DataFrame()
 
 
+def _load_command_center_history():
+    path = "data/daily_command_center_history.csv"
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
 _command_center = build_daily_command_center(
     _load_command_center_entry_status(),
     _load_command_center_me_screener(),
     as_of=pd.Timestamp.now(),
     limit=3,
+    history=_load_command_center_history(),
 )
 
 st.markdown("### 🔥 TODAY'S TOP 3")
@@ -2054,14 +2065,15 @@ else:
     _top_cols = st.columns(len(_command_center))
     for _i, (_, _row) in enumerate(_command_center.iterrows()):
         with _top_cols[_i]:
+            _trend = str(_row.get("rank_trend", "NEW") or "NEW")
             st.metric(
                 label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
                 value=f"{float(_row['opportunity_score']):.0f}",
-                delta=f"{_row['ticker']} {_row['name']}",
+                delta=f"{_trend}｜{_row['ticker']} {_row['name']}",
             )
             st.caption(
-                f"{_row['source']}｜{_row['signal_key']}｜{_row['entry_status']}  \n"
-                f"Coverage {float(_row['coverage']):.0f}%｜{_row['reason']}"
+                f"**{_row.get('decision_card', '')}**  \n"
+                f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
             )
     if (_command_center['mode'] == 'PRE-MARKET').all():
         st.info("現在はPRE-MARKET候補です。寄り付き後はEntry Hunterの実データに自動で置き換わります。")
