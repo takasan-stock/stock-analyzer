@@ -12,7 +12,11 @@ import json
 import datetime
 import time
 import xml.etree.ElementTree as ET
-from daily_command_center import build_daily_command_center
+from daily_command_center import (
+    build_command_center_handoff,
+    build_daily_command_center,
+    tradingview_url,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2075,6 +2079,40 @@ else:
                 f"**{_row.get('decision_card', '')}**  \n"
                 f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
             )
+
+            _handoff = build_command_center_handoff(_row)
+            _tv_url = tradingview_url(_row["ticker"])
+            st.link_button(
+                "📈 TradingView",
+                _tv_url,
+                use_container_width=True,
+            )
+            if st.button(
+                "🎯 Entry Hunter",
+                key=f"command_entry_{_row['ticker']}_{int(_row['rank'])}",
+                use_container_width=True,
+            ):
+                st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
+                st.session_state["command_center_focus_name"] = _handoff["name"]
+                st.session_state["command_center_focus_reason"] = _handoff["decision_card"]
+                st.switch_page("pages/8_Short_Cover_Hunter.py")
+
+            if st.button(
+                "🛡️ Pre-Trade",
+                key=f"command_pretrade_{_row['ticker']}_{int(_row['rank'])}",
+                use_container_width=True,
+            ):
+                st.session_state["pretrade_ticker"] = _handoff["ticker"]
+                st.session_state["pretrade_name"] = _handoff["name"]
+                st.session_state["pretrade_source"] = (
+                    f"Daily Command Center #{int(_row['rank'])}"
+                )
+                st.session_state["pretrade_opportunity_score"] = _handoff["opportunity_score"]
+                st.session_state["pretrade_opportunity_rating"] = _handoff["opportunity_rating"]
+                st.session_state["pretrade_opportunity_action"] = _handoff["opportunity_action"]
+                st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
+                st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
+                st.switch_page("pages/9_Pre_Trade_Check.py")
     if (_command_center['mode'] == 'PRE-MARKET').all():
         st.info("現在はPRE-MARKET候補です。寄り付き後はEntry Hunterの実データに自動で置き換わります。")
     else:
