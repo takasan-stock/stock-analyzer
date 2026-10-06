@@ -337,10 +337,18 @@ def main() -> int:
         max_calendar_days=4,
         limit=5,
     )
+    source_summary_for_rank = pd.DataFrame()
+    if ENTRY_SOURCE_SUMMARY_FILE.exists():
+        try:
+            source_summary_for_rank = pd.read_csv(ENTRY_SOURCE_SUMMARY_FILE)
+        except Exception:
+            source_summary_for_rank = pd.DataFrame()
+
     candidates = combine_entry_candidates(
         short_candidates,
         me_candidates,
         limit=8,
+        source_summary=source_summary_for_rank,
     )
 
     status_rows = []
