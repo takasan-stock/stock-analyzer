@@ -10,12 +10,14 @@ on:
       - "entry_source_performance.py"
       - "entry_opportunity.py"
       - "daily_command_center.py"
+      - "after_close_review.py"
       - "jquants_mex_adapter.py"
       - "scripts/build_mex_jquants.py"
       - "scripts/build_me_universe.py"
       - "scripts/build_me_screener.py"
       - "scripts/send_me_screener_alert.py"
       - "scripts/short_cover_entry_alert.py"
+      - "scripts/build_after_close_review.py"
       - "pages/14_Multiple_Expansion_Hunter.py"
       - "pages/15_ME_Daily_Screener.py"
       - "pages/8_Short_Cover_Hunter.py"
@@ -29,6 +31,7 @@ on:
       - "tests/test_entry_source_performance.py"
       - "tests/test_entry_opportunity.py"
       - "tests/test_daily_command_center.py"
+      - "tests/test_after_close_review.py"
       - "dashboard_app.py"
       - ".github/workflows/mex_tests.yml"
   push:
@@ -99,7 +102,8 @@ jobs:
             tests/test_entry_hunter_sources.py \
             tests/test_entry_source_performance.py \
             tests/test_entry_opportunity.py \
-            tests/test_daily_command_center.py
+            tests/test_daily_command_center.py \
+            tests/test_after_close_review.py
 
       - name: Compile MEX / ME files
         run: |
@@ -111,12 +115,14 @@ jobs:
             entry_source_performance.py \
             entry_opportunity.py \
             daily_command_center.py \
+            after_close_review.py \
             jquants_mex_adapter.py \
             scripts/build_mex_jquants.py \
             scripts/build_me_universe.py \
             scripts/build_me_screener.py \
             scripts/send_me_screener_alert.py \
             scripts/short_cover_entry_alert.py \
+            scripts/build_after_close_review.py \
             pages/14_Multiple_Expansion_Hunter.py \
             pages/15_ME_Daily_Screener.py \
             pages/8_Short_Cover_Hunter.py \
