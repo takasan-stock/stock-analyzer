@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -144,6 +145,16 @@ def main() -> int:
             "from /fins/details is unavailable. The output remains labeled as proxy."
         ),
     )
+    parser.add_argument(
+        "--max-runtime-minutes",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional soft runtime budget for the heavy ticker loop. "
+            "When reached, write partial outputs and diagnostics instead of "
+            "waiting for the GitHub Actions hard timeout. 0 disables the budget."
+        ),
+    )
     args = parser.parse_args()
 
     codes = _parse_codes(args.codes)
@@ -168,16 +179,48 @@ def main() -> int:
 
     results = []
     diagnostics = []
+    started_at = time.monotonic()
+    total_codes = len(codes)
 
-    for code in codes:
-        print(f"[MEX] fetching {code} ...")
+    for idx, code in enumerate(codes, start=1):
+        elapsed_min = (time.monotonic() - started_at) / 60.0
+        if (
+            args.max_runtime_minutes > 0
+            and elapsed_min >= args.max_runtime_minutes
+        ):
+            remaining = codes[idx - 1 :]
+            print(
+                f"[MEX] runtime budget reached at {elapsed_min:.1f} min. "
+                f"Stopping before {code}; remaining={len(remaining)}."
+            )
+            diagnostics.extend(
+                {
+                    "code": remaining_code,
+                    "status": "SKIPPED_RUNTIME_BUDGET",
+                    "reason": (
+                        f"Soft runtime budget {args.max_runtime_minutes:.1f} min reached."
+                    ),
+                }
+                for remaining_code in remaining
+            )
+            break
+
+        ticker_started = time.monotonic()
+        print(
+            f"[MEX] {idx}/{total_codes} fetching {code} "
+            f"(elapsed={elapsed_min:.1f}m) ..."
+        )
         try:
             bundle = fetch_ticker_bundle(
                 client,
                 code=code,
                 from_date=args.from_date,
                 to_date=args.to_date,
-                include_details=True,
+                # Daily all-market scan explicitly allows the summary proxy.
+                # In that mode, skip the expensive /fins/details call. Exact
+                # CAPEX remains available for manual/deep builds that omit
+                # --allow-summary-proxy.
+                include_details=not args.allow_summary_proxy,
                 include_topix=False,
             )
         except Exception as exc:
@@ -242,9 +285,12 @@ def main() -> int:
         meta = bundle["meta"].iloc[0].to_dict()
         meta["status"] = "OK"
         diagnostics.append(meta)
+        ticker_sec = time.monotonic() - ticker_started
+        total_elapsed_min = (time.monotonic() - started_at) / 60.0
         print(
-            f"[MEX] {code}: {len(mex)} market rows, "
-            f"{len(financial)} financial events"
+            f"[MEX] {idx}/{total_codes} {code}: {len(mex)} market rows, "
+            f"{len(financial)} financial events, "
+            f"{ticker_sec:.1f}s ticker, {total_elapsed_min:.1f}m total"
         )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -263,6 +309,10 @@ def main() -> int:
     print(f"[MEX] wrote {OUT_DIR / 'mex_latest.csv'}")
     print(f"[MEX] wrote {OUT_DIR / 'mex_history.csv'}")
     print(f"[MEX] wrote {OUT_DIR / 'mex_events.csv'}")
+    print(
+        f"[MEX] completed {len(results)}/{total_codes} tickers "
+        f"in {(time.monotonic() - started_at) / 60.0:.1f} minutes"
+    )
     return 0
 
 
