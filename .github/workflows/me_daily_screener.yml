@@ -89,6 +89,10 @@ jobs:
         run: |
           python scripts/send_me_screener_alert.py
 
+      - name: STEP 5 - Build after-close review
+        run: |
+          python scripts/build_after_close_review.py
+
       - name: Commit latest screener output
         run: |
           git config user.name "github-actions[bot]"
@@ -104,6 +108,8 @@ jobs:
           git add data/multiple_expansion/me_screener_changes.csv
           git add data/multiple_expansion/me_screener_change_history.csv
           git add data/multiple_expansion/me_screener_alert_status.json
+          git add data/after_close_review_latest.json
+          git add data/after_close_review_latest.csv
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
