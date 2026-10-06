@@ -1,6 +1,10 @@
 import pandas as pd
 
-from after_close_review import build_after_close_review
+from after_close_review import (
+    build_after_close_review,
+    summarize_after_close_feedback,
+    update_after_close_history,
+)
 
 
 def _notifications():
@@ -107,3 +111,77 @@ def test_after_close_review_handles_no_entries():
     assert out["ready_count"] == 0
     assert out["tracked_entries"] == 0
     assert out["avg_close_return_pct"] is None
+
+
+def test_after_close_feedback_waits_for_minimum_samples():
+    rows = pd.DataFrame(
+        [
+            {
+                "review_date": f"2026-10-{day:02d}",
+                "ticker": f"68{day:02d}",
+                "name": "A",
+                "source": "ME HUNTER",
+                "signal_key": "ME|R-READY",
+                "trait_market": "MARKET|PRIME",
+                "trait_size": "SIZE|LARGE",
+                "trait_vol": "VOL|MID",
+                "entry_price": 100,
+                "close_price": 103,
+                "close_return_pct": 3.0,
+                "mfe_pct": 5.0,
+                "mae_pct": -1.5,
+                "latest_status": "🟢 ENTRY READY",
+                "carryover": True,
+            }
+            for day in range(1, 8)
+        ]
+    )
+    history = update_after_close_history(pd.DataFrame(), rows)
+    summary = summarize_after_close_feedback(history)
+    me_row = summary[
+        (summary["dimension"] == "SOURCE")
+        & (summary["key"] == "ME HUNTER")
+    ].iloc[0]
+    assert int(me_row["sample_0d"]) == 7
+    assert float(me_row["fast_bonus"]) == 0.0
+    assert me_row["confidence"] == "DATA BUILDING"
+
+
+def test_after_close_feedback_is_small_and_positive_after_enough_samples():
+    rows = pd.DataFrame(
+        [
+            {
+                "review_date": f"2026-09-{day:02d}",
+                "ticker": f"68{day:02d}",
+                "name": "A",
+                "source": "SHORT+ME",
+                "signal_key": "CONFLUENCE|R-READY|EARLY",
+                "trait_market": "MARKET|PRIME",
+                "trait_size": "SIZE|LARGE",
+                "trait_vol": "VOL|HIGH",
+                "entry_price": 100,
+                "close_price": 104,
+                "close_return_pct": 4.0,
+                "mfe_pct": 7.0,
+                "mae_pct": -2.0,
+                "latest_status": "🟢 ENTRY CONFIRMED",
+                "carryover": True,
+            }
+            for day in range(1, 21)
+        ]
+    )
+    history = update_after_close_history(pd.DataFrame(), rows)
+    summary = summarize_after_close_feedback(history)
+
+    source = summary[
+        (summary["dimension"] == "SOURCE")
+        & (summary["key"] == "SHORT+ME")
+    ].iloc[0]
+    setup = summary[
+        (summary["dimension"] == "SETUP")
+        & (summary["key"] == "CONFLUENCE|R-READY|EARLY")
+    ].iloc[0]
+
+    assert 0 < float(source["fast_bonus"]) <= 1.5
+    assert 0 < float(setup["fast_bonus"]) <= 0.75
+    assert source["confidence"] in {"WARMING", "ADAPTIVE"}
