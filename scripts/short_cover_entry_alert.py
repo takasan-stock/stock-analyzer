@@ -28,6 +28,7 @@ from entry_source_performance import (
     normalize_performance,
     summarize_source_performance,
     summarize_signal_performance,
+    summarize_trait_performance,
     update_candidate_history,
 )
 
@@ -40,6 +41,8 @@ ENTRY_CANDIDATE_HISTORY_FILE = DATA_DIR / "entry_hunter_candidate_history.csv"
 ENTRY_SOURCE_PERFORMANCE_FILE = DATA_DIR / "entry_hunter_source_performance.csv"
 ENTRY_SOURCE_SUMMARY_FILE = DATA_DIR / "entry_hunter_source_summary.csv"
 ENTRY_SIGNAL_SUMMARY_FILE = DATA_DIR / "entry_hunter_signal_summary.csv"
+ENTRY_TRAIT_SUMMARY_FILE = DATA_DIR / "entry_hunter_trait_summary.csv"
+ME_UNIVERSE_FILE = DATA_DIR / "multiple_expansion" / "me_universe_snapshot.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -47,6 +50,7 @@ NOTIFICATION_COLUMNS = [
     "current_price", "vwap", "reason", "risk",
     "first_detected_at", "email_sent", "email_sent_at", "email_error",
     "source", "source_detail", "signal_key",
+    "trait_market", "trait_size", "trait_vol",
 ]
 
 
@@ -62,6 +66,15 @@ def load_history() -> pd.DataFrame:
     return normalize_alert_history(
         pd.read_csv(HISTORY_FILE, encoding="utf-8-sig")
     )
+
+
+def load_me_universe() -> pd.DataFrame:
+    if not ME_UNIVERSE_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(ME_UNIVERSE_FILE, dtype={"ticker": str})
+    except Exception:
+        return pd.DataFrame()
 
 
 def load_me_screener() -> pd.DataFrame:
@@ -353,12 +366,21 @@ def main() -> int:
         except Exception:
             signal_summary_for_rank = pd.DataFrame()
 
+    trait_summary_for_rank = pd.DataFrame()
+    if ENTRY_TRAIT_SUMMARY_FILE.exists():
+        try:
+            trait_summary_for_rank = pd.read_csv(ENTRY_TRAIT_SUMMARY_FILE)
+        except Exception:
+            trait_summary_for_rank = pd.DataFrame()
+
     candidates = combine_entry_candidates(
         short_candidates,
         me_candidates,
         limit=8,
         source_summary=source_summary_for_rank,
         signal_summary=signal_summary_for_rank,
+        trait_summary=trait_summary_for_rank,
+        universe_meta=load_me_universe(),
     )
 
     status_rows = []
@@ -380,6 +402,9 @@ def main() -> int:
                 "source": candidate.get("source", ""),
                 "source_detail": candidate.get("source_detail", ""),
                 "signal_key": candidate.get("signal_key", ""),
+                "trait_market": candidate.get("trait_market", ""),
+                "trait_size": candidate.get("trait_size", ""),
+                "trait_vol": candidate.get("trait_vol", ""),
             })
             continue
 
@@ -410,6 +435,9 @@ def main() -> int:
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
             "signal_key": candidate.get("signal_key", ""),
+                "trait_market": candidate.get("trait_market", ""),
+                "trait_size": candidate.get("trait_size", ""),
+                "trait_vol": candidate.get("trait_vol", ""),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
@@ -443,6 +471,9 @@ def main() -> int:
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
             "signal_key": candidate.get("signal_key", ""),
+                "trait_market": candidate.get("trait_market", ""),
+                "trait_size": candidate.get("trait_size", ""),
+                "trait_vol": candidate.get("trait_vol", ""),
         }
 
         if not mask.any():
@@ -550,6 +581,9 @@ def main() -> int:
             "source": ready_row.get("source", ""),
             "source_detail": ready_row.get("source_detail", ""),
             "signal_key": ready_row.get("signal_key", ""),
+            "trait_market": ready_row.get("trait_market", ""),
+            "trait_size": ready_row.get("trait_size", ""),
+            "trait_vol": ready_row.get("trait_vol", ""),
         }
 
         notifications = pd.concat(
@@ -625,6 +659,16 @@ def main() -> int:
         encoding="utf-8-sig",
     )
 
+    trait_summary = summarize_trait_performance(
+        candidate_history,
+        source_performance,
+    )
+    trait_summary.to_csv(
+        ENTRY_TRAIT_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
     save_status({
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
@@ -657,6 +701,7 @@ def main() -> int:
         "emails_sent": int(emails_sent),
         "source_summary_rows": int(len(source_summary)),
         "signal_summary_rows": int(len(signal_summary)),
+        "trait_summary_rows": int(len(trait_summary)),
         "rows": status_rows,
     })
 
