@@ -255,3 +255,79 @@ def test_trait_adjustment_is_tiny_and_capped():
     )
     out = build_trait_adjustments(summary)
     assert 0 < float(out["VOL|HIGH"]["bonus"]) <= 1.0
+
+
+def test_fast_feedback_adjustment_maps_dimension_and_key():
+    from entry_hunter_sources import build_fast_feedback_adjustments
+
+    summary = pd.DataFrame(
+        [
+            {
+                "dimension": "SOURCE",
+                "key": "SHORT+ME",
+                "sample_0d": 20,
+                "fast_bonus": 1.2,
+                "confidence": "WARMING",
+            },
+            {
+                "dimension": "SETUP",
+                "key": "CONFLUENCE|R-READY|EARLY",
+                "sample_0d": 20,
+                "fast_bonus": 0.6,
+                "confidence": "WARMING",
+            },
+        ]
+    )
+    out = build_fast_feedback_adjustments(summary)
+    assert float(out["SOURCE:SHORT+ME"]["bonus"]) == 1.2
+    assert float(out["SETUP:CONFLUENCE|R-READY|EARLY"]["bonus"]) == 0.6
+
+
+def test_combine_sources_applies_small_fast_feedback_bonus():
+    short = pd.DataFrame(
+        [
+            {
+                "ticker": "6857",
+                "name": "Advantest",
+                "alert_date": "2026-10-05",
+                "alert_tier": "A+",
+                "condition_version": "SC-v1",
+                "alert_score": 82,
+                "match_strength": 90,
+                "alert_reason": "Short Cover active",
+            }
+        ]
+    )
+    me = select_me_entry_candidates(
+        pd.DataFrame([_me_row()]),
+        as_of="2026-10-06",
+    )
+    fast = pd.DataFrame(
+        [
+            {
+                "dimension": "SOURCE",
+                "key": "SHORT+ME",
+                "sample_0d": 20,
+                "fast_bonus": 1.2,
+                "confidence": "WARMING",
+            },
+            {
+                "dimension": "SETUP",
+                "key": "CONFLUENCE|R-READY|OTHER",
+                "sample_0d": 20,
+                "fast_bonus": 0.6,
+                "confidence": "WARMING",
+            },
+        ]
+    )
+
+    out = combine_entry_candidates(
+        short,
+        me,
+        limit=8,
+        fast_feedback_summary=fast,
+    )
+
+    assert len(out) == 1
+    assert 0 < float(out.iloc[0]["fast_bonus"]) <= 2.5
+    assert out.iloc[0]["fast_confidence"] == "WARMING"
