@@ -1030,6 +1030,7 @@ _entry_candidates = combine_entry_candidates(
     _short_entry_candidates,
     _me_entry_candidates,
     limit=8,
+    source_summary=load_entry_source_summary(),
 )
 
 if _entry_candidates.empty:
@@ -1062,6 +1063,8 @@ else:
             "tier": _candidate.get("alert_tier", ""),
             "source": _candidate.get("source", ""),
             "source_detail": _candidate.get("source_detail", ""),
+            "adaptive_bonus": _candidate.get("adaptive_bonus", 0.0),
+            "adaptive_confidence": _candidate.get("adaptive_confidence", "BASE"),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1130,12 +1133,12 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "source", "tier", "Score", "監視日",
+                "status", "ticker", "name", "source", "tier", "Score", "Adaptive", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "source": "監視ソース", "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
+                "source": "監視ソース", "tier": "前日Tier", "adaptive_bonus": "Adaptive", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
