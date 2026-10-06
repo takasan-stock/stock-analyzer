@@ -1228,6 +1228,22 @@ else:
                     st.session_state["pretrade_opportunity_action"] = _r.get("opportunity_action")
                     st.session_state["pretrade_opportunity_reason"] = _r.get("opportunity_reason")
                     st.session_state["pretrade_opportunity_coverage"] = _r.get("opportunity_coverage")
+                    st.session_state["pretrade_source_bonus"] = _r.get("adaptive_bonus")
+                    st.session_state["pretrade_setup_bonus"] = _r.get("state_bonus")
+                    st.session_state["pretrade_trait_bonus"] = _r.get("trait_bonus")
+                    st.session_state["pretrade_fast_bonus"] = _r.get("fast_bonus")
+                    st.session_state["pretrade_adaptive_total"] = (
+                        float(_r.get("adaptive_bonus", 0) or 0)
+                        + float(_r.get("state_bonus", 0) or 0)
+                        + float(_r.get("trait_bonus", 0) or 0)
+                        + float(_r.get("fast_bonus", 0) or 0)
+                    )
+                    st.session_state["pretrade_adaptive_breakdown"] = (
+                        f"Source {float(_r.get('adaptive_bonus', 0) or 0):+.1f}｜"
+                        f"Setup {float(_r.get('state_bonus', 0) or 0):+.1f}｜"
+                        f"Trait {float(_r.get('trait_bonus', 0) or 0):+.1f}｜"
+                        f"Fast0D {float(_r.get('fast_bonus', 0) or 0):+.1f}"
+                    )
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 
         _entry_show = _entry_df.copy()
