@@ -22,12 +22,22 @@ from short_cover import (
     select_entry_hunter_candidates,
 )
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_source_performance import (
+    build_ready_performance,
+    normalize_candidate_history,
+    normalize_performance,
+    summarize_source_performance,
+    update_candidate_history,
+)
 
 DATA_DIR = ROOT / "data"
 HISTORY_FILE = DATA_DIR / "short_cover_alert_history.csv"
 NOTIFICATION_FILE = DATA_DIR / "short_cover_entry_notifications.csv"
 STATUS_FILE = DATA_DIR / "short_cover_entry_status.json"
 ME_SCREENER_FILE = DATA_DIR / "multiple_expansion" / "me_screener_latest.csv"
+ENTRY_CANDIDATE_HISTORY_FILE = DATA_DIR / "entry_hunter_candidate_history.csv"
+ENTRY_SOURCE_PERFORMANCE_FILE = DATA_DIR / "entry_hunter_source_performance.csv"
+ENTRY_SOURCE_SUMMARY_FILE = DATA_DIR / "entry_hunter_source_summary.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -95,6 +105,40 @@ def save_notifications(df: pd.DataFrame) -> None:
             "%Y-%m-%d %H:%M:%S"
         )
     out.to_csv(NOTIFICATION_FILE, index=False, encoding="utf-8-sig")
+
+
+def load_candidate_history() -> pd.DataFrame:
+    if not ENTRY_CANDIDATE_HISTORY_FILE.exists():
+        return normalize_candidate_history(None)
+    try:
+        return normalize_candidate_history(
+            pd.read_csv(ENTRY_CANDIDATE_HISTORY_FILE, encoding="utf-8-sig")
+        )
+    except Exception:
+        return normalize_candidate_history(None)
+
+
+def load_source_performance() -> pd.DataFrame:
+    if not ENTRY_SOURCE_PERFORMANCE_FILE.exists():
+        return normalize_performance(None)
+    try:
+        return normalize_performance(
+            pd.read_csv(ENTRY_SOURCE_PERFORMANCE_FILE, encoding="utf-8-sig")
+        )
+    except Exception:
+        return normalize_performance(None)
+
+
+def save_candidate_history(df: pd.DataFrame) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = normalize_candidate_history(df)
+    out.to_csv(ENTRY_CANDIDATE_HISTORY_FILE, index=False, encoding="utf-8-sig")
+
+
+def save_source_performance(df: pd.DataFrame) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = normalize_performance(df)
+    out.to_csv(ENTRY_SOURCE_PERFORMANCE_FILE, index=False, encoding="utf-8-sig")
 
 
 def save_status(payload: dict) -> None:
@@ -504,6 +548,51 @@ def main() -> int:
 
     save_notifications(notifications)
 
+    candidate_history = update_candidate_history(
+        load_candidate_history(),
+        candidates,
+        status_rows,
+        observed_at=now.tz_localize(None),
+    )
+    save_candidate_history(candidate_history)
+
+    perf_frames = {}
+    ready_tickers = (
+        notifications.loc[
+            notifications["entry_status"].astype(str) == "🟢 ENTRY READY",
+            "ticker",
+        ]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+    for perf_ticker in ready_tickers:
+        try:
+            daily_frame, _ = load_prices(perf_ticker)
+            perf_frames[str(perf_ticker)] = daily_frame
+        except Exception:
+            continue
+
+    source_performance = build_ready_performance(
+        notifications,
+        perf_frames,
+        prior=load_source_performance(),
+        updated_at=now.tz_localize(None),
+    )
+    save_source_performance(source_performance)
+
+    source_summary = summarize_source_performance(
+        candidate_history,
+        source_performance,
+        notifications,
+    )
+    source_summary.to_csv(
+        ENTRY_SOURCE_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
     save_status({
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
@@ -534,6 +623,7 @@ def main() -> int:
             if x == "🔴 EXIT WATCH"
         )),
         "emails_sent": int(emails_sent),
+        "source_summary_rows": int(len(source_summary)),
         "rows": status_rows,
     })
 
