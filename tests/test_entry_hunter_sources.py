@@ -170,3 +170,41 @@ def test_combine_sources_uses_adaptive_bonus():
     assert out.iloc[0]["source"] == "SHORT+ME"
     assert float(out.iloc[0]["adaptive_bonus"]) > 0
     assert out.iloc[0]["adaptive_confidence"] == "ADAPTIVE"
+
+
+def test_signal_adjustment_requires_samples():
+    from entry_hunter_sources import build_signal_adjustments
+
+    summary = pd.DataFrame(
+        [
+            {
+                "signal_key": "ME|R-READY",
+                "sample_5d": 4,
+                "win_5d": 80,
+                "avg_5d": 5.0,
+                "avg_mfe_10d": 10.0,
+                "avg_mae_10d": -2.0,
+            }
+        ]
+    )
+    out = build_signal_adjustments(summary)
+    assert out["ME|R-READY"]["bonus"] == 0.0
+
+
+def test_signal_adjustment_is_capped_at_four_points():
+    from entry_hunter_sources import build_signal_adjustments
+
+    summary = pd.DataFrame(
+        [
+            {
+                "signal_key": "ME|RE-EXP",
+                "sample_5d": 30,
+                "win_5d": 90,
+                "avg_5d": 12.0,
+                "avg_mfe_10d": 20.0,
+                "avg_mae_10d": -2.0,
+            }
+        ]
+    )
+    out = build_signal_adjustments(summary)
+    assert 0 < float(out["ME|RE-EXP"]["bonus"]) <= 4.0
