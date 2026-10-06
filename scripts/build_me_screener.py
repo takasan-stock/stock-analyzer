@@ -69,6 +69,8 @@ def _merge_universe_metadata(history: pd.DataFrame) -> pd.DataFrame:
             "coarse_acceleration_pct",
             "coarse_curvature_pct",
             "avg_turnover20",
+            "market_cap",
+            "realized_vol20_pct",
             "pinned",
         ]
         if c in meta.columns
