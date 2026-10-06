@@ -1,32 +1,59 @@
-name: MEX Tests
+name: MEX / ME Screener Tests
 
 on:
   pull_request:
     paths:
       - "multiple_expansion.py"
+      - "multiple_expansion_screener.py"
+      - "me_screener_alerts.py"
+      - "entry_hunter_sources.py"
       - "jquants_mex_adapter.py"
       - "scripts/build_mex_jquants.py"
+      - "scripts/build_me_universe.py"
+      - "scripts/build_me_screener.py"
+      - "scripts/send_me_screener_alert.py"
+      - "scripts/short_cover_entry_alert.py"
       - "pages/14_Multiple_Expansion_Hunter.py"
+      - "pages/15_ME_Daily_Screener.py"
+      - "pages/8_Short_Cover_Hunter.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
+      - "tests/test_multiple_expansion_screener.py"
+      - "tests/test_me_universe.py"
+      - "tests/test_me_screener_alerts.py"
+      - "tests/test_entry_hunter_sources.py"
       - ".github/workflows/mex_tests.yml"
   push:
     branches:
       - "codex/multiple-expansion-hunter-v0-1"
+      - "codex/multiple-expansion-screener-v0-9"
     paths:
       - "multiple_expansion.py"
+      - "multiple_expansion_screener.py"
+      - "me_screener_alerts.py"
+      - "entry_hunter_sources.py"
       - "jquants_mex_adapter.py"
       - "scripts/build_mex_jquants.py"
+      - "scripts/build_me_universe.py"
+      - "scripts/build_me_screener.py"
+      - "scripts/send_me_screener_alert.py"
+      - "scripts/short_cover_entry_alert.py"
       - "pages/14_Multiple_Expansion_Hunter.py"
+      - "pages/15_ME_Daily_Screener.py"
+      - "pages/8_Short_Cover_Hunter.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
+      - "tests/test_multiple_expansion_screener.py"
+      - "tests/test_me_universe.py"
+      - "tests/test_me_screener_alerts.py"
+      - "tests/test_entry_hunter_sources.py"
       - ".github/workflows/mex_tests.yml"
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -40,12 +67,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests plotly streamlit
+          pip install -r requirements.txt
+          pip install pytest
 
-      - name: Run MEX unit tests
+      - name: Run MEX / ME unit tests
         run: |
-          python -m unittest             tests.test_multiple_expansion             tests.test_jquants_mex_adapter
+          pytest -q             tests/test_multiple_expansion.py             tests/test_jquants_mex_adapter.py             tests/test_multiple_expansion_screener.py             tests/test_me_universe.py             tests/test_me_screener_alerts.py             tests/test_entry_hunter_sources.py
 
-      - name: Compile MEX files
+      - name: Compile MEX / ME files
         run: |
-          python -m py_compile             multiple_expansion.py             jquants_mex_adapter.py             scripts/build_mex_jquants.py             pages/14_Multiple_Expansion_Hunter.py
+          python -m py_compile             multiple_expansion.py             multiple_expansion_screener.py             me_screener_alerts.py             entry_hunter_sources.py             jquants_mex_adapter.py             scripts/build_mex_jquants.py             scripts/build_me_universe.py             scripts/build_me_screener.py             scripts/send_me_screener_alert.py             scripts/short_cover_entry_alert.py             pages/14_Multiple_Expansion_Hunter.py             pages/15_ME_Daily_Screener.py             pages/8_Short_Cover_Hunter.py
