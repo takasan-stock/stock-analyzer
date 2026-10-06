@@ -2097,6 +2097,10 @@ def _render_command_center_cards(frame, *, key_prefix):
                 f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
             )
 
+            _breakdown = str(_row.get("adaptive_breakdown", "") or "")
+            if _breakdown:
+                st.caption(f"🧮 {_breakdown}")
+
             _handoff = build_command_center_handoff(_row)
             st.link_button(
                 "📈 TradingView",
