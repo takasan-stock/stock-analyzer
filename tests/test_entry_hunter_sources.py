@@ -85,3 +85,88 @@ def test_combine_sources_promotes_confluence():
     assert out.iloc[0]["source"] == "SHORT+ME"
     assert out.iloc[0]["alert_tier"] == "🔥 CONFLUENCE"
     assert float(out.iloc[0]["source_score"]) >= 82
+
+
+def test_source_adjustment_is_zero_with_too_few_samples():
+    from entry_hunter_sources import build_source_adjustments
+
+    summary = pd.DataFrame(
+        [
+            {
+                "source": "SHORT+ME",
+                "sample_5d": 3,
+                "win_5d": 80,
+                "avg_5d": 5.0,
+                "avg_mfe_10d": 10.0,
+                "avg_mae_10d": -2.0,
+            }
+        ]
+    )
+    out = build_source_adjustments(summary)
+    assert out["SHORT+ME"]["bonus"] == 0.0
+    assert out["SHORT+ME"]["confidence"] == "DATA BUILDING"
+
+
+def test_source_adjustment_rewards_proven_confluence_conservatively():
+    from entry_hunter_sources import build_source_adjustments
+
+    summary = pd.DataFrame(
+        [
+            {
+                "source": "SHORT+ME",
+                "sample_5d": 20,
+                "win_5d": 70,
+                "avg_5d": 4.0,
+                "avg_mfe_10d": 9.0,
+                "avg_mae_10d": -3.0,
+            }
+        ]
+    )
+    out = build_source_adjustments(summary)
+    assert 0.0 < float(out["SHORT+ME"]["bonus"]) <= 8.0
+    assert out["SHORT+ME"]["confidence"] == "ADAPTIVE"
+
+
+def test_combine_sources_uses_adaptive_bonus():
+    short = pd.DataFrame(
+        [
+            {
+                "ticker": "6857",
+                "name": "Advantest",
+                "alert_date": "2026-10-05",
+                "alert_tier": "A+",
+                "condition_version": "SC-v1",
+                "alert_score": 82,
+                "match_strength": 90,
+                "alert_reason": "Short Cover active",
+            }
+        ]
+    )
+    me = select_me_entry_candidates(
+        pd.DataFrame([_me_row()]),
+        as_of="2026-10-06",
+    )
+    summary = pd.DataFrame(
+        [
+            {
+                "source": "SHORT+ME",
+                "sample_5d": 20,
+                "win_5d": 70,
+                "avg_5d": 4.0,
+                "avg_mfe_10d": 9.0,
+                "avg_mae_10d": -3.0,
+            }
+        ]
+    )
+
+    out = combine_entry_candidates(
+        short,
+        me,
+        limit=8,
+        source_summary=summary,
+    )
+
+    assert len(out) == 1
+    assert out.iloc[0]["source"] == "SHORT+ME"
+    assert float(out.iloc[0]["adaptive_bonus"]) > 0
+    assert out.iloc[0]["adaptive_confidence"] == "ADAPTIVE"
