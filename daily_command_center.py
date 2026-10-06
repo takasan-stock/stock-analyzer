@@ -92,11 +92,33 @@ def _rating(score: float) -> str:
     return "C"
 
 
+def _as_of_jst(value: Any | None) -> pd.Timestamp:
+    ts = (
+        pd.Timestamp.now(tz="Asia/Tokyo")
+        if value is None
+        else pd.Timestamp(value)
+    )
+    if ts.tzinfo is None:
+        return ts.tz_localize("Asia/Tokyo")
+    return ts.tz_convert("Asia/Tokyo")
+
+
 def _as_of_ts(value: Any | None) -> pd.Timestamp:
-    ts = pd.Timestamp.now() if value is None else pd.Timestamp(value)
-    if ts.tzinfo is not None:
-        ts = ts.tz_localize(None)
-    return ts
+    return _as_of_jst(value).tz_localize(None)
+
+
+def resolve_command_center_mode(as_of: Any | None = None) -> str:
+    """Resolve the dashboard mode in Japan time."""
+    ts = _as_of_jst(as_of)
+    if ts.weekday() >= 5:
+        return "AFTER CLOSE"
+
+    minutes = ts.hour * 60 + ts.minute
+    if minutes < 9 * 60:
+        return "PRE-MARKET"
+    if minutes < 15 * 60 + 30:
+        return "LIVE"
+    return "AFTER CLOSE"
 
 
 def _empty() -> pd.DataFrame:
@@ -117,9 +139,7 @@ def _is_entry_status_fresh(
     run_at = pd.to_datetime(entry_status.get("run_at"), errors="coerce")
     if pd.isna(run_at):
         return False
-    if getattr(run_at, "tzinfo", None) is not None:
-        run_at = run_at.tz_localize(None)
-    return run_at.normalize() == _as_of_ts(as_of).normalize()
+    return _as_of_ts(run_at).normalize() == _as_of_ts(as_of).normalize()
 
 
 def _from_entry_status(
@@ -482,3 +502,135 @@ def build_daily_command_center(
 
     source = source[COMMAND_CENTER_COLUMNS].copy()
     return attach_rank_change(source, history, as_of=as_of)
+
+def _latest_history_snapshot(
+    history: pd.DataFrame | None,
+    *,
+    as_of: Any | None = None,
+) -> pd.DataFrame:
+    hist = normalize_command_center_history(history)
+    if hist.empty:
+        return _empty()
+
+    ref = _as_of_ts(as_of)
+    eligible = hist[hist["snapshot_at"] <= ref].copy()
+    if eligible.empty:
+        return _empty()
+
+    latest_at = eligible["snapshot_at"].max()
+    snap = eligible[eligible["snapshot_at"] == latest_at].copy()
+    snap = snap.sort_values("rank").reset_index(drop=True)
+    for col in COMMAND_CENTER_COLUMNS:
+        if col not in snap.columns:
+            snap[col] = None
+    snap["mode"] = "AFTER CLOSE"
+    return snap[COMMAND_CENTER_COLUMNS].copy()
+
+
+def me_screener_trade_date(
+    me_screener: pd.DataFrame | None,
+) -> pd.Timestamp | None:
+    if (
+        me_screener is None
+        or me_screener.empty
+        or "trade_date" not in me_screener.columns
+    ):
+        return None
+    values = pd.to_datetime(
+        me_screener["trade_date"], errors="coerce"
+    ).dropna()
+    if values.empty:
+        return None
+    return pd.Timestamp(values.max()).normalize()
+
+
+def build_command_center_session(
+    entry_status: dict[str, Any] | None,
+    me_screener: pd.DataFrame | None,
+    *,
+    as_of: Any | None = None,
+    limit: int = 3,
+    history: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    """Build PRE-MARKET, LIVE, or AFTER CLOSE dashboard payload."""
+    ref = _as_of_ts(as_of)
+    mode = resolve_command_center_mode(as_of)
+
+    if mode == "PRE-MARKET":
+        primary = build_daily_command_center(
+            {},
+            me_screener,
+            as_of=ref,
+            limit=limit,
+            history=history,
+        )
+        return {
+            "mode": mode,
+            "headline": "🌅 PRE-MARKET｜今日狙う3銘柄",
+            "primary": primary,
+            "secondary": _empty(),
+            "me_status": "PREVIOUS CLOSE",
+            "me_trade_date": me_screener_trade_date(me_screener),
+        }
+
+    if mode == "LIVE":
+        primary = build_daily_command_center(
+            entry_status,
+            me_screener,
+            as_of=ref,
+            limit=limit,
+            history=history,
+        )
+        return {
+            "mode": mode,
+            "headline": "🔥 LIVE｜今すぐ見る3銘柄",
+            "primary": primary,
+            "secondary": _empty(),
+            "me_status": "LIVE",
+            "me_trade_date": me_screener_trade_date(me_screener),
+        }
+
+    today_review = build_daily_command_center(
+        entry_status,
+        pd.DataFrame(),
+        as_of=ref,
+        limit=limit,
+        history=history,
+    )
+    if today_review.empty:
+        today_review = _latest_history_snapshot(history, as_of=ref)
+
+    next_ref = ref + pd.Timedelta(days=1)
+    next_watch = build_daily_command_center(
+        {},
+        me_screener,
+        as_of=next_ref,
+        limit=limit,
+        history=None,
+    )
+    if not next_watch.empty:
+        next_watch = next_watch.copy()
+        next_watch["mode"] = "NEXT SESSION"
+        next_watch["opportunity_action"] = "NEXT SESSION WATCH"
+        next_watch["entry_status"] = "🌅 NEXT SESSION"
+        next_watch["decision_card"] = next_watch.apply(
+            build_decision_card,
+            axis=1,
+        )
+
+    trade_date = me_screener_trade_date(me_screener)
+    me_status = (
+        "UPDATED"
+        if trade_date is not None and trade_date == ref.normalize()
+        else "UPDATE PENDING"
+    )
+
+    return {
+        "mode": mode,
+        "headline": "🌙 AFTER CLOSE｜今日の結果",
+        "primary": today_review,
+        "secondary": next_watch,
+        "secondary_headline": "🌅 NEXT SESSION WATCH｜明日の候補",
+        "me_status": me_status,
+        "me_trade_date": trade_date,
+    }
