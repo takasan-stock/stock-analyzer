@@ -15,8 +15,11 @@ ENTRY_COLUMNS = [
     "source_detail",
     "source_score",
     "source_rank",
+    "signal_key",
     "adaptive_bonus",
     "adaptive_confidence",
+    "state_bonus",
+    "state_confidence",
 ]
 
 
@@ -138,6 +141,59 @@ def build_source_adjustments(
 
     return result
 
+
+def build_signal_adjustments(
+    signal_summary: pd.DataFrame | None,
+    *,
+    min_samples: int = 5,
+    full_samples: int = 20,
+    max_bonus: float = 4.0,
+) -> dict[str, dict[str, float | str]]:
+    """Build smaller state-level bonuses on top of source-level weighting."""
+    result: dict[str, dict[str, float | str]] = {}
+    if signal_summary is None or signal_summary.empty:
+        return result
+    summary = signal_summary.copy()
+    if "signal_key" not in summary.columns:
+        return result
+    summary["signal_key"] = summary["signal_key"].fillna("").astype(str)
+    for _, row in summary.iterrows():
+        key = str(row.get("signal_key", "") or "").strip()
+        if not key:
+            continue
+        n = _num(row.get("sample_5d")) or 0.0
+        bonus = 0.0
+        confidence = "DATA BUILDING"
+        if n >= float(min_samples):
+            win5 = _num(row.get("win_5d"))
+            avg5 = _num(row.get("avg_5d"))
+            mfe = _num(row.get("avg_mfe_10d"))
+            mae = _num(row.get("avg_mae_10d"))
+            win_component = 0.0 if win5 is None else _clip((win5 - 50.0) / 20.0, -1.0, 1.0)
+            avg_component = 0.0 if avg5 is None else _clip(avg5 / 5.0, -1.0, 1.0)
+            rr_component = 0.0
+            if mfe is not None and mae is not None and abs(mae) >= 0.25:
+                rr_component = _clip(((mfe / abs(mae)) - 1.5) / 1.5, -1.0, 1.0)
+            raw_edge = win_component * 0.45 + avg_component * 0.35 + rr_component * 0.20
+            shrink = _clip(
+                (n - float(min_samples) + 1.0) / max(1.0, float(full_samples - min_samples + 1)),
+                0.0,
+                1.0,
+            )
+            bonus = _clip(raw_edge * float(max_bonus) * shrink, -float(max_bonus), float(max_bonus))
+            if n >= full_samples:
+                confidence = "ADAPTIVE"
+            elif n >= 10:
+                confidence = "WARMING"
+            else:
+                confidence = "LOW SAMPLE"
+        result[key] = {
+            "bonus": round(bonus, 3),
+            "confidence": confidence,
+            "sample_5d": n,
+        }
+    return result
+
 def normalize_entry_candidates(
     frame: pd.DataFrame | None,
     *,
@@ -185,10 +241,16 @@ def normalize_entry_candidates(
         out["source_score"] = 0.0
     if "source_rank" not in out.columns:
         out["source_rank"] = pd.NA
+    if "signal_key" not in out.columns:
+        out["signal_key"] = ""
     if "adaptive_bonus" not in out.columns:
         out["adaptive_bonus"] = 0.0
     if "adaptive_confidence" not in out.columns:
         out["adaptive_confidence"] = "BASE"
+    if "state_bonus" not in out.columns:
+        out["state_bonus"] = 0.0
+    if "state_confidence" not in out.columns:
+        out["state_confidence"] = "BASE"
 
     out["source_score"] = pd.to_numeric(
         out["source_score"],
@@ -202,8 +264,16 @@ def normalize_entry_candidates(
         out["adaptive_bonus"],
         errors="coerce",
     ).fillna(0.0)
+    out["signal_key"] = out["signal_key"].fillna("").astype(str)
     out["adaptive_confidence"] = (
         out["adaptive_confidence"].fillna("BASE").astype(str)
+    )
+    out["state_bonus"] = pd.to_numeric(
+        out["state_bonus"],
+        errors="coerce",
+    ).fillna(0.0)
+    out["state_confidence"] = (
+        out["state_confidence"].fillna("BASE").astype(str)
     )
 
     for col in ENTRY_COLUMNS:
@@ -333,6 +403,7 @@ def select_me_entry_candidates(
 
     details = []
     tiers = []
+    signal_keys = []
     for idx, row in s.iterrows():
         row_state = str(row.get("second_wave_state", "") or "")
         row_decision = str(row.get("sw_decision", "") or "")
@@ -348,15 +419,20 @@ def select_me_entry_candidates(
 
         if row_state == "RE-EXP":
             tiers.append("🔥 ME RE-EXP")
+            signal_keys.append("ME|RE-EXP")
         elif row_decision == "PRIORITY WATCH":
             tiers.append("🔥 ME PRIORITY")
+            signal_keys.append("ME|PRIORITY")
         elif row_state == "RE-WATCH READY" or row_decision == "READY":
             tiers.append("🟢 ME R-READY")
+            signal_keys.append("ME|R-READY")
         else:
             tiers.append("🟡 ME WATCH")
+            signal_keys.append("ME|WATCH")
 
     s["source_detail"] = details
     s["alert_tier"] = tiers
+    s["signal_key"] = signal_keys
 
     s = s.sort_values(
         ["source_score", "source_rank", "ticker"],
@@ -395,6 +471,12 @@ def normalize_short_cover_candidates(
         pd.Series("", index=s.index),
     ).fillna("")
 
+    phase = s.get("phase", pd.Series("", index=s.index)).fillna("").astype(str)
+    s["signal_key"] = "SC|OTHER"
+    s.loc[phase.eq("🚀 SQUEEZE"), "signal_key"] = "SC|SQUEEZE"
+    s.loc[phase.eq("✅ COVER CONFIRMED"), "signal_key"] = "SC|CONFIRMED"
+    s.loc[phase.eq("🔥 COVER EARLY"), "signal_key"] = "SC|EARLY"
+
     return normalize_entry_candidates(
         s,
         default_source="SHORT COVER",
@@ -407,6 +489,7 @@ def combine_entry_candidates(
     *,
     limit: int = 8,
     source_summary: pd.DataFrame | None = None,
+    signal_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Merge Entry Hunter sources and dedupe by ticker.
 
@@ -420,6 +503,7 @@ def combine_entry_candidates(
         default_source="ME HUNTER",
     )
     adjustments = build_source_adjustments(source_summary)
+    signal_adjustments = build_signal_adjustments(signal_summary)
 
     merged = pd.concat([short_df, me_df], ignore_index=True)
     if merged.empty:
@@ -445,6 +529,11 @@ def combine_entry_candidates(
             for x in group["alert_tier"].astype(str).tolist()
             if x and x != "nan"
         ]
+        signal_keys = [
+            x
+            for x in group["signal_key"].astype(str).tolist()
+            if x and x != "nan"
+        ]
 
         if "SHORT COVER" in sources and "ME HUNTER" in sources:
             best["source"] = "SHORT+ME"
@@ -460,6 +549,9 @@ def combine_entry_candidates(
                 adaptive.get("confidence", "BASE")
             )
             best["alert_tier"] = "🔥 CONFLUENCE"
+            me_key = next((x for x in signal_keys if x.startswith("ME|")), "ME|OTHER")
+            sc_key = next((x for x in signal_keys if x.startswith("SC|")), "SC|OTHER")
+            best["signal_key"] = f"CONFLUENCE|{me_key.split('|', 1)[1]}|{sc_key.split('|', 1)[1]}"
         else:
             best["source"] = next(iter(sources)) if sources else ""
             adaptive = adjustments.get(str(best["source"]), {})
@@ -473,6 +565,23 @@ def combine_entry_candidates(
             best["adaptive_confidence"] = str(
                 adaptive.get("confidence", "BASE")
             )
+            if signal_keys:
+                best["signal_key"] = signal_keys[0]
+
+        state_adaptive = signal_adjustments.get(
+            str(best.get("signal_key", "") or ""),
+            {},
+        )
+        state_bonus = float(state_adaptive.get("bonus", 0.0) or 0.0)
+        best["state_bonus"] = state_bonus
+        best["state_confidence"] = str(
+            state_adaptive.get("confidence", "BASE")
+        )
+        best["source_score"] = _clip(
+            float(best.get("source_score", 0.0) or 0.0) + state_bonus,
+            0.0,
+            100.0,
+        )
 
         if details:
             best["source_detail"] = " | ".join(dict.fromkeys(details))
@@ -481,7 +590,14 @@ def combine_entry_candidates(
         if abs(adaptive_bonus) >= 0.05:
             best["source_detail"] = (
                 str(best.get("source_detail", "") or "")
-                + f" | Adaptive {adaptive_bonus:+.1f} ({adaptive_conf})"
+                + f" | Source {adaptive_bonus:+.1f} ({adaptive_conf})"
+            ).strip(" |")
+        state_bonus = _num(best.get("state_bonus")) or 0.0
+        state_conf = str(best.get("state_confidence", "BASE") or "BASE")
+        if abs(state_bonus) >= 0.05:
+            best["source_detail"] = (
+                str(best.get("source_detail", "") or "")
+                + f" | State {state_bonus:+.1f} ({state_conf})"
             ).strip(" |")
         if not str(best.get("alert_tier", "") or "") and tiers:
             best["alert_tier"] = tiers[0]
