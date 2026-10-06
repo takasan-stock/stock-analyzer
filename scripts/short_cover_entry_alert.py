@@ -27,6 +27,7 @@ from entry_source_performance import (
     normalize_candidate_history,
     normalize_performance,
     summarize_source_performance,
+    summarize_signal_performance,
     update_candidate_history,
 )
 
@@ -38,13 +39,14 @@ ME_SCREENER_FILE = DATA_DIR / "multiple_expansion" / "me_screener_latest.csv"
 ENTRY_CANDIDATE_HISTORY_FILE = DATA_DIR / "entry_hunter_candidate_history.csv"
 ENTRY_SOURCE_PERFORMANCE_FILE = DATA_DIR / "entry_hunter_source_performance.csv"
 ENTRY_SOURCE_SUMMARY_FILE = DATA_DIR / "entry_hunter_source_summary.csv"
+ENTRY_SIGNAL_SUMMARY_FILE = DATA_DIR / "entry_hunter_signal_summary.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
     "entry_status", "entry_score", "gap_pct", "relvol15",
     "current_price", "vwap", "reason", "risk",
     "first_detected_at", "email_sent", "email_sent_at", "email_error",
-    "source", "source_detail",
+    "source", "source_detail", "signal_key",
 ]
 
 
@@ -344,11 +346,19 @@ def main() -> int:
         except Exception:
             source_summary_for_rank = pd.DataFrame()
 
+    signal_summary_for_rank = pd.DataFrame()
+    if ENTRY_SIGNAL_SUMMARY_FILE.exists():
+        try:
+            signal_summary_for_rank = pd.read_csv(ENTRY_SIGNAL_SUMMARY_FILE)
+        except Exception:
+            signal_summary_for_rank = pd.DataFrame()
+
     candidates = combine_entry_candidates(
         short_candidates,
         me_candidates,
         limit=8,
         source_summary=source_summary_for_rank,
+        signal_summary=signal_summary_for_rank,
     )
 
     status_rows = []
@@ -369,6 +379,7 @@ def main() -> int:
                 "error": f"{type(exc).__name__}: {exc}"[:300],
                 "source": candidate.get("source", ""),
                 "source_detail": candidate.get("source_detail", ""),
+                "signal_key": candidate.get("signal_key", ""),
             })
             continue
 
@@ -398,6 +409,7 @@ def main() -> int:
             "risk": entry.get("risk", ""),
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
+            "signal_key": candidate.get("signal_key", ""),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
@@ -430,6 +442,7 @@ def main() -> int:
             "email_error": "",
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
+            "signal_key": candidate.get("signal_key", ""),
         }
 
         if not mask.any():
@@ -536,6 +549,7 @@ def main() -> int:
             "email_error": "",
             "source": ready_row.get("source", ""),
             "source_detail": ready_row.get("source_detail", ""),
+            "signal_key": ready_row.get("signal_key", ""),
         }
 
         notifications = pd.concat(
@@ -601,6 +615,16 @@ def main() -> int:
         encoding="utf-8-sig",
     )
 
+    signal_summary = summarize_signal_performance(
+        candidate_history,
+        source_performance,
+    )
+    signal_summary.to_csv(
+        ENTRY_SIGNAL_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
     save_status({
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
@@ -632,6 +656,7 @@ def main() -> int:
         )),
         "emails_sent": int(emails_sent),
         "source_summary_rows": int(len(source_summary)),
+        "signal_summary_rows": int(len(signal_summary)),
         "rows": status_rows,
     })
 
