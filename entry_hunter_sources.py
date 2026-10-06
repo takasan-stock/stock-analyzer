@@ -28,6 +28,8 @@ ENTRY_COLUMNS = [
     "state_confidence",
     "trait_bonus",
     "trait_confidence",
+    "fast_bonus",
+    "fast_confidence",
 ]
 
 
@@ -297,6 +299,41 @@ def enrich_candidate_metadata(
     return out.merge(meta, on="ticker", how="left")
 
 
+
+def build_fast_feedback_adjustments(
+    feedback_summary: pd.DataFrame | None,
+) -> dict[str, dict[str, float | str]]:
+    """Read after-close 0D feedback without re-fitting anything.
+
+    The after-close layer is intentionally tiny and temporary in influence.
+    It can nudge next-session ordering before 5D outcomes mature, but the
+    slower source/setup/trait adaptive layers remain dominant.
+    """
+    result: dict[str, dict[str, float | str]] = {}
+    if (
+        feedback_summary is None
+        or feedback_summary.empty
+        or "dimension" not in feedback_summary.columns
+        or "key" not in feedback_summary.columns
+    ):
+        return result
+
+    for _, row in feedback_summary.iterrows():
+        dimension = str(row.get("dimension", "") or "").strip().upper()
+        key = str(row.get("key", "") or "").strip()
+        if not dimension or not key:
+            continue
+        bonus = _num(row.get("fast_bonus")) or 0.0
+        confidence = str(row.get("confidence", "BASE") or "BASE")
+        samples = _num(row.get("sample_0d")) or 0.0
+        result[f"{dimension}:{key}"] = {
+            "bonus": float(bonus),
+            "confidence": confidence,
+            "sample_0d": samples,
+        }
+    return result
+
+
 def normalize_entry_candidates(
     frame: pd.DataFrame | None,
     *,
@@ -370,6 +407,10 @@ def normalize_entry_candidates(
         out["trait_bonus"] = 0.0
     if "trait_confidence" not in out.columns:
         out["trait_confidence"] = "BASE"
+    if "fast_bonus" not in out.columns:
+        out["fast_bonus"] = 0.0
+    if "fast_confidence" not in out.columns:
+        out["fast_confidence"] = "BASE"
 
     out["source_score"] = pd.to_numeric(
         out["source_score"],
@@ -407,6 +448,12 @@ def normalize_entry_candidates(
     ).fillna(0.0)
     out["trait_confidence"] = (
         out["trait_confidence"].fillna("BASE").astype(str)
+    )
+    out["fast_bonus"] = pd.to_numeric(
+        out["fast_bonus"], errors="coerce"
+    ).fillna(0.0)
+    out["fast_confidence"] = (
+        out["fast_confidence"].fillna("BASE").astype(str)
     )
 
     for col in ENTRY_COLUMNS:
@@ -626,6 +673,7 @@ def combine_entry_candidates(
     signal_summary: pd.DataFrame | None = None,
     trait_summary: pd.DataFrame | None = None,
     universe_meta: pd.DataFrame | None = None,
+    fast_feedback_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Merge Entry Hunter sources and dedupe by ticker.
 
@@ -644,6 +692,9 @@ def combine_entry_candidates(
     adjustments = build_source_adjustments(source_summary)
     signal_adjustments = build_signal_adjustments(signal_summary)
     trait_adjustments = build_trait_adjustments(trait_summary)
+    fast_adjustments = build_fast_feedback_adjustments(
+        fast_feedback_summary
+    )
 
     merged = pd.concat([short_df, me_df], ignore_index=True)
     if merged.empty:
@@ -745,6 +796,50 @@ def combine_entry_candidates(
             100.0,
         )
 
+        fast_total = 0.0
+        fast_confs = []
+
+        fast_keys = [
+            ("SOURCE", str(best.get("source", "") or "")),
+            ("SETUP", str(best.get("signal_key", "") or "")),
+            ("MARKET", str(best.get("trait_market", "") or "")),
+            ("SIZE", str(best.get("trait_size", "") or "")),
+            ("VOL", str(best.get("trait_vol", "") or "")),
+        ]
+        for dimension, key in fast_keys:
+            if not key:
+                continue
+            adj = fast_adjustments.get(f"{dimension}:{key}", {})
+            fast_total += float(adj.get("bonus", 0.0) or 0.0)
+            conf = str(adj.get("confidence", "") or "")
+            if conf:
+                fast_confs.append(conf)
+
+        fast_total = _clip(fast_total, -2.5, 2.5)
+        best["fast_bonus"] = fast_total
+        best["fast_confidence"] = (
+            "ADAPTIVE"
+            if "ADAPTIVE" in fast_confs
+            else (
+                "WARMING"
+                if "WARMING" in fast_confs
+                else (
+                    "LOW SAMPLE"
+                    if "LOW SAMPLE" in fast_confs
+                    else (
+                        "DATA BUILDING"
+                        if "DATA BUILDING" in fast_confs
+                        else "BASE"
+                    )
+                )
+            )
+        )
+        best["source_score"] = _clip(
+            float(best.get("source_score", 0.0) or 0.0) + fast_total,
+            0.0,
+            100.0,
+        )
+
         if details:
             best["source_detail"] = " | ".join(dict.fromkeys(details))
         adaptive_bonus = _num(best.get("adaptive_bonus")) or 0.0
@@ -767,6 +862,13 @@ def combine_entry_candidates(
             best["source_detail"] = (
                 str(best.get("source_detail", "") or "")
                 + f" | Trait {trait_bonus:+.1f} ({trait_conf})"
+            ).strip(" |")
+        fast_bonus = _num(best.get("fast_bonus")) or 0.0
+        fast_conf = str(best.get("fast_confidence", "BASE") or "BASE")
+        if abs(fast_bonus) >= 0.05:
+            best["source_detail"] = (
+                str(best.get("source_detail", "") or "")
+                + f" | Fast0D {fast_bonus:+.1f} ({fast_conf})"
             ).strip(" |")
         if not str(best.get("alert_tier", "") or "") and tiers:
             best["alert_tier"] = tiers[0]
