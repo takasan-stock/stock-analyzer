@@ -53,6 +53,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     timeout-minutes: 12
 
     steps:
