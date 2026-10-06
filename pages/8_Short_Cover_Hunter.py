@@ -151,6 +151,8 @@ ME_SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
 ENTRY_SOURCE_SUMMARY_FILE = "data/entry_hunter_source_summary.csv"
 ENTRY_SOURCE_PERFORMANCE_FILE = "data/entry_hunter_source_performance.csv"
 ENTRY_SIGNAL_SUMMARY_FILE = "data/entry_hunter_signal_summary.csv"
+ENTRY_TRAIT_SUMMARY_FILE = "data/entry_hunter_trait_summary.csv"
+ME_UNIVERSE_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
 
 
 def _github_shared_config():
@@ -277,6 +279,24 @@ def load_entry_signal_summary() -> pd.DataFrame:
     if os.path.exists(ENTRY_SIGNAL_SUMMARY_FILE):
         try:
             return pd.read_csv(ENTRY_SIGNAL_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_trait_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_TRAIT_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_TRAIT_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_me_universe_metadata() -> pd.DataFrame:
+    if os.path.exists(ME_UNIVERSE_FILE):
+        try:
+            return pd.read_csv(ME_UNIVERSE_FILE, dtype={"ticker": str})
         except Exception:
             pass
     return pd.DataFrame()
@@ -946,6 +966,22 @@ else:
         use_container_width=True,
     )
 
+st.markdown("### 🧭 Entry Trait Performance")
+_trait_summary = load_entry_trait_summary()
+if _trait_summary.empty:
+    st.caption("市場区分・時価総額・ボラティリティ別の実績は蓄積中です。")
+else:
+    _trait_show = _trait_summary.copy()
+    _trait_show = _trait_show.rename(columns={
+        "trait_axis": "Axis", "trait_key": "Trait", "candidate_days": "候補数",
+        "entry_ready": "READY", "entry_ready_rate": "READY率%", "tracked_entries": "追跡Entry",
+        "win_5d": "5D勝率%", "avg_5d": "5D平均%", "avg_10d": "10D平均%",
+        "sample_5d": "5D N", "confidence": "Confidence",
+    })
+    _trait_cols = [x for x in ["Axis","Trait","候補数","READY","READY率%","追跡Entry","5D勝率%","5D平均%","10D平均%","5D N","Confidence"] if x in _trait_show.columns]
+    st.dataframe(_trait_show[_trait_cols], hide_index=True, use_container_width=True)
+    st.caption("Trait補正は各軸最大±1点、合計最大±2.5点。5D Nが8件未満では0点です。")
+
 st.markdown("## 🎯 Short Cover Entry Hunter")
 st.caption(
     "前回の正式ACTIVEアラートを翌営業日の5分足で監視します。"
@@ -1042,6 +1078,8 @@ _entry_candidates = combine_entry_candidates(
     limit=8,
     source_summary=load_entry_source_summary(),
     signal_summary=load_entry_signal_summary(),
+    trait_summary=load_entry_trait_summary(),
+    universe_meta=load_me_universe_metadata(),
 )
 
 if _entry_candidates.empty:
@@ -1079,6 +1117,11 @@ else:
             "state_bonus": _candidate.get("state_bonus", 0.0),
             "state_confidence": _candidate.get("state_confidence", "BASE"),
             "signal_key": _candidate.get("signal_key", ""),
+            "trait_market": _candidate.get("trait_market", ""),
+            "trait_size": _candidate.get("trait_size", ""),
+            "trait_vol": _candidate.get("trait_vol", ""),
+            "trait_bonus": _candidate.get("trait_bonus", 0.0),
+            "trait_confidence": _candidate.get("trait_confidence", "BASE"),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1147,12 +1190,12 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "source", "signal_key", "tier", "Score", "Adaptive", "State", "監視日",
+                "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "trait_market", "trait_size", "trait_vol", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Adaptive", "state_bonus": "State", "reason": "成立条件", "risk": "注意",
+                "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
