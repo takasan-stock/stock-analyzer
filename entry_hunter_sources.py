@@ -15,6 +15,8 @@ ENTRY_COLUMNS = [
     "source_detail",
     "source_score",
     "source_rank",
+    "adaptive_bonus",
+    "adaptive_confidence",
 ]
 
 
@@ -35,6 +37,106 @@ def _num(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
+def _clip(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
+
+
+def build_source_adjustments(
+    source_summary: pd.DataFrame | None,
+    *,
+    min_samples: int = 5,
+    full_samples: int = 20,
+    max_bonus: float = 8.0,
+) -> dict[str, dict[str, float | str]]:
+    """Convert prospective live source performance into conservative bonuses.
+
+    Safety rules:
+      - no adaptive change before at least min_samples resolved 5D trades
+      - shrink the effect toward zero until full_samples observations
+      - cap any source adjustment to +/- max_bonus points
+      - use 5D win rate, 5D average return and MFE/MAE; no optimizer
+
+    With little or no data, the system behaves like the fixed v0.9 ranking.
+    """
+    sources = ["ME HUNTER", "SHORT COVER", "SHORT+ME"]
+    result = {
+        source: {
+            "bonus": 0.0,
+            "confidence": "BASE",
+            "sample_5d": 0.0,
+            "raw_edge": 0.0,
+        }
+        for source in sources
+    }
+    if source_summary is None or source_summary.empty:
+        return result
+
+    summary = source_summary.copy()
+    if "source" not in summary.columns:
+        return result
+    summary["source"] = summary["source"].fillna("").astype(str).str.upper()
+
+    for source in sources:
+        rows = summary[summary["source"] == source]
+        if rows.empty:
+            continue
+        row = rows.iloc[-1]
+        n = _num(row.get("sample_5d")) or 0.0
+        if n < float(min_samples):
+            result[source]["sample_5d"] = n
+            result[source]["confidence"] = "DATA BUILDING"
+            continue
+
+        win5 = _num(row.get("win_5d"))
+        avg5 = _num(row.get("avg_5d"))
+        mfe = _num(row.get("avg_mfe_10d"))
+        mae = _num(row.get("avg_mae_10d"))
+
+        win_component = 0.0
+        avg_component = 0.0
+        rr_component = 0.0
+
+        if win5 is not None:
+            win_component = _clip((win5 - 50.0) / 20.0, -1.0, 1.0)
+        if avg5 is not None:
+            avg_component = _clip(avg5 / 5.0, -1.0, 1.0)
+        if mfe is not None and mae is not None and abs(mae) >= 0.25:
+            rr = mfe / abs(mae)
+            rr_component = _clip((rr - 1.5) / 1.5, -1.0, 1.0)
+
+        raw_edge = (
+            win_component * 0.45
+            + avg_component * 0.35
+            + rr_component * 0.20
+        )
+        shrink = _clip(
+            (n - float(min_samples) + 1.0)
+            / max(1.0, float(full_samples - min_samples + 1)),
+            0.0,
+            1.0,
+        )
+        bonus = _clip(
+            raw_edge * float(max_bonus) * shrink,
+            -float(max_bonus),
+            float(max_bonus),
+        )
+
+        if n >= full_samples:
+            confidence = "ADAPTIVE"
+        elif n >= 10:
+            confidence = "WARMING"
+        else:
+            confidence = "LOW SAMPLE"
+
+        result[source] = {
+            "bonus": round(bonus, 3),
+            "confidence": confidence,
+            "sample_5d": n,
+            "raw_edge": round(raw_edge, 4),
+        }
+
+    return result
 
 def normalize_entry_candidates(
     frame: pd.DataFrame | None,
@@ -83,6 +185,10 @@ def normalize_entry_candidates(
         out["source_score"] = 0.0
     if "source_rank" not in out.columns:
         out["source_rank"] = pd.NA
+    if "adaptive_bonus" not in out.columns:
+        out["adaptive_bonus"] = 0.0
+    if "adaptive_confidence" not in out.columns:
+        out["adaptive_confidence"] = "BASE"
 
     out["source_score"] = pd.to_numeric(
         out["source_score"],
@@ -91,6 +197,13 @@ def normalize_entry_candidates(
     out["source_rank"] = pd.to_numeric(
         out["source_rank"],
         errors="coerce",
+    )
+    out["adaptive_bonus"] = pd.to_numeric(
+        out["adaptive_bonus"],
+        errors="coerce",
+    ).fillna(0.0)
+    out["adaptive_confidence"] = (
+        out["adaptive_confidence"].fillna("BASE").astype(str)
     )
 
     for col in ENTRY_COLUMNS:
@@ -293,6 +406,7 @@ def combine_entry_candidates(
     me_candidates: pd.DataFrame | None,
     *,
     limit: int = 8,
+    source_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Merge Entry Hunter sources and dedupe by ticker.
 
@@ -305,6 +419,7 @@ def combine_entry_candidates(
         me_candidates,
         default_source="ME HUNTER",
     )
+    adjustments = build_source_adjustments(source_summary)
 
     merged = pd.concat([short_df, me_df], ignore_index=True)
     if merged.empty:
@@ -333,16 +448,41 @@ def combine_entry_candidates(
 
         if "SHORT COVER" in sources and "ME HUNTER" in sources:
             best["source"] = "SHORT+ME"
+            adaptive = adjustments.get("SHORT+ME", {})
+            adaptive_bonus = float(adaptive.get("bonus", 0.0) or 0.0)
+            confluence_bonus = _clip(8.0 + adaptive_bonus, 3.0, 14.0)
             best["source_score"] = min(
                 100.0,
-                float(group["source_score"].max()) + 8.0,
+                float(group["source_score"].max()) + confluence_bonus,
+            )
+            best["adaptive_bonus"] = adaptive_bonus
+            best["adaptive_confidence"] = str(
+                adaptive.get("confidence", "BASE")
             )
             best["alert_tier"] = "🔥 CONFLUENCE"
         else:
             best["source"] = next(iter(sources)) if sources else ""
+            adaptive = adjustments.get(str(best["source"]), {})
+            adaptive_bonus = float(adaptive.get("bonus", 0.0) or 0.0)
+            best["source_score"] = _clip(
+                float(best.get("source_score", 0.0) or 0.0) + adaptive_bonus,
+                0.0,
+                100.0,
+            )
+            best["adaptive_bonus"] = adaptive_bonus
+            best["adaptive_confidence"] = str(
+                adaptive.get("confidence", "BASE")
+            )
 
         if details:
             best["source_detail"] = " | ".join(dict.fromkeys(details))
+        adaptive_bonus = _num(best.get("adaptive_bonus")) or 0.0
+        adaptive_conf = str(best.get("adaptive_confidence", "BASE") or "BASE")
+        if abs(adaptive_bonus) >= 0.05:
+            best["source_detail"] = (
+                str(best.get("source_detail", "") or "")
+                + f" | Adaptive {adaptive_bonus:+.1f} ({adaptive_conf})"
+            ).strip(" |")
         if not str(best.get("alert_tier", "") or "") and tiers:
             best["alert_tier"] = tiers[0]
 
