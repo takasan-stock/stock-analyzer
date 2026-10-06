@@ -1060,6 +1060,24 @@ else:
 if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
 
+_command_focus_ticker = str(
+    st.session_state.pop("command_center_focus_ticker", "") or ""
+).replace(".0", "")
+_command_focus_name = str(
+    st.session_state.pop("command_center_focus_name", "") or ""
+)
+_command_focus_reason = str(
+    st.session_state.pop("command_center_focus_reason", "") or ""
+)
+
+if _command_focus_ticker:
+    st.success(
+        f"🔥 Daily Command Center から {_command_focus_ticker} "
+        f"{_command_focus_name} を引き継ぎました。"
+    )
+    if _command_focus_reason:
+        st.caption(f"優先理由: {_command_focus_reason}")
+
 _entry_history = normalize_alert_history(st.session_state.short_cover_alert_history)
 _short_entry_candidates = select_entry_hunter_candidates(
     _entry_history,
@@ -1082,6 +1100,25 @@ _entry_candidates = combine_entry_candidates(
     trait_summary=load_entry_trait_summary(),
     universe_meta=load_me_universe_metadata(),
 )
+
+if _command_focus_ticker and not _entry_candidates.empty:
+    _focus_mask = (
+        _entry_candidates["ticker"].astype(str).str.replace(".0", "", regex=False)
+        == _command_focus_ticker
+    )
+    if _focus_mask.any():
+        _entry_candidates = pd.concat(
+            [
+                _entry_candidates[_focus_mask],
+                _entry_candidates[~_focus_mask],
+            ],
+            ignore_index=True,
+        )
+    else:
+        st.warning(
+            f"{_command_focus_ticker} は現在のEntry Hunter監視条件から外れています。"
+            " PRE-MARKET候補から状態が変化した可能性があります。"
+        )
 
 if _entry_candidates.empty:
     st.info("翌営業日監視の対象になるShort Cover / ME候補はありません。")
