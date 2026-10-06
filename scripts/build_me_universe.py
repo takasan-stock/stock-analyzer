@@ -271,6 +271,7 @@ def _build_universe_snapshot(
         ret60 = None
         high120_dist = None
         volume_ratio = None
+        realized_vol20_pct = None
 
         if len(close.dropna()) >= 21:
             p0 = _num(close.iloc[-21])
@@ -283,6 +284,10 @@ def _build_universe_snapshot(
             p1 = _num(close.iloc[-1])
             if p0 and p1:
                 ret60 = p1 / p0 - 1.0
+
+        daily_ret = close.pct_change().tail(20).dropna()
+        if len(daily_ret) >= 10:
+            realized_vol20_pct = float(daily_ret.std(ddof=0) * math.sqrt(252.0) * 100.0)
 
         last120 = close.tail(120).dropna()
         if not last120.empty:
@@ -307,6 +312,7 @@ def _build_universe_snapshot(
                 "ret60": ret60,
                 "distance_120d_high": high120_dist,
                 "volume_ratio20": volume_ratio,
+                "realized_vol20_pct": realized_vol20_pct,
                 "market_cap": _num(latest.get("market_cap")),
                 "per": _num(latest.get("per")),
                 "pbr": _num(latest.get("pbr")),
