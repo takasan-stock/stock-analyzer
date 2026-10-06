@@ -24,6 +24,7 @@ def _learning_confidence(candidate: Mapping[str, Any]) -> str:
         str(candidate.get("adaptive_confidence", "") or "").upper(),
         str(candidate.get("state_confidence", "") or "").upper(),
         str(candidate.get("trait_confidence", "") or "").upper(),
+        str(candidate.get("fast_confidence", "") or "").upper(),
     }
     if "ADAPTIVE" in labels:
         return "GOOD"
@@ -48,6 +49,33 @@ def _rating(score: float) -> str:
     if score >= 60:
         return "B"
     return "C"
+
+
+
+def build_opportunity_breakdown(
+    candidate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the already-applied adaptive score contribution breakdown."""
+    source_bonus = _num(candidate.get("adaptive_bonus")) or 0.0
+    setup_bonus = _num(candidate.get("state_bonus")) or 0.0
+    trait_bonus = _num(candidate.get("trait_bonus")) or 0.0
+    fast_bonus = _num(candidate.get("fast_bonus")) or 0.0
+    total = source_bonus + setup_bonus + trait_bonus + fast_bonus
+
+    text = (
+        f"Source {source_bonus:+.1f}｜"
+        f"Setup {setup_bonus:+.1f}｜"
+        f"Trait {trait_bonus:+.1f}｜"
+        f"Fast0D {fast_bonus:+.1f}"
+    )
+    return {
+        "source_bonus": round(source_bonus, 3),
+        "setup_bonus": round(setup_bonus, 3),
+        "trait_bonus": round(trait_bonus, 3),
+        "fast_bonus": round(fast_bonus, 3),
+        "adaptive_total": round(total, 3),
+        "adaptive_breakdown": text,
+    }
 
 
 def build_entry_opportunity(
@@ -160,9 +188,11 @@ def build_entry_opportunity(
     elif status == "🟡 WEAKENING":
         reasons.append("勢い低下")
 
-    source_bonus = _num(candidate.get("adaptive_bonus")) or 0.0
-    state_bonus = _num(candidate.get("state_bonus")) or 0.0
-    trait_bonus = _num(candidate.get("trait_bonus")) or 0.0
+    breakdown = build_opportunity_breakdown(candidate)
+    source_bonus = float(breakdown["source_bonus"])
+    state_bonus = float(breakdown["setup_bonus"])
+    trait_bonus = float(breakdown["trait_bonus"])
+    fast_bonus = float(breakdown["fast_bonus"])
 
     if source_bonus >= 0.5:
         reasons.append("Source実績+")
@@ -179,6 +209,11 @@ def build_entry_opportunity(
     elif trait_bonus <= -0.5:
         reasons.append("銘柄特性-")
 
+    if fast_bonus >= 0.5:
+        reasons.append("Fast0D+")
+    elif fast_bonus <= -0.5:
+        reasons.append("Fast0D-")
+
     if coverage < 100:
         reasons.append("Intraday未確定")
 
@@ -191,4 +226,5 @@ def build_entry_opportunity(
         "candidate_score": round(candidate_score, 1),
         "live_entry_score": None if entry_score is None else round(entry_score, 1),
         "learning_confidence": _learning_confidence(candidate),
+        **breakdown,
     }
