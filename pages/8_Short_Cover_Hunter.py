@@ -148,6 +148,8 @@ CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 DAILY_STATUS_FILE = "data/short_cover_daily_status.json"
 ENTRY_STATUS_FILE = "data/short_cover_entry_status.json"
 ME_SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
+ENTRY_SOURCE_SUMMARY_FILE = "data/entry_hunter_source_summary.csv"
+ENTRY_SOURCE_PERFORMANCE_FILE = "data/entry_hunter_source_performance.csv"
 
 
 def _github_shared_config():
@@ -256,6 +258,24 @@ def load_me_screener_candidates() -> pd.DataFrame:
     if os.path.exists(ME_SCREENER_FILE):
         try:
             return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_source_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SOURCE_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_SOURCE_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_source_performance() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SOURCE_PERFORMANCE_FILE):
+        try:
+            return pd.read_csv(ENTRY_SOURCE_PERFORMANCE_FILE, dtype={"ticker": str})
         except Exception:
             pass
     return pd.DataFrame()
