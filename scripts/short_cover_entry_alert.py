@@ -461,6 +461,12 @@ def main() -> int:
                 "opportunity_reason": opportunity.get("opportunity_reason"),
                 "opportunity_coverage": opportunity.get("opportunity_coverage"),
                 "learning_confidence": opportunity.get("learning_confidence"),
+                "source_bonus": opportunity.get("source_bonus"),
+                "setup_bonus": opportunity.get("setup_bonus"),
+                "trait_bonus": opportunity.get("trait_bonus"),
+                "fast_bonus": opportunity.get("fast_bonus"),
+                "adaptive_total": opportunity.get("adaptive_total"),
+                "adaptive_breakdown": opportunity.get("adaptive_breakdown"),
             })
             continue
 
@@ -505,6 +511,12 @@ def main() -> int:
             "opportunity_reason": opportunity.get("opportunity_reason"),
             "opportunity_coverage": opportunity.get("opportunity_coverage"),
             "learning_confidence": opportunity.get("learning_confidence"),
+            "source_bonus": opportunity.get("source_bonus"),
+            "setup_bonus": opportunity.get("setup_bonus"),
+            "trait_bonus": opportunity.get("trait_bonus"),
+            "fast_bonus": opportunity.get("fast_bonus"),
+            "adaptive_total": opportunity.get("adaptive_total"),
+            "adaptive_breakdown": opportunity.get("adaptive_breakdown"),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
