@@ -12,6 +12,7 @@ import json
 import datetime
 import time
 import xml.etree.ElementTree as ET
+from daily_command_center import build_daily_command_center
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2014,6 +2015,60 @@ if "df" not in st.session_state:
 sync_reports_from_github()
 
 st.title("📊 銘柄管理ダッシュボード")
+
+# ==========================================
+# Daily Command Center（今日の最優先3銘柄）
+# ==========================================
+def _load_command_center_entry_status():
+    path = "data/short_cover_entry_status.json"
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _load_command_center_me_screener():
+    path = "data/multiple_expansion/me_screener_latest.csv"
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+_command_center = build_daily_command_center(
+    _load_command_center_entry_status(),
+    _load_command_center_me_screener(),
+    as_of=pd.Timestamp.now(),
+    limit=3,
+)
+
+st.markdown("### 🔥 TODAY'S TOP 3")
+if _command_center.empty:
+    st.caption("Entry Opportunityの候補はまだありません。ME / Entry Hunterの次回更新後に表示されます。")
+else:
+    _top_cols = st.columns(len(_command_center))
+    for _i, (_, _row) in enumerate(_command_center.iterrows()):
+        with _top_cols[_i]:
+            st.metric(
+                label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
+                value=f"{float(_row['opportunity_score']):.0f}",
+                delta=f"{_row['ticker']} {_row['name']}",
+            )
+            st.caption(
+                f"{_row['source']}｜{_row['signal_key']}｜{_row['entry_status']}  \n"
+                f"Coverage {float(_row['coverage']):.0f}%｜{_row['reason']}"
+            )
+    if (_command_center['mode'] == 'PRE-MARKET').all():
+        st.info("現在はPRE-MARKET候補です。寄り付き後はEntry Hunterの実データに自動で置き換わります。")
+    else:
+        st.caption("Entry Hunterの最新Opportunityを優先表示しています。")
+
+
 
 # ==========================================
 # カスタムCSS（全体の見た目を整える）
