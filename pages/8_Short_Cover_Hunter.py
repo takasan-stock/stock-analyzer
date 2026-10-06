@@ -150,6 +150,7 @@ ENTRY_STATUS_FILE = "data/short_cover_entry_status.json"
 ME_SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
 ENTRY_SOURCE_SUMMARY_FILE = "data/entry_hunter_source_summary.csv"
 ENTRY_SOURCE_PERFORMANCE_FILE = "data/entry_hunter_source_performance.csv"
+ENTRY_SIGNAL_SUMMARY_FILE = "data/entry_hunter_signal_summary.csv"
 
 
 def _github_shared_config():
@@ -267,6 +268,15 @@ def load_entry_source_summary() -> pd.DataFrame:
     if os.path.exists(ENTRY_SOURCE_SUMMARY_FILE):
         try:
             return pd.read_csv(ENTRY_SOURCE_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_signal_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SIGNAL_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_SIGNAL_SUMMARY_FILE)
         except Exception:
             pass
     return pd.DataFrame()
@@ -1031,6 +1041,7 @@ _entry_candidates = combine_entry_candidates(
     _me_entry_candidates,
     limit=8,
     source_summary=load_entry_source_summary(),
+    signal_summary=load_entry_signal_summary(),
 )
 
 if _entry_candidates.empty:
@@ -1065,6 +1076,9 @@ else:
             "source_detail": _candidate.get("source_detail", ""),
             "adaptive_bonus": _candidate.get("adaptive_bonus", 0.0),
             "adaptive_confidence": _candidate.get("adaptive_confidence", "BASE"),
+            "state_bonus": _candidate.get("state_bonus", 0.0),
+            "state_confidence": _candidate.get("state_confidence", "BASE"),
+            "signal_key": _candidate.get("signal_key", ""),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1133,12 +1147,12 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "source", "tier", "Score", "Adaptive", "監視日",
+                "status", "ticker", "name", "source", "signal_key", "tier", "Score", "Adaptive", "State", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "source": "監視ソース", "tier": "前日Tier", "adaptive_bonus": "Adaptive", "reason": "成立条件", "risk": "注意",
+                "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Adaptive", "state_bonus": "State", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
