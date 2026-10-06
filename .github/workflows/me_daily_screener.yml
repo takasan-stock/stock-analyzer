@@ -1,0 +1,64 @@
+name: ME Daily Screener
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 8 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check J-Quants API key
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          if [ -z "$JQUANTS_API_KEY" ]; then
+            echo "::error::JQUANTS_API_KEY is not configured."
+            exit 1
+          fi
+
+      - name: Build MEX history for portfolio universe
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          python scripts/build_mex_jquants.py --allow-summary-proxy
+
+      - name: Build ME daily ranking
+        run: |
+          python scripts/build_me_screener.py
+
+      - name: Commit latest screener output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/multiple_expansion/mex_latest.csv
+          git add data/multiple_expansion/mex_history.csv
+          git add data/multiple_expansion/mex_events.csv
+          git add data/multiple_expansion/mex_build_diagnostics.csv
+          git add data/multiple_expansion/me_screener_latest.csv
+          git add data/multiple_expansion/me_screener_candidates.csv
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update ME daily screener"
+            git push
+          fi
