@@ -2,6 +2,17 @@ name: ME Daily Screener
 
 on:
   workflow_dispatch:
+    inputs:
+      max_candidates:
+        description: "Heavy MEX candidate count after lightweight all-TSE prefilter"
+        required: false
+        default: "60"
+        type: string
+      min_turnover_yen:
+        description: "Minimum 20-session average traded value (JPY)"
+        required: false
+        default: "50000000"
+        type: string
   schedule:
     - cron: "30 8 * * 1-5"
 
@@ -11,7 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 55
 
     steps:
       - name: Checkout
@@ -36,13 +47,30 @@ jobs:
             exit 1
           fi
 
-      - name: Build MEX history for portfolio universe
+      - name: Resolve workflow inputs
+        id: cfg
+        shell: bash
+        run: |
+          MAX_CANDIDATES="${{ github.event.inputs.max_candidates }}"
+          MIN_TURNOVER="${{ github.event.inputs.min_turnover_yen }}"
+          if [ -z "$MAX_CANDIDATES" ]; then MAX_CANDIDATES="60"; fi
+          if [ -z "$MIN_TURNOVER" ]; then MIN_TURNOVER="50000000"; fi
+          echo "max_candidates=$MAX_CANDIDATES" >> "$GITHUB_OUTPUT"
+          echo "min_turnover=$MIN_TURNOVER" >> "$GITHUB_OUTPUT"
+
+      - name: STEP 1 - All TSE lightweight ME prefilter
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
-          python scripts/build_mex_jquants.py --allow-summary-proxy
+          python scripts/build_me_universe.py             --max-candidates "${{ steps.cfg.outputs.max_candidates }}"             --min-turnover-yen "${{ steps.cfg.outputs.min_turnover }}"
 
-      - name: Build ME daily ranking
+      - name: STEP 2 - Heavy PIT/FCF MEX calculation
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy
+
+      - name: STEP 3 - Build ME daily ranking
         run: |
           python scripts/build_me_screener.py
 
@@ -50,6 +78,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/multiple_expansion/me_universe_snapshot.csv
+          git add data/multiple_expansion/me_universe_candidates.csv
           git add data/multiple_expansion/mex_latest.csv
           git add data/multiple_expansion/mex_history.csv
           git add data/multiple_expansion/mex_events.csv
