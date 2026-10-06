@@ -2159,6 +2159,12 @@ def _render_command_center_cards(frame, *, key_prefix):
                 st.session_state["pretrade_opportunity_action"] = _handoff["opportunity_action"]
                 st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
                 st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
+                st.session_state["pretrade_source_bonus"] = _handoff.get("source_bonus")
+                st.session_state["pretrade_setup_bonus"] = _handoff.get("setup_bonus")
+                st.session_state["pretrade_trait_bonus"] = _handoff.get("trait_bonus")
+                st.session_state["pretrade_fast_bonus"] = _handoff.get("fast_bonus")
+                st.session_state["pretrade_adaptive_total"] = _handoff.get("adaptive_total")
+                st.session_state["pretrade_adaptive_breakdown"] = _handoff.get("adaptive_breakdown")
                 st.switch_page("pages/9_Pre_Trade_Check.py")
 
 
