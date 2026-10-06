@@ -11,7 +11,12 @@ if str(ROOT) not in sys.path:
 import pandas as pd
 import yfinance as yf
 
-from after_close_review import build_after_close_review
+from after_close_review import (
+    build_after_close_review,
+    normalize_after_close_history,
+    summarize_after_close_feedback,
+    update_after_close_history,
+)
 
 
 DATA_DIR = ROOT / "data"
@@ -19,6 +24,24 @@ NOTIFICATION_FILE = DATA_DIR / "short_cover_entry_notifications.csv"
 COMMAND_CENTER_FILE = DATA_DIR / "daily_command_center_latest.csv"
 OUT_JSON = DATA_DIR / "after_close_review_latest.json"
 OUT_CSV = DATA_DIR / "after_close_review_latest.csv"
+HISTORY_CSV = DATA_DIR / "after_close_review_history.csv"
+FEEDBACK_CSV = DATA_DIR / "after_close_feedback_summary.csv"
+
+
+
+def _load_history() -> pd.DataFrame:
+    if not HISTORY_CSV.exists():
+        return normalize_after_close_history(None)
+    try:
+        return normalize_after_close_history(
+            pd.read_csv(
+                HISTORY_CSV,
+                dtype={"ticker": str},
+                encoding="utf-8-sig",
+            )
+        )
+    except Exception:
+        return normalize_after_close_history(None)
 
 
 def _load_notifications() -> pd.DataFrame:
@@ -133,8 +156,26 @@ def main() -> int:
     )
 
     rows = review.get("rows", [])
-    pd.DataFrame(rows).to_csv(
+    review_rows = pd.DataFrame(rows)
+    review_rows.to_csv(
         OUT_CSV,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    history = update_after_close_history(
+        _load_history(),
+        review_rows,
+    )
+    history.to_csv(
+        HISTORY_CSV,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    feedback = summarize_after_close_feedback(history)
+    feedback.to_csv(
+        FEEDBACK_CSV,
         index=False,
         encoding="utf-8-sig",
     )
@@ -149,6 +190,8 @@ def main() -> int:
     )
     print(f"[AFTER-CLOSE] wrote {OUT_JSON}")
     print(f"[AFTER-CLOSE] wrote {OUT_CSV}")
+    print(f"[AFTER-CLOSE] wrote {HISTORY_CSV}")
+    print(f"[AFTER-CLOSE] wrote {FEEDBACK_CSV}")
     return 0
 
 
