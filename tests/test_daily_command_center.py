@@ -4,6 +4,7 @@ from daily_command_center import (
     build_command_center_handoff,
     build_command_center_session,
     build_daily_command_center,
+    build_score_breakdown_rows,
     resolve_command_center_mode,
     tradingview_url,
 )
@@ -335,3 +336,43 @@ def test_command_center_keeps_adaptive_breakdown():
     handoff = build_command_center_handoff(row)
     assert float(handoff["fast_bonus"]) == 0.8
     assert "Source +3.2" in handoff["adaptive_breakdown"]
+
+
+def test_score_breakdown_rows_normalize_each_component():
+    row = {
+        "source_bonus": 4.0,
+        "setup_bonus": -2.0,
+        "trait_bonus": 1.25,
+        "fast_bonus": 0.0,
+    }
+    out = build_score_breakdown_rows(row)
+    by_label = {item["label"]: item for item in out}
+
+    assert by_label["Source"]["percent"] == 50.0
+    assert by_label["Source"]["direction"] == "positive"
+
+    assert by_label["Setup"]["percent"] == 50.0
+    assert by_label["Setup"]["direction"] == "negative"
+
+    assert by_label["Trait"]["percent"] == 50.0
+    assert by_label["Trait"]["direction"] == "positive"
+
+    assert by_label["Fast0D"]["percent"] == 0.0
+    assert by_label["Fast0D"]["direction"] == "neutral"
+
+
+def test_score_breakdown_rows_clip_to_component_caps():
+    row = {
+        "source_bonus": 99,
+        "setup_bonus": -99,
+        "trait_bonus": 99,
+        "fast_bonus": -99,
+    }
+    out = build_score_breakdown_rows(row)
+    by_label = {item["label"]: item for item in out}
+
+    assert by_label["Source"]["value"] == 8.0
+    assert by_label["Setup"]["value"] == -4.0
+    assert by_label["Trait"]["value"] == 2.5
+    assert by_label["Fast0D"]["value"] == -2.5
+    assert all(item["percent"] == 100.0 for item in out)
