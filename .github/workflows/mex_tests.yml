@@ -19,6 +19,7 @@ on:
       - "pages/14_Multiple_Expansion_Hunter.py"
       - "pages/15_ME_Daily_Screener.py"
       - "pages/8_Short_Cover_Hunter.py"
+      - "pages/9_Pre_Trade_Check.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
       - "tests/test_multiple_expansion_screener.py"
@@ -112,4 +113,5 @@ jobs:
             pages/14_Multiple_Expansion_Hunter.py \
             pages/15_ME_Daily_Screener.py \
             pages/8_Short_Cover_Hunter.py \
+            pages/9_Pre_Trade_Check.py \
             dashboard_app.py
