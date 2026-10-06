@@ -2,6 +2,8 @@ import pandas as pd
 
 from daily_command_center import build_daily_command_center
 
+# Dashboard command-center regression tests.
+
 
 def test_command_center_prefers_live_entry_status():
     status = {
