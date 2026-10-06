@@ -1057,8 +1057,9 @@ else:
 
     _entry_df = pd.DataFrame(_entry_rows)
     if not _entry_df.empty:
-        _ecols = st.columns(min(5, len(_entry_df)))
-        for _idx, (_, _r) in enumerate(_entry_df.iterrows()):
+        _entry_cards = _entry_df.head(5)
+        _ecols = st.columns(max(1, min(5, len(_entry_cards))))
+        for _idx, (_, _r) in enumerate(_entry_cards.iterrows()):
             with _ecols[_idx]:
                 st.metric(
                     label=str(_r["status"]),
