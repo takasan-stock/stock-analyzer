@@ -16,10 +16,18 @@ ENTRY_COLUMNS = [
     "source_score",
     "source_rank",
     "signal_key",
+    "market_name",
+    "market_cap",
+    "realized_vol20_pct",
+    "trait_market",
+    "trait_size",
+    "trait_vol",
     "adaptive_bonus",
     "adaptive_confidence",
     "state_bonus",
     "state_confidence",
+    "trait_bonus",
+    "trait_confidence",
 ]
 
 
@@ -194,6 +202,68 @@ def build_signal_adjustments(
         }
     return result
 
+
+def classify_candidate_traits(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    out = frame.copy()
+    market = out.get("market_name", pd.Series("", index=out.index)).fillna("").astype(str)
+    out["trait_market"] = "MARKET|OTHER"
+    out.loc[market.str.contains("prime|プライム", case=False, regex=True), "trait_market"] = "MARKET|PRIME"
+    out.loc[market.str.contains("standard|スタンダード", case=False, regex=True), "trait_market"] = "MARKET|STANDARD"
+    out.loc[market.str.contains("growth|グロース", case=False, regex=True), "trait_market"] = "MARKET|GROWTH"
+
+    cap = pd.to_numeric(out.get("market_cap", pd.Series(pd.NA, index=out.index)), errors="coerce")
+    out["trait_size"] = "SIZE|UNKNOWN"
+    out.loc[cap < 30_000_000_000, "trait_size"] = "SIZE|MICRO"
+    out.loc[(cap >= 30_000_000_000) & (cap < 100_000_000_000), "trait_size"] = "SIZE|SMALL"
+    out.loc[(cap >= 100_000_000_000) & (cap < 500_000_000_000), "trait_size"] = "SIZE|MID"
+    out.loc[(cap >= 500_000_000_000) & (cap < 2_000_000_000_000), "trait_size"] = "SIZE|LARGE"
+    out.loc[cap >= 2_000_000_000_000, "trait_size"] = "SIZE|MEGA"
+
+    vol = pd.to_numeric(out.get("realized_vol20_pct", pd.Series(pd.NA, index=out.index)), errors="coerce")
+    out["trait_vol"] = "VOL|UNKNOWN"
+    out.loc[vol < 25.0, "trait_vol"] = "VOL|LOW"
+    out.loc[(vol >= 25.0) & (vol < 45.0), "trait_vol"] = "VOL|MID"
+    out.loc[vol >= 45.0, "trait_vol"] = "VOL|HIGH"
+    return out
+
+
+def build_trait_adjustments(
+    trait_summary: pd.DataFrame | None,
+    *,
+    min_samples: int = 8,
+    full_samples: int = 30,
+    max_axis_bonus: float = 1.0,
+) -> dict[str, dict[str, float | str]]:
+    """Build tiny per-trait bonuses; each axis is capped to avoid fragmentation."""
+    result: dict[str, dict[str, float | str]] = {}
+    if trait_summary is None or trait_summary.empty or "trait_key" not in trait_summary.columns:
+        return result
+    for _, row in trait_summary.iterrows():
+        key = str(row.get("trait_key", "") or "").strip()
+        if not key:
+            continue
+        n = _num(row.get("sample_5d")) or 0.0
+        bonus = 0.0
+        confidence = "DATA BUILDING"
+        if n >= float(min_samples):
+            win5 = _num(row.get("win_5d"))
+            avg5 = _num(row.get("avg_5d"))
+            win_component = 0.0 if win5 is None else _clip((win5 - 50.0) / 20.0, -1.0, 1.0)
+            avg_component = 0.0 if avg5 is None else _clip(avg5 / 5.0, -1.0, 1.0)
+            raw = win_component * 0.60 + avg_component * 0.40
+            shrink = _clip((n - min_samples + 1.0) / max(1.0, full_samples - min_samples + 1.0), 0.0, 1.0)
+            bonus = _clip(raw * max_axis_bonus * shrink, -max_axis_bonus, max_axis_bonus)
+            if n >= full_samples:
+                confidence = "ADAPTIVE"
+            elif n >= 15:
+                confidence = "WARMING"
+            else:
+                confidence = "LOW SAMPLE"
+        result[key] = {"bonus": round(bonus, 3), "confidence": confidence, "sample_5d": n}
+    return result
+
 def normalize_entry_candidates(
     frame: pd.DataFrame | None,
     *,
@@ -243,6 +313,18 @@ def normalize_entry_candidates(
         out["source_rank"] = pd.NA
     if "signal_key" not in out.columns:
         out["signal_key"] = ""
+    if "market_name" not in out.columns:
+        out["market_name"] = ""
+    if "market_cap" not in out.columns:
+        out["market_cap"] = pd.NA
+    if "realized_vol20_pct" not in out.columns:
+        out["realized_vol20_pct"] = pd.NA
+    if "trait_market" not in out.columns:
+        out["trait_market"] = ""
+    if "trait_size" not in out.columns:
+        out["trait_size"] = ""
+    if "trait_vol" not in out.columns:
+        out["trait_vol"] = ""
     if "adaptive_bonus" not in out.columns:
         out["adaptive_bonus"] = 0.0
     if "adaptive_confidence" not in out.columns:
@@ -251,6 +333,10 @@ def normalize_entry_candidates(
         out["state_bonus"] = 0.0
     if "state_confidence" not in out.columns:
         out["state_confidence"] = "BASE"
+    if "trait_bonus" not in out.columns:
+        out["trait_bonus"] = 0.0
+    if "trait_confidence" not in out.columns:
+        out["trait_confidence"] = "BASE"
 
     out["source_score"] = pd.to_numeric(
         out["source_score"],
@@ -265,6 +351,14 @@ def normalize_entry_candidates(
         errors="coerce",
     ).fillna(0.0)
     out["signal_key"] = out["signal_key"].fillna("").astype(str)
+    out["market_name"] = out["market_name"].fillna("").astype(str)
+    out["market_cap"] = pd.to_numeric(out["market_cap"], errors="coerce")
+    out["realized_vol20_pct"] = pd.to_numeric(
+        out["realized_vol20_pct"], errors="coerce"
+    )
+    out["trait_market"] = out["trait_market"].fillna("").astype(str)
+    out["trait_size"] = out["trait_size"].fillna("").astype(str)
+    out["trait_vol"] = out["trait_vol"].fillna("").astype(str)
     out["adaptive_confidence"] = (
         out["adaptive_confidence"].fillna("BASE").astype(str)
     )
@@ -275,11 +369,18 @@ def normalize_entry_candidates(
     out["state_confidence"] = (
         out["state_confidence"].fillna("BASE").astype(str)
     )
+    out["trait_bonus"] = pd.to_numeric(
+        out["trait_bonus"], errors="coerce"
+    ).fillna(0.0)
+    out["trait_confidence"] = (
+        out["trait_confidence"].fillna("BASE").astype(str)
+    )
 
     for col in ENTRY_COLUMNS:
         if col not in out.columns:
             out[col] = None
 
+    out = classify_candidate_traits(out)
     return out[ENTRY_COLUMNS].copy()
 
 
@@ -490,6 +591,7 @@ def combine_entry_candidates(
     limit: int = 8,
     source_summary: pd.DataFrame | None = None,
     signal_summary: pd.DataFrame | None = None,
+    trait_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Merge Entry Hunter sources and dedupe by ticker.
 
@@ -504,6 +606,7 @@ def combine_entry_candidates(
     )
     adjustments = build_source_adjustments(source_summary)
     signal_adjustments = build_signal_adjustments(signal_summary)
+    trait_adjustments = build_trait_adjustments(trait_summary)
 
     merged = pd.concat([short_df, me_df], ignore_index=True)
     if merged.empty:
@@ -583,6 +686,28 @@ def combine_entry_candidates(
             100.0,
         )
 
+        trait_total = 0.0
+        trait_confs = []
+        for trait_col in ["trait_market", "trait_size", "trait_vol"]:
+            trait_key = str(best.get(trait_col, "") or "")
+            adj = trait_adjustments.get(trait_key, {})
+            trait_total += float(adj.get("bonus", 0.0) or 0.0)
+            conf = str(adj.get("confidence", "") or "")
+            if conf:
+                trait_confs.append(conf)
+        trait_total = _clip(trait_total, -2.5, 2.5)
+        best["trait_bonus"] = trait_total
+        best["trait_confidence"] = (
+            "ADAPTIVE"
+            if "ADAPTIVE" in trait_confs
+            else ("WARMING" if "WARMING" in trait_confs else ("LOW SAMPLE" if "LOW SAMPLE" in trait_confs else "BASE"))
+        )
+        best["source_score"] = _clip(
+            float(best.get("source_score", 0.0) or 0.0) + trait_total,
+            0.0,
+            100.0,
+        )
+
         if details:
             best["source_detail"] = " | ".join(dict.fromkeys(details))
         adaptive_bonus = _num(best.get("adaptive_bonus")) or 0.0
@@ -598,6 +723,13 @@ def combine_entry_candidates(
             best["source_detail"] = (
                 str(best.get("source_detail", "") or "")
                 + f" | State {state_bonus:+.1f} ({state_conf})"
+            ).strip(" |")
+        trait_bonus = _num(best.get("trait_bonus")) or 0.0
+        trait_conf = str(best.get("trait_confidence", "BASE") or "BASE")
+        if abs(trait_bonus) >= 0.05:
+            best["source_detail"] = (
+                str(best.get("source_detail", "") or "")
+                + f" | Trait {trait_bonus:+.1f} ({trait_conf})"
             ).strip(" |")
         if not str(best.get("alert_tier", "") or "") and tiers:
             best["alert_tier"] = tiers[0]
