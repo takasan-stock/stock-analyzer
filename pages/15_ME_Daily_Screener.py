@@ -16,6 +16,7 @@ st.set_page_config(
 
 HISTORY_FILE = "data/multiple_expansion/mex_history.csv"
 SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
+CHANGE_FILE = "data/multiple_expansion/me_screener_changes.csv"
 
 
 def _load_csv(path: str) -> pd.DataFrame:
@@ -53,6 +54,7 @@ st.caption(
 
 cached = _load_csv(SCREENER_FILE)
 history = _load_csv(HISTORY_FILE)
+changes = _load_csv(CHANGE_FILE)
 
 if cached.empty:
     if history.empty:
@@ -74,6 +76,51 @@ if "screen_rank" not in screener.columns and not history.empty:
     screener = build_daily_screener(history)
 
 candidates = candidate_only(screener)
+
+if not changes.empty:
+    st.markdown("## 🚨 今日の重要変化")
+    change_cols = [
+        col
+        for col in [
+            "event_type",
+            "ticker",
+            "company_name",
+            "previous_state",
+            "current_state",
+            "current_decision",
+            "current_rank",
+            "sw_score",
+            "hist_edge_score",
+            "fcf_engine_score",
+            "change_reason",
+        ]
+        if col in changes.columns
+    ]
+    change_view = changes[change_cols].copy()
+    change_view = change_view.rename(
+        columns={
+            "event_type": "変化",
+            "ticker": "Code",
+            "company_name": "銘柄",
+            "previous_state": "前回",
+            "current_state": "現在",
+            "current_decision": "Decision",
+            "current_rank": "Rank",
+            "sw_score": "SW Score",
+            "hist_edge_score": "Hist Edge",
+            "fcf_engine_score": "FCF Score",
+            "change_reason": "理由",
+        }
+    )
+    st.dataframe(
+        change_view,
+        hide_index=True,
+        use_container_width=True,
+        height=min(300, 72 + 34 * len(change_view)),
+    )
+    st.caption("同じ状態のままなら通知しません。R-EARLY / R-READY / RE-EXP / PRIORITY WATCH / TOP10新規だけを抽出します。")
+else:
+    st.info("今日は新しい重要状態変化はありません。ランキングは下で確認できます。")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("候補数", len(candidates))
@@ -132,6 +179,7 @@ cols = [
         "screen_rank",
         "ticker",
         "company_name",
+        "market_name",
         "candidate_type",
         "second_wave_state",
         "sw_decision",
@@ -158,6 +206,7 @@ rename = {
     "screen_rank": "Rank",
     "ticker": "Code",
     "company_name": "銘柄",
+    "market_name": "市場",
     "candidate_type": "Wave",
     "second_wave_state": "State",
     "sw_decision": "Decision",
