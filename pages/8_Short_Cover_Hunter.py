@@ -14,6 +14,8 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+
 from short_cover import (
     ALERT_HISTORY_COLUMNS,
     append_priority_alert_history,
@@ -145,6 +147,7 @@ ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
 CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 DAILY_STATUS_FILE = "data/short_cover_daily_status.json"
 ENTRY_STATUS_FILE = "data/short_cover_entry_status.json"
+ME_SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
 
 
 def _github_shared_config():
@@ -247,6 +250,15 @@ def format_automation_status(value) -> str:
     }
     text = str(value or "UNKNOWN")
     return mapping.get(text, text)
+
+
+def load_me_screener_candidates() -> pd.DataFrame:
+    if os.path.exists(ME_SCREENER_FILE):
+        try:
+            return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
 
 
 def load_entry_alert_status() -> dict:
@@ -982,15 +994,26 @@ if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
 
 _entry_history = normalize_alert_history(st.session_state.short_cover_alert_history)
-_entry_candidates = select_entry_hunter_candidates(
+_short_entry_candidates = select_entry_hunter_candidates(
     _entry_history,
     as_of=pd.Timestamp.now(),
     max_calendar_days=4,
     limit=5,
 )
+_me_entry_candidates = select_me_entry_candidates(
+    load_me_screener_candidates(),
+    as_of=pd.Timestamp.now(),
+    max_calendar_days=4,
+    limit=5,
+)
+_entry_candidates = combine_entry_candidates(
+    _short_entry_candidates,
+    _me_entry_candidates,
+    limit=8,
+)
 
 if _entry_candidates.empty:
-    st.info("翌営業日監視の対象になる直近ACTIVEアラートはありません。")
+    st.info("翌営業日監視の対象になるShort Cover / ME候補はありません。")
 else:
     _entry_rows = []
     for _, _candidate in _entry_candidates.iterrows():
@@ -1017,6 +1040,8 @@ else:
             "name": _candidate.get("name", ""),
             "alert_date": _alert_date,
             "tier": _candidate.get("alert_tier", ""),
+            "source": _candidate.get("source", ""),
+            "source_detail": _candidate.get("source_detail", ""),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1038,7 +1063,7 @@ else:
                 st.metric(
                     label=str(_r["status"]),
                     value=f"{float(_r['entry_score']):.0f}",
-                    delta=f"{_r['ticker']} {_r['name']}",
+                    delta=f"{_r['ticker']} {_r['name']} [{_r.get('source', '')}]",
                 )
                 _gap_text = "—" if pd.isna(_r["gap_pct"]) else f"{float(_r['gap_pct']):+.1f}%"
                 _rv_text = "—" if pd.isna(_r["relvol15"]) else f"{float(_r['relvol15']):.1f}x"
@@ -1084,19 +1109,20 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "tier", "Score", "監視日",
+                "status", "ticker", "name", "source", "tier", "Score", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
+                "source": "監視ソース", "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
         )
 
         st.caption(
-            "目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
+            "監視ソース：SHORT COVER / ME HUNTER / SHORT+ME（両方一致）。"
+            " 目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
             " 🟡 WAIT＝条件未成立。🔴 CANCEL＝VWAP/15分安値など初動崩れ。"
             " 大幅GUは追いかけず注意側に評価します。"
         )
