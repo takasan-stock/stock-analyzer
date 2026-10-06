@@ -1,6 +1,10 @@
 import pandas as pd
 
-from daily_command_center import build_daily_command_center
+from daily_command_center import (
+    build_command_center_handoff,
+    build_daily_command_center,
+    tradingview_url,
+)
 
 # Dashboard command-center regression tests.
 
@@ -152,3 +156,28 @@ def test_rank_change_uses_previous_day_snapshot():
     assert out.iloc[0]["previous_rank"] == 2
     assert out.iloc[0]["rank_trend"] == "↑1"
     assert "SHORT+ME合流" in out.iloc[0]["decision_card"]
+
+
+def test_tradingview_url_uses_tse_symbol():
+    assert tradingview_url("6857") == "https://www.tradingview.com/chart/?symbol=TSE%3A6857"
+
+
+def test_command_center_handoff_keeps_opportunity_context():
+    row = {
+        "ticker": "6857",
+        "name": "Advantest",
+        "source": "SHORT+ME",
+        "signal_key": "CONFLUENCE|R-READY|EARLY",
+        "opportunity_score": 91,
+        "opportunity_rating": "A+",
+        "opportunity_action": "ENTRY PRIORITY",
+        "reason": "SHORT+ME / 寄り後READY",
+        "coverage": 100,
+        "decision_card": "SHORT+ME合流｜R-READY×EARLY｜寄り後READY",
+        "mode": "LIVE",
+    }
+    out = build_command_center_handoff(row)
+    assert out["ticker"] == "6857"
+    assert out["opportunity_score"] == 91
+    assert out["opportunity_rating"] == "A+"
+    assert out["decision_card"].startswith("SHORT+ME合流")
