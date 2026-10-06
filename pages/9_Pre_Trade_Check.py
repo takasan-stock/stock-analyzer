@@ -247,6 +247,11 @@ incoming_ticker = normalize_ticker(st.session_state.pop("pretrade_ticker", ""))
 incoming_source = str(st.session_state.pop("pretrade_source", "") or "").strip()
 incoming_name = str(st.session_state.pop("pretrade_name", "") or "").strip()
 incoming_earnings_days = st.session_state.pop("pretrade_earnings_days", None)
+incoming_opportunity_score = st.session_state.pop("pretrade_opportunity_score", None)
+incoming_opportunity_rating = str(st.session_state.pop("pretrade_opportunity_rating", "") or "")
+incoming_opportunity_action = str(st.session_state.pop("pretrade_opportunity_action", "") or "")
+incoming_opportunity_reason = str(st.session_state.pop("pretrade_opportunity_reason", "") or "")
+incoming_opportunity_coverage = st.session_state.pop("pretrade_opportunity_coverage", None)
 
 portfolio = load_portfolio()
 row = {}
@@ -317,6 +322,20 @@ _active_source = str(st.session_state.get("pretrade_active_source", "") or "")
 _source_ticker = normalize_ticker(st.session_state.get("pretrade_source_ticker", ""))
 if _active_source and _source_ticker == ticker:
     st.success(f"🔗 {_active_source} から {ticker} を引き継ぎました。")
+    if incoming_opportunity_score is not None:
+        _oc1, _oc2, _oc3 = st.columns(3)
+        _oc1.metric(
+            "Entry Opportunity",
+            f"{float(incoming_opportunity_score):.0f}/100",
+            incoming_opportunity_rating or None,
+        )
+        _oc2.metric("Action", incoming_opportunity_action or "—")
+        _oc3.metric(
+            "Coverage",
+            "—" if incoming_opportunity_coverage is None else f"{float(incoming_opportunity_coverage):.0f}%",
+        )
+        if incoming_opportunity_reason:
+            st.caption(f"Opportunity理由: {incoming_opportunity_reason}")
 
 with st.spinner(f"{ticker} の価格データを取得中..."):
     daily = load_daily(ticker)
