@@ -110,6 +110,8 @@ jobs:
           git add data/multiple_expansion/me_screener_alert_status.json
           git add data/after_close_review_latest.json
           git add data/after_close_review_latest.csv
+          git add data/after_close_review_history.csv
+          git add data/after_close_feedback_summary.csv
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
