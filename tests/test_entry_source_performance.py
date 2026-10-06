@@ -5,6 +5,7 @@ import pandas as pd
 from entry_source_performance import (
     build_ready_performance,
     summarize_source_performance,
+    summarize_signal_performance,
     update_candidate_history,
 )
 
@@ -182,3 +183,53 @@ def test_summary_compares_three_sources():
     assert float(by_source.loc["ME HUNTER", "entry_ready_rate"]) == 100.0
     assert float(by_source.loc["SHORT COVER", "entry_ready_rate"]) == 0.0
     assert float(by_source.loc["SHORT+ME", "avg_5d"]) == 6.0
+
+
+def test_signal_summary_separates_concrete_setups():
+    candidates = pd.DataFrame(
+        [
+            {
+                "monitor_date": "2026-10-01",
+                "ticker": "1111",
+                "name": "A",
+                "source": "ME HUNTER",
+                "source_detail": "",
+                "source_score": 80,
+                "source_rank": 1,
+                "signal_key": "ME|R-READY",
+                "first_seen_at": "2026-10-01 09:20:00",
+                "last_seen_at": "2026-10-01 09:30:00",
+                "last_status": "🟢 ENTRY READY",
+                "best_entry_score": 80,
+                "ready_detected": True,
+                "ready_detected_at": "2026-10-01 09:25:00",
+            }
+        ]
+    )
+    performance = pd.DataFrame(
+        [
+            {
+                "market_date": "2026-10-01",
+                "ticker": "1111",
+                "name": "A",
+                "source": "ME HUNTER",
+                "source_detail": "",
+                "signal_key": "ME|R-READY",
+                "entry_price": 100,
+                "entry_score": 80,
+                "first_detected_at": "2026-10-01 09:25:00",
+                "ret_1d": 1,
+                "ret_3d": 2,
+                "ret_5d": 4,
+                "ret_10d": 6,
+                "mfe_10d": 9,
+                "mae_10d": -2,
+                "outcome_status": "✅ 10D COMPLETE",
+                "last_updated": "2026-10-15",
+            }
+        ]
+    )
+    out = summarize_signal_performance(candidates, performance)
+    assert len(out) == 1
+    assert out.iloc[0]["signal_key"] == "ME|R-READY"
+    assert float(out.iloc[0]["avg_5d"]) == 4.0
