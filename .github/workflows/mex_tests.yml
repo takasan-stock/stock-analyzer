@@ -41,6 +41,8 @@ on:
       - "me_screener_alerts.py"
       - "entry_hunter_sources.py"
       - "entry_source_performance.py"
+      - "entry_opportunity.py"
+      - "daily_command_center.py"
       - "jquants_mex_adapter.py"
       - "scripts/build_mex_jquants.py"
       - "scripts/build_me_universe.py"
@@ -50,6 +52,8 @@ on:
       - "pages/14_Multiple_Expansion_Hunter.py"
       - "pages/15_ME_Daily_Screener.py"
       - "pages/8_Short_Cover_Hunter.py"
+      - "pages/9_Pre_Trade_Check.py"
+      - "dashboard_app.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
       - "tests/test_multiple_expansion_screener.py"
@@ -57,6 +61,8 @@ on:
       - "tests/test_me_screener_alerts.py"
       - "tests/test_entry_hunter_sources.py"
       - "tests/test_entry_source_performance.py"
+      - "tests/test_entry_opportunity.py"
+      - "tests/test_daily_command_center.py"
       - ".github/workflows/mex_tests.yml"
   workflow_dispatch:
 
