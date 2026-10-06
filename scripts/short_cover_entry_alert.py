@@ -22,6 +22,7 @@ from short_cover import (
     select_entry_hunter_candidates,
 )
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_opportunity import build_entry_opportunity
 from entry_source_performance import (
     build_ready_performance,
     normalize_candidate_history,
@@ -393,7 +394,9 @@ def main() -> int:
             daily, intraday = load_prices(ticker)
             entry = build_entry_hunter_snapshot(daily, intraday)
         except Exception as exc:
-            status_rows.append({
+            opportunity = build_entry_opportunity(candidate.to_dict(), entry)
+
+        status_rows.append({
                 "ticker": ticker,
                 "name": candidate.get("name", ""),
                 "status": "⚪ NO DATA",
@@ -438,6 +441,12 @@ def main() -> int:
                 "trait_market": candidate.get("trait_market", ""),
                 "trait_size": candidate.get("trait_size", ""),
                 "trait_vol": candidate.get("trait_vol", ""),
+            "opportunity_score": opportunity.get("opportunity_score"),
+            "opportunity_rating": opportunity.get("opportunity_rating"),
+            "opportunity_action": opportunity.get("opportunity_action"),
+            "opportunity_reason": opportunity.get("opportunity_reason"),
+            "opportunity_coverage": opportunity.get("opportunity_coverage"),
+            "learning_confidence": opportunity.get("learning_confidence"),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
@@ -702,6 +711,9 @@ def main() -> int:
         "source_summary_rows": int(len(source_summary)),
         "signal_summary_rows": int(len(signal_summary)),
         "trait_summary_rows": int(len(trait_summary)),
+        "top_opportunity": (
+            max([float(x.get("opportunity_score", 0) or 0) for x in status_rows], default=0.0)
+        ),
         "rows": status_rows,
     })
 
