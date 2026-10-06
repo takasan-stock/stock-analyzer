@@ -70,9 +70,24 @@ jobs:
         run: |
           python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy
 
-      - name: STEP 3 - Build ME daily ranking
+      - name: STEP 3 - Build ME ranking and detect changes
         run: |
           python scripts/build_me_screener.py
+
+      - name: STEP 4 - Send state-change digest
+        env:
+          ME_EMAIL_TO: ${{ secrets.ME_EMAIL_TO }}
+          ME_EMAIL_USER: ${{ secrets.ME_EMAIL_USER }}
+          ME_EMAIL_APP_PASSWORD: ${{ secrets.ME_EMAIL_APP_PASSWORD }}
+          ME_SMTP_HOST: ${{ secrets.ME_SMTP_HOST }}
+          ME_SMTP_PORT: ${{ secrets.ME_SMTP_PORT }}
+          SHORT_COVER_EMAIL_TO: ${{ secrets.SHORT_COVER_EMAIL_TO }}
+          SHORT_COVER_EMAIL_USER: ${{ secrets.SHORT_COVER_EMAIL_USER }}
+          SHORT_COVER_EMAIL_APP_PASSWORD: ${{ secrets.SHORT_COVER_EMAIL_APP_PASSWORD }}
+          SHORT_COVER_SMTP_HOST: ${{ secrets.SHORT_COVER_SMTP_HOST }}
+          SHORT_COVER_SMTP_PORT: ${{ secrets.SHORT_COVER_SMTP_PORT }}
+        run: |
+          python scripts/send_me_screener_alert.py
 
       - name: Commit latest screener output
         run: |
@@ -86,6 +101,9 @@ jobs:
           git add data/multiple_expansion/mex_build_diagnostics.csv
           git add data/multiple_expansion/me_screener_latest.csv
           git add data/multiple_expansion/me_screener_candidates.csv
+          git add data/multiple_expansion/me_screener_changes.csv
+          git add data/multiple_expansion/me_screener_change_history.csv
+          git add data/multiple_expansion/me_screener_alert_status.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
