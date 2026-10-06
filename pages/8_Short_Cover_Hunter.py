@@ -1173,6 +1173,11 @@ else:
                     st.session_state["pretrade_source"] = (
                         f"Entry Hunter {_r.get('status', '')}"
                     )
+                    st.session_state["pretrade_opportunity_score"] = _r.get("opportunity_score")
+                    st.session_state["pretrade_opportunity_rating"] = _r.get("opportunity_rating")
+                    st.session_state["pretrade_opportunity_action"] = _r.get("opportunity_action")
+                    st.session_state["pretrade_opportunity_reason"] = _r.get("opportunity_reason")
+                    st.session_state["pretrade_opportunity_coverage"] = _r.get("opportunity_coverage")
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 
         _entry_show = _entry_df.copy()
