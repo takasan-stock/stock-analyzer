@@ -6,7 +6,7 @@ on:
       max_candidates:
         description: "Heavy MEX candidate count after lightweight all-TSE prefilter"
         required: false
-        default: "60"
+        default: "30"
         type: string
       min_turnover_yen:
         description: "Minimum 20-session average traded value (JPY)"
@@ -53,7 +53,7 @@ jobs:
         run: |
           MAX_CANDIDATES="${{ github.event.inputs.max_candidates }}"
           MIN_TURNOVER="${{ github.event.inputs.min_turnover_yen }}"
-          if [ -z "$MAX_CANDIDATES" ]; then MAX_CANDIDATES="60"; fi
+          if [ -z "$MAX_CANDIDATES" ]; then MAX_CANDIDATES="30"; fi
           if [ -z "$MIN_TURNOVER" ]; then MIN_TURNOVER="50000000"; fi
           echo "max_candidates=$MAX_CANDIDATES" >> "$GITHUB_OUTPUT"
           echo "min_turnover=$MIN_TURNOVER" >> "$GITHUB_OUTPUT"
@@ -68,7 +68,7 @@ jobs:
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
-          python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy
+          python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy             --max-runtime-minutes 40
 
       - name: STEP 3 - Build ME ranking and detect changes
         run: |
