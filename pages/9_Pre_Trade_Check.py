@@ -9,6 +9,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from daily_command_center import build_score_breakdown_rows
 from pretrade import build_technical_snapshot, evaluate_pretrade
 from short_cover import build_entry_hunter_snapshot, normalize_ticker
 
@@ -252,6 +253,14 @@ incoming_opportunity_rating = str(st.session_state.pop("pretrade_opportunity_rat
 incoming_opportunity_action = str(st.session_state.pop("pretrade_opportunity_action", "") or "")
 incoming_opportunity_reason = str(st.session_state.pop("pretrade_opportunity_reason", "") or "")
 incoming_opportunity_coverage = st.session_state.pop("pretrade_opportunity_coverage", None)
+incoming_source_bonus = st.session_state.pop("pretrade_source_bonus", None)
+incoming_setup_bonus = st.session_state.pop("pretrade_setup_bonus", None)
+incoming_trait_bonus = st.session_state.pop("pretrade_trait_bonus", None)
+incoming_fast_bonus = st.session_state.pop("pretrade_fast_bonus", None)
+incoming_adaptive_total = st.session_state.pop("pretrade_adaptive_total", None)
+incoming_adaptive_breakdown = str(
+    st.session_state.pop("pretrade_adaptive_breakdown", "") or ""
+)
 
 portfolio = load_portfolio()
 row = {}
@@ -336,6 +345,43 @@ if _active_source and _source_ticker == ticker:
         )
         if incoming_opportunity_reason:
             st.caption(f"Opportunity理由: {incoming_opportunity_reason}")
+
+        _breakdown_row = {
+            "source_bonus": incoming_source_bonus,
+            "setup_bonus": incoming_setup_bonus,
+            "trait_bonus": incoming_trait_bonus,
+            "fast_bonus": incoming_fast_bonus,
+        }
+        _breakdown_items = build_score_breakdown_rows(_breakdown_row)
+        _has_breakdown = any(abs(float(x["value"])) >= 0.05 for x in _breakdown_items)
+        if _has_breakdown or incoming_adaptive_breakdown:
+            st.markdown("#### 🧮 Score Breakdown")
+            if incoming_adaptive_breakdown:
+                st.caption(incoming_adaptive_breakdown)
+            if incoming_adaptive_total is not None:
+                st.caption(f"Adaptive Total {float(incoming_adaptive_total):+.1f}")
+
+            for _item in _breakdown_items:
+                _b1, _b2 = st.columns([1.2, 2.8])
+                with _b1:
+                    st.caption(
+                        f"{_item['label']} {float(_item['value']):+.1f}"
+                    )
+                with _b2:
+                    _pct = float(_item["percent"])
+                    _direction = str(_item["direction"])
+                    if _direction == "positive":
+                        st.progress(
+                            _pct / 100.0,
+                            text=f"+{_pct:.0f}%",
+                        )
+                    elif _direction == "negative":
+                        st.progress(
+                            _pct / 100.0,
+                            text=f"-{_pct:.0f}%",
+                        )
+                    else:
+                        st.progress(0.0, text="0")
 
 with st.spinner(f"{ticker} の価格データを取得中..."):
     daily = load_daily(ticker)
