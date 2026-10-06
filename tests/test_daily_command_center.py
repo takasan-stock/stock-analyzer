@@ -2,7 +2,9 @@ import pandas as pd
 
 from daily_command_center import (
     build_command_center_handoff,
+    build_command_center_session,
     build_daily_command_center,
+    resolve_command_center_mode,
     tradingview_url,
 )
 
@@ -181,3 +183,111 @@ def test_command_center_handoff_keeps_opportunity_context():
     assert out["opportunity_score"] == 91
     assert out["opportunity_rating"] == "A+"
     assert out["decision_card"].startswith("SHORT+ME合流")
+
+
+def test_command_center_mode_uses_jst_clock():
+    assert resolve_command_center_mode("2026-10-06 08:30:00+09:00") == "PRE-MARKET"
+    assert resolve_command_center_mode("2026-10-06 10:00:00+09:00") == "LIVE"
+    assert resolve_command_center_mode("2026-10-06 16:00:00+09:00") == "AFTER CLOSE"
+    assert resolve_command_center_mode("2026-10-10 10:00:00+09:00") == "AFTER CLOSE"
+
+
+def test_session_premarket_ignores_same_day_live_status():
+    status = {
+        "run_at": "2026-10-06T08:30:00+09:00",
+        "rows": [{
+            "ticker": "6146",
+            "name": "Disco",
+            "opportunity_score": 99,
+            "opportunity_rating": "S",
+            "opportunity_action": "ENTRY PRIORITY",
+            "source": "SHORT+ME",
+            "signal_key": "CONFLUENCE|RE-EXP|CONFIRMED",
+            "status": "🟢 ENTRY READY",
+            "opportunity_coverage": 100,
+            "opportunity_reason": "same-day test row",
+        }],
+    }
+    me = pd.DataFrame([{
+        "ticker": "6857",
+        "company_name": "Advantest",
+        "trade_date": "2026-10-05",
+        "second_wave_state": "RE-WATCH READY",
+        "sw_decision": "READY",
+        "sw_score": 80,
+        "hist_edge_score": 65,
+        "fcf_engine_score": 75,
+        "screen_rank": 1,
+    }])
+    session = build_command_center_session(
+        status,
+        me,
+        as_of="2026-10-06 08:30:00+09:00",
+    )
+    assert session["mode"] == "PRE-MARKET"
+    assert session["primary"].iloc[0]["ticker"] == "6857"
+
+
+def test_session_live_prefers_entry_hunter():
+    status = {
+        "run_at": "2026-10-06T10:00:00+09:00",
+        "rows": [{
+            "ticker": "6146",
+            "name": "Disco",
+            "opportunity_score": 91,
+            "opportunity_rating": "A+",
+            "opportunity_action": "ENTRY PRIORITY",
+            "source": "SHORT+ME",
+            "signal_key": "CONFLUENCE|R-READY|EARLY",
+            "status": "🟢 ENTRY READY",
+            "opportunity_coverage": 100,
+            "opportunity_reason": "live",
+        }],
+    }
+    session = build_command_center_session(
+        status,
+        pd.DataFrame(),
+        as_of="2026-10-06 10:05:00+09:00",
+    )
+    assert session["mode"] == "LIVE"
+    assert session["primary"].iloc[0]["ticker"] == "6146"
+
+
+def test_session_after_close_separates_today_and_next_session():
+    status = {
+        "run_at": "2026-10-06T14:55:00+09:00",
+        "rows": [{
+            "ticker": "6146",
+            "name": "Disco",
+            "opportunity_score": 88,
+            "opportunity_rating": "A+",
+            "opportunity_action": "ENTRY READY",
+            "source": "SHORT+ME",
+            "signal_key": "CONFLUENCE|R-READY|EARLY",
+            "status": "🟢 ENTRY READY",
+            "opportunity_coverage": 100,
+            "opportunity_reason": "today result",
+        }],
+    }
+    me = pd.DataFrame([{
+        "ticker": "6857",
+        "company_name": "Advantest",
+        "trade_date": "2026-10-06",
+        "second_wave_state": "RE-WATCH READY",
+        "sw_decision": "READY",
+        "sw_score": 82,
+        "hist_edge_score": 66,
+        "fcf_engine_score": 76,
+        "screen_rank": 1,
+    }])
+
+    session = build_command_center_session(
+        status,
+        me,
+        as_of="2026-10-06 18:00:00+09:00",
+    )
+    assert session["mode"] == "AFTER CLOSE"
+    assert session["primary"].iloc[0]["ticker"] == "6146"
+    assert session["secondary"].iloc[0]["ticker"] == "6857"
+    assert session["secondary"].iloc[0]["mode"] == "NEXT SESSION"
+    assert session["me_status"] == "UPDATED"
