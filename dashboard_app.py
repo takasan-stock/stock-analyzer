@@ -14,7 +14,7 @@ import time
 import xml.etree.ElementTree as ET
 from daily_command_center import (
     build_command_center_handoff,
-    build_daily_command_center,
+    build_command_center_session,
     tradingview_url,
 )
 from email.utils import parsedate_to_datetime
@@ -2054,21 +2054,27 @@ def _load_command_center_history():
     return pd.DataFrame()
 
 
-_command_center = build_daily_command_center(
-    _load_command_center_entry_status(),
-    _load_command_center_me_screener(),
-    as_of=pd.Timestamp.now(),
+_cc_entry_status = _load_command_center_entry_status()
+_cc_me_screener = _load_command_center_me_screener()
+_cc_history = _load_command_center_history()
+_cc_now = pd.Timestamp.now(tz="Asia/Tokyo")
+_cc_session = build_command_center_session(
+    _cc_entry_status,
+    _cc_me_screener,
+    as_of=_cc_now,
     limit=3,
-    history=_load_command_center_history(),
+    history=_cc_history,
 )
 
-st.markdown("### 🔥 TODAY'S TOP 3")
-if _command_center.empty:
-    st.caption("Entry Opportunityの候補はまだありません。ME / Entry Hunterの次回更新後に表示されます。")
-else:
-    _top_cols = st.columns(len(_command_center))
-    for _i, (_, _row) in enumerate(_command_center.iterrows()):
-        with _top_cols[_i]:
+
+def _render_command_center_cards(frame, *, key_prefix):
+    if frame is None or frame.empty:
+        st.caption("表示できる候補はまだありません。次回のME / Entry Hunter更新後に反映されます。")
+        return
+
+    _cols = st.columns(len(frame))
+    for _i, (_, _row) in enumerate(frame.iterrows()):
+        with _cols[_i]:
             _trend = str(_row.get("rank_trend", "NEW") or "NEW")
             st.metric(
                 label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
@@ -2081,15 +2087,15 @@ else:
             )
 
             _handoff = build_command_center_handoff(_row)
-            _tv_url = tradingview_url(_row["ticker"])
             st.link_button(
                 "📈 TradingView",
-                _tv_url,
+                tradingview_url(_row["ticker"]),
                 use_container_width=True,
             )
+
             if st.button(
                 "🎯 Entry Hunter",
-                key=f"command_entry_{_row['ticker']}_{int(_row['rank'])}",
+                key=f"{key_prefix}_entry_{_row['ticker']}_{int(_row['rank'])}",
                 use_container_width=True,
             ):
                 st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
@@ -2099,7 +2105,7 @@ else:
 
             if st.button(
                 "🛡️ Pre-Trade",
-                key=f"command_pretrade_{_row['ticker']}_{int(_row['rank'])}",
+                key=f"{key_prefix}_pretrade_{_row['ticker']}_{int(_row['rank'])}",
                 use_container_width=True,
             ):
                 st.session_state["pretrade_ticker"] = _handoff["ticker"]
@@ -2113,10 +2119,57 @@ else:
                 st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
                 st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
                 st.switch_page("pages/9_Pre_Trade_Check.py")
-    if (_command_center['mode'] == 'PRE-MARKET').all():
-        st.info("現在はPRE-MARKET候補です。寄り付き後はEntry Hunterの実データに自動で置き換わります。")
+
+
+st.markdown(f"### {_cc_session['headline']}")
+_render_command_center_cards(
+    _cc_session["primary"],
+    key_prefix=f"command_{_cc_session['mode'].lower().replace(' ', '_')}",
+)
+
+if _cc_session["mode"] == "PRE-MARKET":
+    _trade_date = _cc_session.get("me_trade_date")
+    _trade_date_text = (
+        "—"
+        if _trade_date is None
+        else pd.Timestamp(_trade_date).strftime("%Y-%m-%d")
+    )
+    st.info(
+        f"前日ME候補から今日狙う3銘柄を表示中です。"
+        f" ME基準日 {_trade_date_text}。9:00以降はEntry HunterのLIVE判定へ切り替わります。"
+    )
+elif _cc_session["mode"] == "LIVE":
+    st.caption(
+        "当日のEntry Hunter Opportunityを優先表示。"
+        " READY / CONFIRMED、順位変化、Decision Cardを見て確認順を決めます。"
+    )
+else:
+    st.caption(
+        "今日のLIVE結果を残したまま、次セッション候補を別枠で表示します。"
+        " 今日の結果と明日の候補を混ぜて順位付けしません。"
+    )
+
+    st.markdown(f"### {_cc_session.get('secondary_headline', '🌅 NEXT SESSION WATCH')}")
+    _me_status = str(_cc_session.get("me_status", "") or "")
+    _me_trade_date = _cc_session.get("me_trade_date")
+    _me_trade_text = (
+        "—"
+        if _me_trade_date is None
+        else pd.Timestamp(_me_trade_date).strftime("%Y-%m-%d")
+    )
+
+    if _me_status == "UPDATED":
+        st.success(f"ME更新済み｜基準日 {_me_trade_text}")
     else:
-        st.caption("Entry Hunterの最新Opportunityを優先表示しています。")
+        st.warning(
+            f"引け後ME更新待ち｜現在のME基準日 {_me_trade_text}。"
+            " 更新完了後に明日の候補へ自動反映されます。"
+        )
+
+    _render_command_center_cards(
+        _cc_session["secondary"],
+        key_prefix="command_next_session",
+    )
 
 
 
