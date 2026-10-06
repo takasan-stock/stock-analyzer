@@ -22,6 +22,12 @@ COMMAND_CENTER_COLUMNS = [
     "signal_key",
     "entry_status",
     "coverage",
+    "source_bonus",
+    "setup_bonus",
+    "trait_bonus",
+    "fast_bonus",
+    "adaptive_total",
+    "adaptive_breakdown",
     "decision_card",
     "reason",
     "mode",
@@ -73,6 +79,12 @@ def build_command_center_handoff(
         "opportunity_action": _text(row.get("opportunity_action")),
         "opportunity_reason": _text(row.get("reason")),
         "opportunity_coverage": _num(row.get("coverage")),
+        "source_bonus": _num(row.get("source_bonus")),
+        "setup_bonus": _num(row.get("setup_bonus")),
+        "trait_bonus": _num(row.get("trait_bonus")),
+        "fast_bonus": _num(row.get("fast_bonus")),
+        "adaptive_total": _num(row.get("adaptive_total")),
+        "adaptive_breakdown": _text(row.get("adaptive_breakdown")),
         "decision_card": _text(row.get("decision_card")),
         "mode": _text(row.get("mode")),
     }
@@ -190,6 +202,20 @@ def _from_entry_status(
     frame["reason"] = frame.get(
         "opportunity_reason", pd.Series("", index=frame.index)
     ).fillna("")
+    for _col in [
+        "source_bonus",
+        "setup_bonus",
+        "trait_bonus",
+        "fast_bonus",
+        "adaptive_total",
+    ]:
+        frame[_col] = pd.to_numeric(
+            frame.get(_col, pd.Series(0.0, index=frame.index)),
+            errors="coerce",
+        ).fillna(0.0)
+    frame["adaptive_breakdown"] = frame.get(
+        "adaptive_breakdown", pd.Series("", index=frame.index)
+    ).fillna("")
     frame["mode"] = "LIVE"
 
     avoid = frame["opportunity_action"].astype(str).isin(
@@ -225,6 +251,12 @@ def _from_entry_status(
             "signal_key",
             "entry_status",
             "coverage",
+            "source_bonus",
+            "setup_bonus",
+            "trait_bonus",
+            "fast_bonus",
+            "adaptive_total",
+            "adaptive_breakdown",
             "reason",
             "mode",
         ]
@@ -265,6 +297,12 @@ def _from_me_screener(
                 "signal_key": _text(candidate.get("signal_key")),
                 "entry_status": "⏳ PRE-MARKET",
                 "coverage": opportunity["opportunity_coverage"],
+                "source_bonus": opportunity.get("source_bonus", 0.0),
+                "setup_bonus": opportunity.get("setup_bonus", 0.0),
+                "trait_bonus": opportunity.get("trait_bonus", 0.0),
+                "fast_bonus": opportunity.get("fast_bonus", 0.0),
+                "adaptive_total": opportunity.get("adaptive_total", 0.0),
+                "adaptive_breakdown": opportunity.get("adaptive_breakdown", ""),
                 "reason": opportunity["opportunity_reason"],
                 "mode": "PRE-MARKET",
             }
