@@ -394,9 +394,17 @@ def main() -> int:
             daily, intraday = load_prices(ticker)
             entry = build_entry_hunter_snapshot(daily, intraday)
         except Exception as exc:
-            opportunity = build_entry_opportunity(candidate.to_dict(), entry)
-
-        status_rows.append({
+            entry = {
+                "status": "⚪ NO DATA",
+                "score": 0.0,
+                "reason": "",
+                "risk": "",
+            }
+            opportunity = build_entry_opportunity(
+                candidate.to_dict(),
+                entry,
+            )
+            status_rows.append({
                 "ticker": ticker,
                 "name": candidate.get("name", ""),
                 "status": "⚪ NO DATA",
@@ -408,6 +416,12 @@ def main() -> int:
                 "trait_market": candidate.get("trait_market", ""),
                 "trait_size": candidate.get("trait_size", ""),
                 "trait_vol": candidate.get("trait_vol", ""),
+                "opportunity_score": opportunity.get("opportunity_score"),
+                "opportunity_rating": opportunity.get("opportunity_rating"),
+                "opportunity_action": opportunity.get("opportunity_action"),
+                "opportunity_reason": opportunity.get("opportunity_reason"),
+                "opportunity_coverage": opportunity.get("opportunity_coverage"),
+                "learning_confidence": opportunity.get("learning_confidence"),
             })
             continue
 
@@ -425,6 +439,11 @@ def main() -> int:
             entry["reason"] = "翌営業日の取引データ待ち"
             entry["risk"] = ""
 
+        opportunity = build_entry_opportunity(
+            candidate.to_dict(),
+            entry,
+        )
+
         status_rows.append({
             "ticker": ticker,
             "name": candidate.get("name", ""),
@@ -438,9 +457,9 @@ def main() -> int:
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
             "signal_key": candidate.get("signal_key", ""),
-                "trait_market": candidate.get("trait_market", ""),
-                "trait_size": candidate.get("trait_size", ""),
-                "trait_vol": candidate.get("trait_vol", ""),
+            "trait_market": candidate.get("trait_market", ""),
+            "trait_size": candidate.get("trait_size", ""),
+            "trait_vol": candidate.get("trait_vol", ""),
             "opportunity_score": opportunity.get("opportunity_score"),
             "opportunity_rating": opportunity.get("opportunity_rating"),
             "opportunity_action": opportunity.get("opportunity_action"),
@@ -480,9 +499,9 @@ def main() -> int:
             "source": candidate.get("source", ""),
             "source_detail": candidate.get("source_detail", ""),
             "signal_key": candidate.get("signal_key", ""),
-                "trait_market": candidate.get("trait_market", ""),
-                "trait_size": candidate.get("trait_size", ""),
-                "trait_vol": candidate.get("trait_vol", ""),
+            "trait_market": candidate.get("trait_market", ""),
+            "trait_size": candidate.get("trait_size", ""),
+            "trait_vol": candidate.get("trait_vol", ""),
         }
 
         if not mask.any():
@@ -494,10 +513,10 @@ def main() -> int:
             new_ready += 1
         else:
             idx = notifications.index[mask][0]
-            # Refresh market fields while keeping the original first-detected time.
             for key in [
                 "entry_score", "gap_pct", "relvol15", "current_price",
-                "vwap", "reason", "risk",
+                "vwap", "reason", "risk", "source", "source_detail",
+                "signal_key", "trait_market", "trait_size", "trait_vol",
             ]:
                 notifications.at[idx, key] = row[key]
 
