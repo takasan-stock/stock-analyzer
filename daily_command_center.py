@@ -10,6 +10,9 @@ from entry_opportunity import build_entry_opportunity
 
 COMMAND_CENTER_COLUMNS = [
     "rank",
+    "previous_rank",
+    "rank_change",
+    "rank_trend",
     "ticker",
     "name",
     "opportunity_score",
@@ -19,8 +22,15 @@ COMMAND_CENTER_COLUMNS = [
     "signal_key",
     "entry_status",
     "coverage",
+    "decision_card",
     "reason",
     "mode",
+]
+
+HISTORY_COLUMNS = [
+    "snapshot_date",
+    "snapshot_at",
+    *COMMAND_CENTER_COLUMNS,
 ]
 
 
@@ -58,12 +68,42 @@ def _rating(score: float) -> str:
     return "C"
 
 
+def _as_of_ts(value: Any | None) -> pd.Timestamp:
+    ts = pd.Timestamp.now() if value is None else pd.Timestamp(value)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    return ts
+
+
 def _empty() -> pd.DataFrame:
     return pd.DataFrame(columns=COMMAND_CENTER_COLUMNS)
 
 
-def _from_entry_status(entry_status: dict[str, Any] | None) -> pd.DataFrame:
+def _history_empty() -> pd.DataFrame:
+    return pd.DataFrame(columns=HISTORY_COLUMNS)
+
+
+def _is_entry_status_fresh(
+    entry_status: dict[str, Any] | None,
+    *,
+    as_of: Any | None,
+) -> bool:
     if not isinstance(entry_status, dict):
+        return False
+    run_at = pd.to_datetime(entry_status.get("run_at"), errors="coerce")
+    if pd.isna(run_at):
+        return False
+    if getattr(run_at, "tzinfo", None) is not None:
+        run_at = run_at.tz_localize(None)
+    return run_at.normalize() == _as_of_ts(as_of).normalize()
+
+
+def _from_entry_status(
+    entry_status: dict[str, Any] | None,
+    *,
+    as_of: Any | None = None,
+) -> pd.DataFrame:
+    if not _is_entry_status_fresh(entry_status, as_of=as_of):
         return _empty()
 
     rows = entry_status.get("rows", [])
@@ -189,12 +229,191 @@ def _from_me_screener(
     return pd.DataFrame(rows)
 
 
+def build_decision_card(row: pd.Series | dict[str, Any]) -> str:
+    source = _text(row.get("source"))
+    signal_key = _text(row.get("signal_key"))
+    status = _text(row.get("entry_status"))
+    reason = _text(row.get("reason"))
+    coverage = _num(row.get("coverage"))
+
+    parts: list[str] = []
+    if source == "SHORT+ME":
+        parts.append("SHORT+ME合流")
+    elif source == "ME HUNTER":
+        parts.append("ME候補")
+    elif source == "SHORT COVER":
+        parts.append("Short Cover候補")
+    elif source:
+        parts.append(source)
+
+    if signal_key:
+        setup = signal_key
+        setup = setup.replace("CONFLUENCE|", "")
+        setup = setup.replace("ME|", "")
+        setup = setup.replace("SC|", "")
+        setup = setup.replace("|", "×")
+        if setup and setup not in {"OTHER", "WATCH"}:
+            parts.append(setup)
+
+    if status == "🟢 ENTRY CONFIRMED":
+        parts.append("寄り後CONFIRMED")
+    elif status == "🟢 ENTRY READY":
+        parts.append("寄り後READY")
+    elif status == "🟦 MONITORING":
+        parts.append("場中監視")
+    elif status == "🟡 WAIT":
+        parts.append("条件待ち")
+    elif status == "⏳ PRE-MARKET":
+        parts.append("寄り後確認待ち")
+
+    evidence = []
+    if "Source実績+" in reason:
+        evidence.append("Source")
+    if "Setup実績+" in reason:
+        evidence.append("Setup")
+    if "銘柄特性+" in reason:
+        evidence.append("Trait")
+    if evidence:
+        parts.append("+".join(evidence) + "実績+")
+
+    if coverage is not None and coverage < 100 and "寄り後確認待ち" not in parts:
+        parts.append("Coverage待ち")
+
+    return "｜".join(parts[:4]) if parts else (reason or "優先候補")
+
+
+def normalize_command_center_history(
+    history: pd.DataFrame | None,
+) -> pd.DataFrame:
+    if history is None or history.empty:
+        return _history_empty()
+
+    out = history.copy()
+    for col in HISTORY_COLUMNS:
+        if col not in out.columns:
+            out[col] = None
+
+    out["snapshot_date"] = pd.to_datetime(
+        out["snapshot_date"], errors="coerce"
+    ).dt.normalize()
+    out["snapshot_at"] = pd.to_datetime(
+        out["snapshot_at"], errors="coerce"
+    )
+    out["ticker"] = out["ticker"].astype(str).str.replace(".0", "", regex=False)
+    out["rank"] = pd.to_numeric(out["rank"], errors="coerce")
+    out["previous_rank"] = pd.to_numeric(out["previous_rank"], errors="coerce")
+    out["rank_change"] = pd.to_numeric(out["rank_change"], errors="coerce")
+    out["opportunity_score"] = pd.to_numeric(
+        out["opportunity_score"], errors="coerce"
+    )
+    out = out.dropna(subset=["snapshot_date", "snapshot_at", "ticker", "rank"])
+    return out[HISTORY_COLUMNS].sort_values(
+        ["snapshot_at", "rank"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+
+
+def _previous_snapshot_for_date(
+    history: pd.DataFrame | None,
+    *,
+    as_of: Any | None,
+) -> pd.DataFrame:
+    hist = normalize_command_center_history(history)
+    if hist.empty:
+        return pd.DataFrame()
+
+    ref_date = _as_of_ts(as_of).normalize()
+    prior = hist[hist["snapshot_date"] < ref_date].copy()
+    if prior.empty:
+        return pd.DataFrame()
+
+    latest_date = prior["snapshot_date"].max()
+    prior = prior[prior["snapshot_date"] == latest_date].copy()
+    latest_at = prior["snapshot_at"].max()
+    prior = prior[prior["snapshot_at"] == latest_at].copy()
+    return prior.sort_values("rank").reset_index(drop=True)
+
+
+def attach_rank_change(
+    current: pd.DataFrame,
+    history: pd.DataFrame | None,
+    *,
+    as_of: Any | None = None,
+) -> pd.DataFrame:
+    if current is None or current.empty:
+        return _empty()
+
+    out = current.copy()
+    previous = _previous_snapshot_for_date(history, as_of=as_of)
+    previous_map = {
+        _text(row.get("ticker")): int(row["rank"])
+        for _, row in previous.iterrows()
+        if _text(row.get("ticker")) and pd.notna(row.get("rank"))
+    }
+
+    previous_ranks = []
+    changes = []
+    trends = []
+    for _, row in out.iterrows():
+        ticker = _text(row.get("ticker"))
+        rank = int(row["rank"])
+        previous_rank = previous_map.get(ticker)
+        previous_ranks.append(previous_rank)
+        if previous_rank is None:
+            changes.append(None)
+            trends.append("NEW")
+            continue
+        change = int(previous_rank - rank)
+        changes.append(change)
+        if change > 0:
+            trends.append(f"↑{change}")
+        elif change < 0:
+            trends.append(f"↓{abs(change)}")
+        else:
+            trends.append("→")
+
+    out["previous_rank"] = previous_ranks
+    out["rank_change"] = changes
+    out["rank_trend"] = trends
+    out["decision_card"] = out.apply(build_decision_card, axis=1)
+    return out[COMMAND_CENTER_COLUMNS].copy()
+
+
+def update_command_center_history(
+    history: pd.DataFrame | None,
+    current: pd.DataFrame,
+    *,
+    snapshot_at: Any | None = None,
+    max_rows: int = 1500,
+) -> pd.DataFrame:
+    base = normalize_command_center_history(history)
+    if current is None or current.empty:
+        return base
+
+    ts = _as_of_ts(snapshot_at)
+    incoming = current.copy()
+    incoming["snapshot_date"] = ts.normalize()
+    incoming["snapshot_at"] = ts
+    for col in HISTORY_COLUMNS:
+        if col not in incoming.columns:
+            incoming[col] = None
+
+    merged = pd.concat([incoming[HISTORY_COLUMNS], base], ignore_index=True)
+    merged = normalize_command_center_history(merged)
+    merged = merged.drop_duplicates(
+        subset=["snapshot_at", "ticker", "rank"],
+        keep="first",
+    )
+    return merged.head(max(1, int(max_rows))).reset_index(drop=True)
+
+
 def build_daily_command_center(
     entry_status: dict[str, Any] | None,
     me_screener: pd.DataFrame | None,
     *,
     as_of: Any | None = None,
     limit: int = 3,
+    history: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return the day's highest-priority names for the dashboard.
 
@@ -202,7 +421,7 @@ def build_daily_command_center(
     Before/after live data exists, the command center falls back to the latest
     ME handoff candidates and clearly marks them PRE-MARKET with 55% coverage.
     """
-    live = _from_entry_status(entry_status)
+    live = _from_entry_status(entry_status, as_of=as_of)
     source = live
 
     if source.empty:
@@ -225,6 +444,10 @@ def build_daily_command_center(
     ).head(max(1, int(limit))).reset_index(drop=True)
 
     source["rank"] = range(1, len(source) + 1)
+    source["previous_rank"] = None
+    source["rank_change"] = None
+    source["rank_trend"] = "NEW"
+    source["decision_card"] = source.apply(build_decision_card, axis=1)
     source["opportunity_rating"] = source.apply(
         lambda row: (
             _text(row.get("opportunity_rating"))
@@ -233,4 +456,5 @@ def build_daily_command_center(
         axis=1,
     )
 
-    return source[COMMAND_CENTER_COLUMNS].copy()
+    source = source[COMMAND_CENTER_COLUMNS].copy()
+    return attach_rank_change(source, history, as_of=as_of)
