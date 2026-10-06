@@ -54,6 +54,30 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+
+def tradingview_url(ticker: Any) -> str:
+    code = _text(ticker).replace(".T", "")
+    return f"https://www.tradingview.com/chart/?symbol=TSE%3A{code}"
+
+
+def build_command_center_handoff(
+    row: pd.Series | dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "ticker": _text(row.get("ticker")),
+        "name": _text(row.get("name")),
+        "source": _text(row.get("source")),
+        "signal_key": _text(row.get("signal_key")),
+        "opportunity_score": _num(row.get("opportunity_score")),
+        "opportunity_rating": _text(row.get("opportunity_rating")),
+        "opportunity_action": _text(row.get("opportunity_action")),
+        "opportunity_reason": _text(row.get("reason")),
+        "opportunity_coverage": _num(row.get("coverage")),
+        "decision_card": _text(row.get("decision_card")),
+        "mode": _text(row.get("mode")),
+    }
+
+
 def _rating(score: float) -> str:
     if score >= 95:
         return "S"
