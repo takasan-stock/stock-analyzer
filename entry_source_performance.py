@@ -13,6 +13,7 @@ CANDIDATE_HISTORY_COLUMNS = [
     "source_detail",
     "source_score",
     "source_rank",
+    "signal_key",
     "first_seen_at",
     "last_seen_at",
     "last_status",
@@ -27,6 +28,7 @@ PERFORMANCE_COLUMNS = [
     "name",
     "source",
     "source_detail",
+    "signal_key",
     "entry_price",
     "entry_score",
     "first_detected_at",
@@ -88,6 +90,7 @@ def normalize_candidate_history(
     ).dt.normalize()
     out["ticker"] = out["ticker"].map(_ticker)
     out["source"] = out["source"].map(_source)
+    out["signal_key"] = out["signal_key"].fillna("").astype(str)
     out["first_seen_at"] = pd.to_datetime(
         out["first_seen_at"], errors="coerce"
     )
@@ -177,6 +180,10 @@ def update_candidate_history(
                 str(candidate.get("source_detail", "") or "")
                 or base.at[idx, "source_detail"]
             )
+            base.at[idx, "signal_key"] = (
+                str(candidate.get("signal_key", "") or "")
+                or base.at[idx, "signal_key"]
+            )
             source_score = _num(candidate.get("source_score"))
             if source_score is not None:
                 base.at[idx, "source_score"] = source_score
@@ -207,6 +214,7 @@ def update_candidate_history(
                 ),
                 "source_score": _num(candidate.get("source_score")),
                 "source_rank": _num(candidate.get("source_rank")),
+                "signal_key": str(candidate.get("signal_key", "") or ""),
                 "first_seen_at": observed,
                 "last_seen_at": observed,
                 "last_status": status,
@@ -238,6 +246,7 @@ def normalize_performance(
     ).dt.normalize()
     out["ticker"] = out["ticker"].map(_ticker)
     out["source"] = out["source"].map(_source)
+    out["signal_key"] = out["signal_key"].fillna("").astype(str)
     for col in [
         "entry_price",
         "entry_score",
@@ -407,6 +416,7 @@ def build_ready_performance(
                 "source_detail": str(
                     row.get("source_detail", "") or ""
                 ),
+                "signal_key": str(row.get("signal_key", "") or ""),
                 "entry_price": entry_price,
                 "entry_score": _num(row.get("entry_score")),
                 "first_detected_at": row.get("first_detected_at"),
@@ -558,3 +568,89 @@ def summarize_source_performance(
         )
 
     return pd.DataFrame(rows)
+
+
+def summarize_signal_performance(
+    candidate_history: pd.DataFrame | None,
+    performance: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Compare prospective live performance by concrete setup/state."""
+    candidates = normalize_candidate_history(candidate_history)
+    perf = normalize_performance(performance)
+
+    keys = sorted(
+        {
+            str(x)
+            for x in pd.concat(
+                [
+                    candidates.get("signal_key", pd.Series(dtype=str)),
+                    perf.get("signal_key", pd.Series(dtype=str)),
+                ],
+                ignore_index=True,
+            )
+            .fillna("")
+            .astype(str)
+            .tolist()
+            if str(x).strip()
+        }
+    )
+
+    rows = []
+    for key in keys:
+        cg = candidates[candidates["signal_key"] == key].copy()
+        pg = perf[perf["signal_key"] == key].copy()
+
+        candidate_n = int(len(cg))
+        ready_n = int(cg["ready_detected"].fillna(False).sum())
+        ready_rate = ready_n / candidate_n * 100.0 if candidate_n > 0 else None
+
+        def avg(col: str):
+            vals = pd.to_numeric(pg.get(col), errors="coerce").dropna()
+            return float(vals.mean()) if not vals.empty else None
+
+        def win(col: str):
+            vals = pd.to_numeric(pg.get(col), errors="coerce").dropna()
+            return float((vals > 0).mean() * 100.0) if not vals.empty else None
+
+        sample_5d = int(pd.to_numeric(pg.get("ret_5d"), errors="coerce").notna().sum())
+
+        rows.append(
+            {
+                "signal_key": key,
+                "candidate_days": candidate_n,
+                "entry_ready": ready_n,
+                "entry_ready_rate": ready_rate,
+                "tracked_entries": int(len(pg)),
+                "win_5d": win("ret_5d"),
+                "avg_5d": avg("ret_5d"),
+                "avg_10d": avg("ret_10d"),
+                "avg_mfe_10d": avg("mfe_10d"),
+                "avg_mae_10d": avg("mae_10d"),
+                "sample_5d": sample_5d,
+                "confidence": _confidence(sample_5d),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "signal_key",
+                "candidate_days",
+                "entry_ready",
+                "entry_ready_rate",
+                "tracked_entries",
+                "win_5d",
+                "avg_5d",
+                "avg_10d",
+                "avg_mfe_10d",
+                "avg_mae_10d",
+                "sample_5d",
+                "confidence",
+            ]
+        )
+
+    return pd.DataFrame(rows).sort_values(
+        ["sample_5d", "avg_5d", "win_5d", "signal_key"],
+        ascending=[False, False, False, True],
+        na_position="last",
+    ).reset_index(drop=True)
