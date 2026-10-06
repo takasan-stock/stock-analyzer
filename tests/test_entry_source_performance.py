@@ -1,5 +1,7 @@
 import pandas as pd
 
+# Prospective source-comparison tests: ME vs Short Cover vs confluence.
+
 from entry_source_performance import (
     build_ready_performance,
     summarize_source_performance,
