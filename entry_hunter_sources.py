@@ -264,6 +264,39 @@ def build_trait_adjustments(
         result[key] = {"bonus": round(bonus, 3), "confidence": confidence, "sample_5d": n}
     return result
 
+
+def enrich_candidate_metadata(
+    frame: pd.DataFrame | None,
+    universe_meta: pd.DataFrame | None,
+) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    out = frame.copy()
+    if universe_meta is None or universe_meta.empty or "ticker" not in universe_meta.columns:
+        return out
+
+    meta = universe_meta.copy()
+    meta["ticker"] = meta["ticker"].map(_ticker)
+    keep = [
+        col
+        for col in [
+            "ticker",
+            "market_name",
+            "market_cap",
+            "realized_vol20_pct",
+        ]
+        if col in meta.columns
+    ]
+    meta = meta[keep].drop_duplicates("ticker", keep="last")
+    out["ticker"] = out["ticker"].map(_ticker)
+
+    for col in ["market_name", "market_cap", "realized_vol20_pct"]:
+        if col in out.columns:
+            out = out.drop(columns=[col])
+
+    return out.merge(meta, on="ticker", how="left")
+
+
 def normalize_entry_candidates(
     frame: pd.DataFrame | None,
     *,
@@ -592,6 +625,7 @@ def combine_entry_candidates(
     source_summary: pd.DataFrame | None = None,
     signal_summary: pd.DataFrame | None = None,
     trait_summary: pd.DataFrame | None = None,
+    universe_meta: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Merge Entry Hunter sources and dedupe by ticker.
 
@@ -599,6 +633,9 @@ def combine_entry_candidates(
     SHORT+ME and receives a small confluence bonus rather than being monitored
     twice.
     """
+    short_cover = enrich_candidate_metadata(short_cover, universe_meta)
+    me_candidates = enrich_candidate_metadata(me_candidates, universe_meta)
+
     short_df = normalize_short_cover_candidates(short_cover)
     me_df = normalize_entry_candidates(
         me_candidates,
