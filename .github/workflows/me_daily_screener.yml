@@ -61,10 +61,26 @@ jobs:
           echo "min_turnover=$MIN_TURNOVER" >> "$GITHUB_OUTPUT"
 
       - name: STEP 1 - All TSE lightweight ME prefilter
+        timeout-minutes: 25
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
           python scripts/build_me_universe.py             --max-candidates "${{ steps.cfg.outputs.max_candidates }}"             --min-turnover-yen "${{ steps.cfg.outputs.min_turnover }}"
+
+      - name: Persist STEP 1 cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/multiple_expansion/me_all_market_bars_cache.csv.gz
+          git add data/multiple_expansion/me_all_market_bars_cache.csv.gz
+          git add data/multiple_expansion/me_universe_snapshot.csv
+          git add data/multiple_expansion/me_universe_candidates.csv
+          if git diff --cached --quiet; then
+            echo "No STEP 1 cache changes to commit."
+          else
+            git commit -m "chore: update ME prefilter cache"
+            git push
+          fi
 
       - name: STEP 2 - Heavy PIT/FCF MEX calculation
         env:
