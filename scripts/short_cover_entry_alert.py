@@ -21,17 +21,45 @@ from short_cover import (
     normalize_alert_history,
     select_entry_hunter_candidates,
 )
+from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_opportunity import build_entry_opportunity
+from daily_command_center import (
+    build_daily_command_center,
+    normalize_command_center_history,
+    update_command_center_history,
+)
+from entry_source_performance import (
+    build_ready_performance,
+    normalize_candidate_history,
+    normalize_performance,
+    summarize_source_performance,
+    summarize_signal_performance,
+    summarize_trait_performance,
+    update_candidate_history,
+)
 
 DATA_DIR = ROOT / "data"
 HISTORY_FILE = DATA_DIR / "short_cover_alert_history.csv"
 NOTIFICATION_FILE = DATA_DIR / "short_cover_entry_notifications.csv"
 STATUS_FILE = DATA_DIR / "short_cover_entry_status.json"
+ME_SCREENER_FILE = DATA_DIR / "multiple_expansion" / "me_screener_latest.csv"
+ENTRY_CANDIDATE_HISTORY_FILE = DATA_DIR / "entry_hunter_candidate_history.csv"
+ENTRY_SOURCE_PERFORMANCE_FILE = DATA_DIR / "entry_hunter_source_performance.csv"
+ENTRY_SOURCE_SUMMARY_FILE = DATA_DIR / "entry_hunter_source_summary.csv"
+ENTRY_SIGNAL_SUMMARY_FILE = DATA_DIR / "entry_hunter_signal_summary.csv"
+ENTRY_TRAIT_SUMMARY_FILE = DATA_DIR / "entry_hunter_trait_summary.csv"
+ME_UNIVERSE_FILE = DATA_DIR / "multiple_expansion" / "me_universe_snapshot.csv"
+COMMAND_CENTER_LATEST_FILE = DATA_DIR / "daily_command_center_latest.csv"
+COMMAND_CENTER_HISTORY_FILE = DATA_DIR / "daily_command_center_history.csv"
+AFTER_CLOSE_FEEDBACK_FILE = DATA_DIR / "after_close_feedback_summary.csv"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
     "entry_status", "entry_score", "gap_pct", "relvol15",
     "current_price", "vwap", "reason", "risk",
     "first_detected_at", "email_sent", "email_sent_at", "email_error",
+    "source", "source_detail", "signal_key",
+    "trait_market", "trait_size", "trait_vol",
 ]
 
 
@@ -47,6 +75,54 @@ def load_history() -> pd.DataFrame:
     return normalize_alert_history(
         pd.read_csv(HISTORY_FILE, encoding="utf-8-sig")
     )
+
+
+def load_me_universe() -> pd.DataFrame:
+    if not ME_UNIVERSE_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(ME_UNIVERSE_FILE, dtype={"ticker": str})
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_me_screener() -> pd.DataFrame:
+    if not ME_SCREENER_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_command_center_history() -> pd.DataFrame:
+    if not COMMAND_CENTER_HISTORY_FILE.exists():
+        return normalize_command_center_history(None)
+    try:
+        return normalize_command_center_history(
+            pd.read_csv(COMMAND_CENTER_HISTORY_FILE, dtype={"ticker": str})
+        )
+    except Exception:
+        return normalize_command_center_history(None)
+
+
+def save_command_center_snapshot(
+    current: pd.DataFrame,
+    history: pd.DataFrame,
+) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    current.to_csv(COMMAND_CENTER_LATEST_FILE, index=False, encoding="utf-8-sig")
+    history.to_csv(COMMAND_CENTER_HISTORY_FILE, index=False, encoding="utf-8-sig")
+
+
+
+def load_after_close_feedback() -> pd.DataFrame:
+    if not AFTER_CLOSE_FEEDBACK_FILE.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(AFTER_CLOSE_FEEDBACK_FILE)
+    except Exception:
+        return pd.DataFrame()
 
 
 def load_notifications() -> pd.DataFrame:
@@ -83,6 +159,40 @@ def save_notifications(df: pd.DataFrame) -> None:
             "%Y-%m-%d %H:%M:%S"
         )
     out.to_csv(NOTIFICATION_FILE, index=False, encoding="utf-8-sig")
+
+
+def load_candidate_history() -> pd.DataFrame:
+    if not ENTRY_CANDIDATE_HISTORY_FILE.exists():
+        return normalize_candidate_history(None)
+    try:
+        return normalize_candidate_history(
+            pd.read_csv(ENTRY_CANDIDATE_HISTORY_FILE, encoding="utf-8-sig")
+        )
+    except Exception:
+        return normalize_candidate_history(None)
+
+
+def load_source_performance() -> pd.DataFrame:
+    if not ENTRY_SOURCE_PERFORMANCE_FILE.exists():
+        return normalize_performance(None)
+    try:
+        return normalize_performance(
+            pd.read_csv(ENTRY_SOURCE_PERFORMANCE_FILE, encoding="utf-8-sig")
+        )
+    except Exception:
+        return normalize_performance(None)
+
+
+def save_candidate_history(df: pd.DataFrame) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = normalize_candidate_history(df)
+    out.to_csv(ENTRY_CANDIDATE_HISTORY_FILE, index=False, encoding="utf-8-sig")
+
+
+def save_source_performance(df: pd.DataFrame) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = normalize_performance(df)
+    out.to_csv(ENTRY_SOURCE_PERFORMANCE_FILE, index=False, encoding="utf-8-sig")
 
 
 def save_status(payload: dict) -> None:
@@ -161,7 +271,7 @@ def send_entry_email(row: dict, cfg: dict) -> tuple[bool, str]:
         else f"{float(row['vwap']):,.1f}"
     )
 
-    body = f"""Short Cover Entry Hunter が ENTRY READY を検知しました。
+    body = f"""Entry Hunter が監視条件成立を検知しました。
 
 銘柄: {row['ticker']} {row['name']}
 Entry Score: {float(row['entry_score']):.0f}
@@ -171,6 +281,8 @@ VWAP: {vwap}
 15分相対出来高: {relvol}
 前日アラート日: {pd.Timestamp(row['alert_date']).strftime('%Y-%m-%d')}
 条件Version: {row.get('condition_version', '')}
+監視ソース: {row.get('source', '')}
+ソース理由: {row.get('source_detail', '')}
 
 成立条件:
 {row.get('reason', '')}
@@ -178,7 +290,7 @@ VWAP: {vwap}
 注意:
 {row.get('risk', '') or '特記事項なし'}
 
-※これは売買推奨ではなく、TradingView/証券会社の現在値を確認するための監視通知です。
+※これは売買推奨ではなく、ME Hunter / Short Coverの候補を寄り付き後に確認するための監視通知です。
 """
 
     msg.set_content(body)
@@ -267,11 +379,48 @@ def main() -> int:
     notifications = load_notifications()
     cfg = email_config()
 
-    candidates = select_entry_hunter_candidates(
+    short_candidates = select_entry_hunter_candidates(
         history,
         as_of=now.tz_localize(None),
         max_calendar_days=4,
         limit=5,
+    )
+    me_candidates = select_me_entry_candidates(
+        load_me_screener(),
+        as_of=now.tz_localize(None),
+        max_calendar_days=4,
+        limit=5,
+    )
+    source_summary_for_rank = pd.DataFrame()
+    if ENTRY_SOURCE_SUMMARY_FILE.exists():
+        try:
+            source_summary_for_rank = pd.read_csv(ENTRY_SOURCE_SUMMARY_FILE)
+        except Exception:
+            source_summary_for_rank = pd.DataFrame()
+
+    signal_summary_for_rank = pd.DataFrame()
+    if ENTRY_SIGNAL_SUMMARY_FILE.exists():
+        try:
+            signal_summary_for_rank = pd.read_csv(ENTRY_SIGNAL_SUMMARY_FILE)
+        except Exception:
+            signal_summary_for_rank = pd.DataFrame()
+
+    trait_summary_for_rank = pd.DataFrame()
+    if ENTRY_TRAIT_SUMMARY_FILE.exists():
+        try:
+            trait_summary_for_rank = pd.read_csv(ENTRY_TRAIT_SUMMARY_FILE)
+        except Exception:
+            trait_summary_for_rank = pd.DataFrame()
+
+    candidates = combine_entry_candidates(
+        short_candidates,
+        me_candidates,
+        limit=8,
+        source_summary=source_summary_for_rank,
+        signal_summary=signal_summary_for_rank,
+        trait_summary=trait_summary_for_rank,
+        universe_meta=load_me_universe(),
+        fast_feedback_summary=load_after_close_feedback(),
     )
 
     status_rows = []
@@ -284,12 +433,40 @@ def main() -> int:
             daily, intraday = load_prices(ticker)
             entry = build_entry_hunter_snapshot(daily, intraday)
         except Exception as exc:
+            entry = {
+                "status": "⚪ NO DATA",
+                "score": 0.0,
+                "reason": "",
+                "risk": "",
+            }
+            opportunity = build_entry_opportunity(
+                candidate.to_dict(),
+                entry,
+            )
             status_rows.append({
                 "ticker": ticker,
                 "name": candidate.get("name", ""),
                 "status": "⚪ NO DATA",
                 "score": 0,
                 "error": f"{type(exc).__name__}: {exc}"[:300],
+                "source": candidate.get("source", ""),
+                "source_detail": candidate.get("source_detail", ""),
+                "signal_key": candidate.get("signal_key", ""),
+                "trait_market": candidate.get("trait_market", ""),
+                "trait_size": candidate.get("trait_size", ""),
+                "trait_vol": candidate.get("trait_vol", ""),
+                "opportunity_score": opportunity.get("opportunity_score"),
+                "opportunity_rating": opportunity.get("opportunity_rating"),
+                "opportunity_action": opportunity.get("opportunity_action"),
+                "opportunity_reason": opportunity.get("opportunity_reason"),
+                "opportunity_coverage": opportunity.get("opportunity_coverage"),
+                "learning_confidence": opportunity.get("learning_confidence"),
+                "source_bonus": opportunity.get("source_bonus"),
+                "setup_bonus": opportunity.get("setup_bonus"),
+                "trait_bonus": opportunity.get("trait_bonus"),
+                "fast_bonus": opportunity.get("fast_bonus"),
+                "adaptive_total": opportunity.get("adaptive_total"),
+                "adaptive_breakdown": opportunity.get("adaptive_breakdown"),
             })
             continue
 
@@ -307,6 +484,11 @@ def main() -> int:
             entry["reason"] = "翌営業日の取引データ待ち"
             entry["risk"] = ""
 
+        opportunity = build_entry_opportunity(
+            candidate.to_dict(),
+            entry,
+        )
+
         status_rows.append({
             "ticker": ticker,
             "name": candidate.get("name", ""),
@@ -317,6 +499,24 @@ def main() -> int:
             "relvol15": entry.get("relvol15"),
             "reason": entry.get("reason", ""),
             "risk": entry.get("risk", ""),
+            "source": candidate.get("source", ""),
+            "source_detail": candidate.get("source_detail", ""),
+            "signal_key": candidate.get("signal_key", ""),
+            "trait_market": candidate.get("trait_market", ""),
+            "trait_size": candidate.get("trait_size", ""),
+            "trait_vol": candidate.get("trait_vol", ""),
+            "opportunity_score": opportunity.get("opportunity_score"),
+            "opportunity_rating": opportunity.get("opportunity_rating"),
+            "opportunity_action": opportunity.get("opportunity_action"),
+            "opportunity_reason": opportunity.get("opportunity_reason"),
+            "opportunity_coverage": opportunity.get("opportunity_coverage"),
+            "learning_confidence": opportunity.get("learning_confidence"),
+            "source_bonus": opportunity.get("source_bonus"),
+            "setup_bonus": opportunity.get("setup_bonus"),
+            "trait_bonus": opportunity.get("trait_bonus"),
+            "fast_bonus": opportunity.get("fast_bonus"),
+            "adaptive_total": opportunity.get("adaptive_total"),
+            "adaptive_breakdown": opportunity.get("adaptive_breakdown"),
         })
 
         if entry.get("status") != "🟢 ENTRY READY" or pd.isna(market_date):
@@ -347,6 +547,12 @@ def main() -> int:
             "email_sent": False,
             "email_sent_at": pd.NaT,
             "email_error": "",
+            "source": candidate.get("source", ""),
+            "source_detail": candidate.get("source_detail", ""),
+            "signal_key": candidate.get("signal_key", ""),
+            "trait_market": candidate.get("trait_market", ""),
+            "trait_size": candidate.get("trait_size", ""),
+            "trait_vol": candidate.get("trait_vol", ""),
         }
 
         if not mask.any():
@@ -358,10 +564,10 @@ def main() -> int:
             new_ready += 1
         else:
             idx = notifications.index[mask][0]
-            # Refresh market fields while keeping the original first-detected time.
             for key in [
                 "entry_score", "gap_pct", "relvol15", "current_price",
-                "vwap", "reason", "risk",
+                "vwap", "reason", "risk", "source", "source_detail",
+                "signal_key", "trait_market", "trait_size", "trait_vol",
             ]:
                 notifications.at[idx, key] = row[key]
 
@@ -451,6 +657,12 @@ def main() -> int:
             "email_sent": False,
             "email_sent_at": pd.NaT,
             "email_error": "",
+            "source": ready_row.get("source", ""),
+            "source_detail": ready_row.get("source_detail", ""),
+            "signal_key": ready_row.get("signal_key", ""),
+            "trait_market": ready_row.get("trait_market", ""),
+            "trait_size": ready_row.get("trait_size", ""),
+            "trait_vol": ready_row.get("trait_vol", ""),
         }
 
         notifications = pd.concat(
@@ -471,10 +683,78 @@ def main() -> int:
 
     save_notifications(notifications)
 
-    save_status({
+    candidate_history = update_candidate_history(
+        load_candidate_history(),
+        candidates,
+        status_rows,
+        observed_at=now.tz_localize(None),
+    )
+    save_candidate_history(candidate_history)
+
+    perf_frames = {}
+    ready_tickers = (
+        notifications.loc[
+            notifications["entry_status"].astype(str) == "🟢 ENTRY READY",
+            "ticker",
+        ]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+    for perf_ticker in ready_tickers:
+        try:
+            daily_frame, _ = load_prices(perf_ticker)
+            perf_frames[str(perf_ticker)] = daily_frame
+        except Exception:
+            continue
+
+    source_performance = build_ready_performance(
+        notifications,
+        perf_frames,
+        prior=load_source_performance(),
+        updated_at=now.tz_localize(None),
+    )
+    save_source_performance(source_performance)
+
+    source_summary = summarize_source_performance(
+        candidate_history,
+        source_performance,
+        notifications,
+    )
+    source_summary.to_csv(
+        ENTRY_SOURCE_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    signal_summary = summarize_signal_performance(
+        candidate_history,
+        source_performance,
+    )
+    signal_summary.to_csv(
+        ENTRY_SIGNAL_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    trait_summary = summarize_trait_performance(
+        candidate_history,
+        source_performance,
+    )
+    trait_summary.to_csv(
+        ENTRY_TRAIT_SUMMARY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    status_payload = {
         "run_at": now.isoformat(),
         "email_configured": bool(cfg["to"] and cfg["user"] and cfg["password"]),
         "candidate_count": int(len(candidates)),
+        "short_cover_candidates": int(len(short_candidates)),
+        "me_candidates": int(len(me_candidates)),
+        "confluence_candidates": int(sum(1 for x in candidates.get("source", pd.Series(dtype=str)).astype(str) if x == "SHORT+ME")),
         "ready_count": int(sum(
             1 for row in status_rows if row.get("status") == "🟢 ENTRY READY"
         )),
@@ -498,8 +778,33 @@ def main() -> int:
             if x == "🔴 EXIT WATCH"
         )),
         "emails_sent": int(emails_sent),
+        "source_summary_rows": int(len(source_summary)),
+        "signal_summary_rows": int(len(signal_summary)),
+        "trait_summary_rows": int(len(trait_summary)),
+        "top_opportunity": (
+            max([float(x.get("opportunity_score", 0) or 0) for x in status_rows], default=0.0)
+        ),
         "rows": status_rows,
-    })
+    }
+    save_status(status_payload)
+
+    command_history = load_command_center_history()
+    command_center = build_daily_command_center(
+        status_payload,
+        load_me_screener(),
+        as_of=now.tz_localize(None),
+        limit=3,
+        history=command_history,
+    )
+    command_history = update_command_center_history(
+        command_history,
+        command_center,
+        snapshot_at=now.tz_localize(None),
+    )
+    save_command_center_snapshot(
+        command_center,
+        command_history,
+    )
 
     print(
         "Short Cover Entry Alert:",

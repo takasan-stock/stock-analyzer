@@ -12,6 +12,12 @@ import json
 import datetime
 import time
 import xml.etree.ElementTree as ET
+from daily_command_center import (
+    build_command_center_handoff,
+    build_command_center_session,
+    build_score_breakdown_rows,
+    tradingview_url,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2014,6 +2020,287 @@ if "df" not in st.session_state:
 sync_reports_from_github()
 
 st.title("📊 銘柄管理ダッシュボード")
+
+# ==========================================
+# Daily Command Center（今日の最優先3銘柄）
+# ==========================================
+def _load_command_center_entry_status():
+    path = "data/short_cover_entry_status.json"
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _load_command_center_me_screener():
+    path = "data/multiple_expansion/me_screener_latest.csv"
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def _load_command_center_history():
+    path = "data/daily_command_center_history.csv"
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def _load_after_close_review():
+    path = "data/after_close_review_latest.json"
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+_cc_entry_status = _load_command_center_entry_status()
+_cc_me_screener = _load_command_center_me_screener()
+_cc_history = _load_command_center_history()
+_cc_now = pd.Timestamp.now(tz="Asia/Tokyo")
+_cc_session = build_command_center_session(
+    _cc_entry_status,
+    _cc_me_screener,
+    as_of=_cc_now,
+    limit=3,
+    history=_cc_history,
+)
+
+
+def _render_score_breakdown(row):
+    _items = build_score_breakdown_rows(row)
+    if not _items:
+        return
+
+    st.caption("Score Breakdown")
+    for _item in _items:
+        _label = _item["label"]
+        _value = float(_item["value"])
+        _pct = float(_item["percent"])
+        _direction = _item["direction"]
+
+        _left, _right = st.columns([1.2, 2.8])
+        with _left:
+            st.caption(f"{_label} {_value:+.1f}")
+        with _right:
+            if _direction == "positive":
+                st.progress(_pct / 100.0, text=f"+{_pct:.0f}%")
+            elif _direction == "negative":
+                st.progress(_pct / 100.0, text=f"-{_pct:.0f}%")
+            else:
+                st.progress(0.0, text="0")
+
+
+def _render_command_center_cards(frame, *, key_prefix):
+    if frame is None or frame.empty:
+        st.caption("表示できる候補はまだありません。次回のME / Entry Hunter更新後に反映されます。")
+        return
+
+    _cols = st.columns(len(frame))
+    for _i, (_, _row) in enumerate(frame.iterrows()):
+        with _cols[_i]:
+            _trend = str(_row.get("rank_trend", "NEW") or "NEW")
+            st.metric(
+                label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
+                value=f"{float(_row['opportunity_score']):.0f}",
+                delta=f"{_trend}｜{_row['ticker']} {_row['name']}",
+            )
+            st.caption(
+                f"**{_row.get('decision_card', '')}**  \n"
+                f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
+            )
+
+            _breakdown = str(_row.get("adaptive_breakdown", "") or "")
+            if _breakdown:
+                st.caption(f"🧮 {_breakdown}")
+                _render_score_breakdown(_row)
+
+            _handoff = build_command_center_handoff(_row)
+            st.link_button(
+                "📈 TradingView",
+                tradingview_url(_row["ticker"]),
+                use_container_width=True,
+            )
+
+            if st.button(
+                "🎯 Entry Hunter",
+                key=f"{key_prefix}_entry_{_row['ticker']}_{int(_row['rank'])}",
+                use_container_width=True,
+            ):
+                st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
+                st.session_state["command_center_focus_name"] = _handoff["name"]
+                st.session_state["command_center_focus_reason"] = _handoff["decision_card"]
+                st.switch_page("pages/8_Short_Cover_Hunter.py")
+
+            if st.button(
+                "🛡️ Pre-Trade",
+                key=f"{key_prefix}_pretrade_{_row['ticker']}_{int(_row['rank'])}",
+                use_container_width=True,
+            ):
+                st.session_state["pretrade_ticker"] = _handoff["ticker"]
+                st.session_state["pretrade_name"] = _handoff["name"]
+                st.session_state["pretrade_source"] = (
+                    f"Daily Command Center #{int(_row['rank'])}"
+                )
+                st.session_state["pretrade_opportunity_score"] = _handoff["opportunity_score"]
+                st.session_state["pretrade_opportunity_rating"] = _handoff["opportunity_rating"]
+                st.session_state["pretrade_opportunity_action"] = _handoff["opportunity_action"]
+                st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
+                st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
+                st.session_state["pretrade_source_bonus"] = _handoff.get("source_bonus")
+                st.session_state["pretrade_setup_bonus"] = _handoff.get("setup_bonus")
+                st.session_state["pretrade_trait_bonus"] = _handoff.get("trait_bonus")
+                st.session_state["pretrade_fast_bonus"] = _handoff.get("fast_bonus")
+                st.session_state["pretrade_adaptive_total"] = _handoff.get("adaptive_total")
+                st.session_state["pretrade_adaptive_breakdown"] = _handoff.get("adaptive_breakdown")
+                st.switch_page("pages/9_Pre_Trade_Check.py")
+
+
+st.markdown(f"### {_cc_session['headline']}")
+_render_command_center_cards(
+    _cc_session["primary"],
+    key_prefix=f"command_{_cc_session['mode'].lower().replace(' ', '_')}",
+)
+
+if _cc_session["mode"] == "PRE-MARKET":
+    _trade_date = _cc_session.get("me_trade_date")
+    _trade_date_text = (
+        "—"
+        if _trade_date is None
+        else pd.Timestamp(_trade_date).strftime("%Y-%m-%d")
+    )
+    st.info(
+        f"前日ME候補から今日狙う3銘柄を表示中です。"
+        f" ME基準日 {_trade_date_text}。9:00以降はEntry HunterのLIVE判定へ切り替わります。"
+    )
+elif _cc_session["mode"] == "LIVE":
+    st.caption(
+        "当日のEntry Hunter Opportunityを優先表示。"
+        " READY / CONFIRMED、順位変化、Decision Cardを見て確認順を決めます。"
+    )
+else:
+    st.caption(
+        "今日のLIVE結果を残したまま、次セッション候補を別枠で表示します。"
+        " 今日の結果と明日の候補を混ぜて順位付けしません。"
+    )
+
+    _after_review = _load_after_close_review()
+    _review_date = str(_after_review.get("review_date", "") or "")
+    _today_text = _cc_now.tz_localize(None).strftime("%Y-%m-%d")
+
+    st.markdown("### 📊 TODAY REVIEW")
+    if not _after_review or _review_date != _today_text:
+        st.caption("今日の引け後レビューはまだ更新待ちです。ME Daily Screener完了後に反映されます。")
+    else:
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _r1.metric("ENTRY READY", int(_after_review.get("ready_count", 0) or 0))
+        _r2.metric("CONFIRMED", int(_after_review.get("confirmed_count", 0) or 0))
+        _r3.metric("WEAKENING", int(_after_review.get("weakening_count", 0) or 0))
+        _r4.metric("明日に持ち越し", int(_after_review.get("carryover_count", 0) or 0))
+
+        _p1, _p2, _p3, _p4 = st.columns(4)
+        _top3_ret = _after_review.get("top3_avg_return_pct")
+        _avg_ret = _after_review.get("avg_close_return_pct")
+        _avg_mfe = _after_review.get("avg_mfe_pct")
+        _avg_mae = _after_review.get("avg_mae_pct")
+
+        _p1.metric(
+            "TOP3平均 当日",
+            "—" if _top3_ret is None else f"{float(_top3_ret):+.2f}%",
+        )
+        _p2.metric(
+            "全READY平均 当日",
+            "—" if _avg_ret is None else f"{float(_avg_ret):+.2f}%",
+        )
+        _p3.metric(
+            "平均MFE",
+            "—" if _avg_mfe is None else f"{float(_avg_mfe):+.2f}%",
+        )
+        _p4.metric(
+            "平均MAE",
+            "—" if _avg_mae is None else f"{float(_avg_mae):+.2f}%",
+        )
+
+        _review_rows = _after_review.get("rows", [])
+        if _review_rows:
+            _review_df = pd.DataFrame(_review_rows)
+            _review_cols = [
+                col
+                for col in [
+                    "ticker",
+                    "name",
+                    "source",
+                    "signal_key",
+                    "entry_price",
+                    "close_price",
+                    "close_return_pct",
+                    "mfe_pct",
+                    "mae_pct",
+                    "latest_status",
+                    "carryover",
+                ]
+                if col in _review_df.columns
+            ]
+            _review_df = _review_df[_review_cols].rename(
+                columns={
+                    "ticker": "Code",
+                    "name": "銘柄",
+                    "source": "Source",
+                    "signal_key": "Setup",
+                    "entry_price": "Entry",
+                    "close_price": "Close",
+                    "close_return_pct": "当日%",
+                    "mfe_pct": "MFE%",
+                    "mae_pct": "MAE%",
+                    "latest_status": "最終Status",
+                    "carryover": "持越し",
+                }
+            )
+            st.dataframe(
+                _review_df,
+                hide_index=True,
+                use_container_width=True,
+            )
+        st.caption(
+            f"価格取得 {_after_review.get('price_coverage', 0)}/{_after_review.get('tracked_entries', 0)}件。"
+            " 当日損益・MFE・MAEは最初のENTRY READY価格を基準に終値/高値/安値で計算します。"
+        )
+
+    st.markdown(f"### {_cc_session.get('secondary_headline', '🌅 NEXT SESSION WATCH')}")
+    _me_status = str(_cc_session.get("me_status", "") or "")
+    _me_trade_date = _cc_session.get("me_trade_date")
+    _me_trade_text = (
+        "—"
+        if _me_trade_date is None
+        else pd.Timestamp(_me_trade_date).strftime("%Y-%m-%d")
+    )
+
+    if _me_status == "UPDATED":
+        st.success(f"ME更新済み｜基準日 {_me_trade_text}")
+    else:
+        st.warning(
+            f"引け後ME更新待ち｜現在のME基準日 {_me_trade_text}。"
+            " 更新完了後に明日の候補へ自動反映されます。"
+        )
+
+    _render_command_center_cards(
+        _cc_session["secondary"],
+        key_prefix="command_next_session",
+    )
+
+
 
 # ==========================================
 # カスタムCSS（全体の見た目を整える）

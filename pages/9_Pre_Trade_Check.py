@@ -9,6 +9,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from daily_command_center import build_score_breakdown_rows
 from pretrade import build_technical_snapshot, evaluate_pretrade
 from short_cover import build_entry_hunter_snapshot, normalize_ticker
 
@@ -247,6 +248,19 @@ incoming_ticker = normalize_ticker(st.session_state.pop("pretrade_ticker", ""))
 incoming_source = str(st.session_state.pop("pretrade_source", "") or "").strip()
 incoming_name = str(st.session_state.pop("pretrade_name", "") or "").strip()
 incoming_earnings_days = st.session_state.pop("pretrade_earnings_days", None)
+incoming_opportunity_score = st.session_state.pop("pretrade_opportunity_score", None)
+incoming_opportunity_rating = str(st.session_state.pop("pretrade_opportunity_rating", "") or "")
+incoming_opportunity_action = str(st.session_state.pop("pretrade_opportunity_action", "") or "")
+incoming_opportunity_reason = str(st.session_state.pop("pretrade_opportunity_reason", "") or "")
+incoming_opportunity_coverage = st.session_state.pop("pretrade_opportunity_coverage", None)
+incoming_source_bonus = st.session_state.pop("pretrade_source_bonus", None)
+incoming_setup_bonus = st.session_state.pop("pretrade_setup_bonus", None)
+incoming_trait_bonus = st.session_state.pop("pretrade_trait_bonus", None)
+incoming_fast_bonus = st.session_state.pop("pretrade_fast_bonus", None)
+incoming_adaptive_total = st.session_state.pop("pretrade_adaptive_total", None)
+incoming_adaptive_breakdown = str(
+    st.session_state.pop("pretrade_adaptive_breakdown", "") or ""
+)
 
 portfolio = load_portfolio()
 row = {}
@@ -317,6 +331,57 @@ _active_source = str(st.session_state.get("pretrade_active_source", "") or "")
 _source_ticker = normalize_ticker(st.session_state.get("pretrade_source_ticker", ""))
 if _active_source and _source_ticker == ticker:
     st.success(f"🔗 {_active_source} から {ticker} を引き継ぎました。")
+    if incoming_opportunity_score is not None:
+        _oc1, _oc2, _oc3 = st.columns(3)
+        _oc1.metric(
+            "Entry Opportunity",
+            f"{float(incoming_opportunity_score):.0f}/100",
+            incoming_opportunity_rating or None,
+        )
+        _oc2.metric("Action", incoming_opportunity_action or "—")
+        _oc3.metric(
+            "Coverage",
+            "—" if incoming_opportunity_coverage is None else f"{float(incoming_opportunity_coverage):.0f}%",
+        )
+        if incoming_opportunity_reason:
+            st.caption(f"Opportunity理由: {incoming_opportunity_reason}")
+
+        _breakdown_row = {
+            "source_bonus": incoming_source_bonus,
+            "setup_bonus": incoming_setup_bonus,
+            "trait_bonus": incoming_trait_bonus,
+            "fast_bonus": incoming_fast_bonus,
+        }
+        _breakdown_items = build_score_breakdown_rows(_breakdown_row)
+        _has_breakdown = any(abs(float(x["value"])) >= 0.05 for x in _breakdown_items)
+        if _has_breakdown or incoming_adaptive_breakdown:
+            st.markdown("#### 🧮 Score Breakdown")
+            if incoming_adaptive_breakdown:
+                st.caption(incoming_adaptive_breakdown)
+            if incoming_adaptive_total is not None:
+                st.caption(f"Adaptive Total {float(incoming_adaptive_total):+.1f}")
+
+            for _item in _breakdown_items:
+                _b1, _b2 = st.columns([1.2, 2.8])
+                with _b1:
+                    st.caption(
+                        f"{_item['label']} {float(_item['value']):+.1f}"
+                    )
+                with _b2:
+                    _pct = float(_item["percent"])
+                    _direction = str(_item["direction"])
+                    if _direction == "positive":
+                        st.progress(
+                            _pct / 100.0,
+                            text=f"+{_pct:.0f}%",
+                        )
+                    elif _direction == "negative":
+                        st.progress(
+                            _pct / 100.0,
+                            text=f"-{_pct:.0f}%",
+                        )
+                    else:
+                        st.progress(0.0, text="0")
 
 with st.spinner(f"{ticker} の価格データを取得中..."):
     daily = load_daily(ticker)

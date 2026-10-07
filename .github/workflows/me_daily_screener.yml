@@ -1,0 +1,120 @@
+name: ME Daily Screener
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_candidates:
+        description: "Heavy MEX candidate count after lightweight all-TSE prefilter"
+        required: false
+        default: "30"
+        type: string
+      min_turnover_yen:
+        description: "Minimum 20-session average traded value (JPY)"
+        required: false
+        default: "50000000"
+        type: string
+  schedule:
+    - cron: "30 8 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check J-Quants API key
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          if [ -z "$JQUANTS_API_KEY" ]; then
+            echo "::error::JQUANTS_API_KEY is not configured."
+            exit 1
+          fi
+
+      - name: Resolve workflow inputs
+        id: cfg
+        shell: bash
+        run: |
+          MAX_CANDIDATES="${{ github.event.inputs.max_candidates }}"
+          MIN_TURNOVER="${{ github.event.inputs.min_turnover_yen }}"
+          if [ -z "$MAX_CANDIDATES" ]; then MAX_CANDIDATES="30"; fi
+          if [ -z "$MIN_TURNOVER" ]; then MIN_TURNOVER="50000000"; fi
+          echo "max_candidates=$MAX_CANDIDATES" >> "$GITHUB_OUTPUT"
+          echo "min_turnover=$MIN_TURNOVER" >> "$GITHUB_OUTPUT"
+
+      - name: STEP 1 - All TSE lightweight ME prefilter
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          python scripts/build_me_universe.py             --max-candidates "${{ steps.cfg.outputs.max_candidates }}"             --min-turnover-yen "${{ steps.cfg.outputs.min_turnover }}"
+
+      - name: STEP 2 - Heavy PIT/FCF MEX calculation
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy             --max-runtime-minutes 40
+
+      - name: STEP 3 - Build ME ranking and detect changes
+        run: |
+          python scripts/build_me_screener.py
+
+      - name: STEP 4 - Send state-change digest
+        env:
+          ME_EMAIL_TO: ${{ secrets.ME_EMAIL_TO }}
+          ME_EMAIL_USER: ${{ secrets.ME_EMAIL_USER }}
+          ME_EMAIL_APP_PASSWORD: ${{ secrets.ME_EMAIL_APP_PASSWORD }}
+          ME_SMTP_HOST: ${{ secrets.ME_SMTP_HOST }}
+          ME_SMTP_PORT: ${{ secrets.ME_SMTP_PORT }}
+          SHORT_COVER_EMAIL_TO: ${{ secrets.SHORT_COVER_EMAIL_TO }}
+          SHORT_COVER_EMAIL_USER: ${{ secrets.SHORT_COVER_EMAIL_USER }}
+          SHORT_COVER_EMAIL_APP_PASSWORD: ${{ secrets.SHORT_COVER_EMAIL_APP_PASSWORD }}
+          SHORT_COVER_SMTP_HOST: ${{ secrets.SHORT_COVER_SMTP_HOST }}
+          SHORT_COVER_SMTP_PORT: ${{ secrets.SHORT_COVER_SMTP_PORT }}
+        run: |
+          python scripts/send_me_screener_alert.py
+
+      - name: STEP 5 - Build after-close review
+        run: |
+          python scripts/build_after_close_review.py
+
+      - name: Commit latest screener output
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/multiple_expansion/me_universe_snapshot.csv
+          git add data/multiple_expansion/me_universe_candidates.csv
+          git add data/multiple_expansion/mex_latest.csv
+          git add data/multiple_expansion/mex_history.csv
+          git add data/multiple_expansion/mex_events.csv
+          git add data/multiple_expansion/mex_build_diagnostics.csv
+          git add data/multiple_expansion/me_screener_latest.csv
+          git add data/multiple_expansion/me_screener_candidates.csv
+          git add data/multiple_expansion/me_screener_changes.csv
+          git add data/multiple_expansion/me_screener_change_history.csv
+          git add data/multiple_expansion/me_screener_alert_status.json
+          git add data/after_close_review_latest.json
+          git add data/after_close_review_latest.csv
+          git add data/after_close_review_history.csv
+          git add data/after_close_feedback_summary.csv
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update ME daily screener"
+            git push
+          fi

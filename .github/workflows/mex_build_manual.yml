@@ -1,0 +1,67 @@
+name: MEX Build (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "Comma-separated TSE codes, e.g. 7203,6758"
+        required: true
+        type: string
+      from_date:
+        description: "Start date YYYY-MM-DD"
+        required: false
+        default: "2021-10-01"
+        type: string
+      allow_summary_proxy:
+        description: "Allow CFO+CFI proxy when exact CAPEX is unavailable"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check J-Quants API key
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          if [ -z "$JQUANTS_API_KEY" ]; then
+            echo "::error::JQUANTS_API_KEY is not configured in repository secrets."
+            exit 1
+          fi
+
+      - name: Build MEX dataset
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+          CODES: ${{ inputs.codes }}
+          FROM_DATE: ${{ inputs.from_date }}
+          ALLOW_PROXY: ${{ inputs.allow_summary_proxy }}
+        run: |
+          EXTRA=""
+          if [ "$ALLOW_PROXY" = "true" ]; then
+            EXTRA="--allow-summary-proxy"
+          fi
+          python scripts/build_mex_jquants.py             --codes "$CODES"             --from-date "$FROM_DATE"             $EXTRA
+
+      - name: Upload MEX result
+        uses: actions/upload-artifact@v4
+        with:
+          name: mex-jquants-result
+          path: data/multiple_expansion/
+          if-no-files-found: error

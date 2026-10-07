@@ -14,6 +14,9 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_opportunity import build_entry_opportunity
+
 from short_cover import (
     ALERT_HISTORY_COLUMNS,
     append_priority_alert_history,
@@ -145,6 +148,13 @@ ALERT_HISTORY_FILE = "data/short_cover_alert_history.csv"
 CONDITION_HISTORY_FILE = "data/short_cover_condition_versions.csv"
 DAILY_STATUS_FILE = "data/short_cover_daily_status.json"
 ENTRY_STATUS_FILE = "data/short_cover_entry_status.json"
+ME_SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"
+ENTRY_SOURCE_SUMMARY_FILE = "data/entry_hunter_source_summary.csv"
+ENTRY_SOURCE_PERFORMANCE_FILE = "data/entry_hunter_source_performance.csv"
+ENTRY_SIGNAL_SUMMARY_FILE = "data/entry_hunter_signal_summary.csv"
+ENTRY_TRAIT_SUMMARY_FILE = "data/entry_hunter_trait_summary.csv"
+AFTER_CLOSE_FEEDBACK_FILE = "data/after_close_feedback_summary.csv"
+ME_UNIVERSE_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
 
 
 def _github_shared_config():
@@ -247,6 +257,69 @@ def format_automation_status(value) -> str:
     }
     text = str(value or "UNKNOWN")
     return mapping.get(text, text)
+
+
+def load_me_screener_candidates() -> pd.DataFrame:
+    if os.path.exists(ME_SCREENER_FILE):
+        try:
+            return pd.read_csv(ME_SCREENER_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_source_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SOURCE_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_SOURCE_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_signal_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SIGNAL_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_SIGNAL_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_trait_summary() -> pd.DataFrame:
+    if os.path.exists(ENTRY_TRAIT_SUMMARY_FILE):
+        try:
+            return pd.read_csv(ENTRY_TRAIT_SUMMARY_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_me_universe_metadata() -> pd.DataFrame:
+    if os.path.exists(ME_UNIVERSE_FILE):
+        try:
+            return pd.read_csv(ME_UNIVERSE_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_after_close_feedback() -> pd.DataFrame:
+    if os.path.exists(AFTER_CLOSE_FEEDBACK_FILE):
+        try:
+            return pd.read_csv(AFTER_CLOSE_FEEDBACK_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+def load_entry_source_performance() -> pd.DataFrame:
+    if os.path.exists(ENTRY_SOURCE_PERFORMANCE_FILE):
+        try:
+            return pd.read_csv(ENTRY_SOURCE_PERFORMANCE_FILE, dtype={"ticker": str})
+        except Exception:
+            pass
+    return pd.DataFrame()
 
 
 def load_entry_alert_status() -> dict:
@@ -904,6 +977,22 @@ else:
         use_container_width=True,
     )
 
+st.markdown("### 🧭 Entry Trait Performance")
+_trait_summary = load_entry_trait_summary()
+if _trait_summary.empty:
+    st.caption("市場区分・時価総額・ボラティリティ別の実績は蓄積中です。")
+else:
+    _trait_show = _trait_summary.copy()
+    _trait_show = _trait_show.rename(columns={
+        "trait_axis": "Axis", "trait_key": "Trait", "candidate_days": "候補数",
+        "entry_ready": "READY", "entry_ready_rate": "READY率%", "tracked_entries": "追跡Entry",
+        "win_5d": "5D勝率%", "avg_5d": "5D平均%", "avg_10d": "10D平均%",
+        "sample_5d": "5D N", "confidence": "Confidence",
+    })
+    _trait_cols = [x for x in ["Axis","Trait","候補数","READY","READY率%","追跡Entry","5D勝率%","5D平均%","10D平均%","5D N","Confidence"] if x in _trait_show.columns]
+    st.dataframe(_trait_show[_trait_cols], hide_index=True, use_container_width=True)
+    st.caption("Trait補正は各軸最大±1点、合計最大±2.5点。5D Nが8件未満では0点です。")
+
 st.markdown("## 🎯 Short Cover Entry Hunter")
 st.caption(
     "前回の正式ACTIVEアラートを翌営業日の5分足で監視します。"
@@ -981,16 +1070,69 @@ else:
 if "short_cover_alert_history" not in st.session_state:
     st.session_state.short_cover_alert_history = load_alert_history()
 
+_command_focus_ticker = str(
+    st.session_state.pop("command_center_focus_ticker", "") or ""
+).replace(".0", "")
+_command_focus_name = str(
+    st.session_state.pop("command_center_focus_name", "") or ""
+)
+_command_focus_reason = str(
+    st.session_state.pop("command_center_focus_reason", "") or ""
+)
+
+if _command_focus_ticker:
+    st.success(
+        f"🔥 Daily Command Center から {_command_focus_ticker} "
+        f"{_command_focus_name} を引き継ぎました。"
+    )
+    if _command_focus_reason:
+        st.caption(f"優先理由: {_command_focus_reason}")
+
 _entry_history = normalize_alert_history(st.session_state.short_cover_alert_history)
-_entry_candidates = select_entry_hunter_candidates(
+_short_entry_candidates = select_entry_hunter_candidates(
     _entry_history,
     as_of=pd.Timestamp.now(),
     max_calendar_days=4,
     limit=5,
 )
+_me_entry_candidates = select_me_entry_candidates(
+    load_me_screener_candidates(),
+    as_of=pd.Timestamp.now(),
+    max_calendar_days=4,
+    limit=5,
+)
+_entry_candidates = combine_entry_candidates(
+    _short_entry_candidates,
+    _me_entry_candidates,
+    limit=8,
+    source_summary=load_entry_source_summary(),
+    signal_summary=load_entry_signal_summary(),
+    trait_summary=load_entry_trait_summary(),
+    universe_meta=load_me_universe_metadata(),
+    fast_feedback_summary=load_after_close_feedback(),
+)
+
+if _command_focus_ticker and not _entry_candidates.empty:
+    _focus_mask = (
+        _entry_candidates["ticker"].astype(str).str.replace(".0", "", regex=False)
+        == _command_focus_ticker
+    )
+    if _focus_mask.any():
+        _entry_candidates = pd.concat(
+            [
+                _entry_candidates[_focus_mask],
+                _entry_candidates[~_focus_mask],
+            ],
+            ignore_index=True,
+        )
+    else:
+        st.warning(
+            f"{_command_focus_ticker} は現在のEntry Hunter監視条件から外れています。"
+            " PRE-MARKET候補から状態が変化した可能性があります。"
+        )
 
 if _entry_candidates.empty:
-    st.info("翌営業日監視の対象になる直近ACTIVEアラートはありません。")
+    st.info("翌営業日監視の対象になるShort Cover / ME候補はありません。")
 else:
     _entry_rows = []
     for _, _candidate in _entry_candidates.iterrows():
@@ -1012,11 +1154,27 @@ else:
             _entry["reason"] = "翌営業日の取引データ待ち"
             _entry["risk"] = ""
 
+        _opp = build_entry_opportunity(_candidate.to_dict(), _entry)
+
         _entry_rows.append({
             "ticker": _ticker,
             "name": _candidate.get("name", ""),
             "alert_date": _alert_date,
             "tier": _candidate.get("alert_tier", ""),
+            "source": _candidate.get("source", ""),
+            "source_detail": _candidate.get("source_detail", ""),
+            "adaptive_bonus": _candidate.get("adaptive_bonus", 0.0),
+            "adaptive_confidence": _candidate.get("adaptive_confidence", "BASE"),
+            "state_bonus": _candidate.get("state_bonus", 0.0),
+            "state_confidence": _candidate.get("state_confidence", "BASE"),
+            "signal_key": _candidate.get("signal_key", ""),
+            "trait_market": _candidate.get("trait_market", ""),
+            "trait_size": _candidate.get("trait_size", ""),
+            "trait_vol": _candidate.get("trait_vol", ""),
+            "trait_bonus": _candidate.get("trait_bonus", 0.0),
+            "trait_confidence": _candidate.get("trait_confidence", "BASE"),
+            "fast_bonus": _candidate.get("fast_bonus", 0.0),
+            "fast_confidence": _candidate.get("fast_confidence", "BASE"),
             "status": _entry.get("status", "⚪ NO DATA"),
             "entry_score": _entry.get("score", 0),
             "gap_pct": _entry.get("gap_pct"),
@@ -1028,23 +1186,31 @@ else:
             "reason": _entry.get("reason", ""),
             "risk": _entry.get("risk", ""),
             "market_date": _entry.get("market_date"),
+            "opportunity_score": _opp.get("opportunity_score"),
+            "opportunity_rating": _opp.get("opportunity_rating"),
+            "opportunity_action": _opp.get("opportunity_action"),
+            "opportunity_reason": _opp.get("opportunity_reason"),
+            "opportunity_coverage": _opp.get("opportunity_coverage"),
+            "learning_confidence": _opp.get("learning_confidence"),
         })
 
     _entry_df = pd.DataFrame(_entry_rows)
     if not _entry_df.empty:
-        _ecols = st.columns(min(5, len(_entry_df)))
-        for _idx, (_, _r) in enumerate(_entry_df.iterrows()):
+        _entry_cards = _entry_df.head(5)
+        _ecols = st.columns(max(1, min(5, len(_entry_cards))))
+        for _idx, (_, _r) in enumerate(_entry_cards.iterrows()):
             with _ecols[_idx]:
                 st.metric(
-                    label=str(_r["status"]),
-                    value=f"{float(_r['entry_score']):.0f}",
-                    delta=f"{_r['ticker']} {_r['name']}",
+                    label=f"{_r.get('opportunity_rating', '—')}｜{_r.get('opportunity_action', '—')}",
+                    value=f"{float(_r.get('opportunity_score', 0)):.0f}",
+                    delta=f"{_r['ticker']} {_r['name']} [{_r.get('source', '')}]",
                 )
                 _gap_text = "—" if pd.isna(_r["gap_pct"]) else f"{float(_r['gap_pct']):+.1f}%"
                 _rv_text = "—" if pd.isna(_r["relvol15"]) else f"{float(_r['relvol15']):.1f}x"
                 st.caption(
+                    f"Entry {_r.get('entry_score', 0):.0f}｜Coverage {_r.get('opportunity_coverage', 0)}%｜"
                     f"Gap {_gap_text}｜15分出来高 {_rv_text}\n"
-                    f"{_r['reason'] or '条件待ち'}"
+                    f"{_r.get('opportunity_reason', '') or _r['reason'] or '条件待ち'}"
                     + (f"｜⚠ {_r['risk']}" if _r["risk"] else "")
                 )
                 if st.button(
@@ -1056,6 +1222,27 @@ else:
                     st.session_state["pretrade_name"] = str(_r.get("name", ""))
                     st.session_state["pretrade_source"] = (
                         f"Entry Hunter {_r.get('status', '')}"
+                    )
+                    st.session_state["pretrade_opportunity_score"] = _r.get("opportunity_score")
+                    st.session_state["pretrade_opportunity_rating"] = _r.get("opportunity_rating")
+                    st.session_state["pretrade_opportunity_action"] = _r.get("opportunity_action")
+                    st.session_state["pretrade_opportunity_reason"] = _r.get("opportunity_reason")
+                    st.session_state["pretrade_opportunity_coverage"] = _r.get("opportunity_coverage")
+                    st.session_state["pretrade_source_bonus"] = _r.get("adaptive_bonus")
+                    st.session_state["pretrade_setup_bonus"] = _r.get("state_bonus")
+                    st.session_state["pretrade_trait_bonus"] = _r.get("trait_bonus")
+                    st.session_state["pretrade_fast_bonus"] = _r.get("fast_bonus")
+                    st.session_state["pretrade_adaptive_total"] = (
+                        float(_r.get("adaptive_bonus", 0) or 0)
+                        + float(_r.get("state_bonus", 0) or 0)
+                        + float(_r.get("trait_bonus", 0) or 0)
+                        + float(_r.get("fast_bonus", 0) or 0)
+                    )
+                    st.session_state["pretrade_adaptive_breakdown"] = (
+                        f"Source {float(_r.get('adaptive_bonus', 0) or 0):+.1f}｜"
+                        f"Setup {float(_r.get('state_bonus', 0) or 0):+.1f}｜"
+                        f"Trait {float(_r.get('trait_bonus', 0) or 0):+.1f}｜"
+                        f"Fast0D {float(_r.get('fast_bonus', 0) or 0):+.1f}"
                     )
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 
@@ -1084,19 +1271,20 @@ else:
 
         st.dataframe(
             _entry_show[[
-                "status", "ticker", "name", "tier", "Score", "監視日",
+                "opportunity_rating", "opportunity_score", "opportunity_action", "status", "ticker", "name", "source", "signal_key", "tier", "Score", "adaptive_bonus", "state_bonus", "trait_bonus", "fast_bonus", "trait_market", "trait_size", "trait_vol", "opportunity_coverage", "learning_confidence", "監視日",
                 "GU", "VWAP", "15分高値", "前日高値", "15分出来高",
                 "reason", "risk",
             ]].rename(columns={
                 "status": "判定", "ticker": "コード", "name": "銘柄",
-                "tier": "前日Tier", "reason": "成立条件", "risk": "注意",
+                "opportunity_rating": "Opp", "opportunity_score": "Opportunity", "opportunity_action": "Action", "source": "監視ソース", "signal_key": "Setup", "tier": "前日Tier", "adaptive_bonus": "Source補正", "state_bonus": "State補正", "trait_bonus": "Trait補正", "fast_bonus": "Fast0D", "trait_market": "市場特性", "trait_size": "Size", "trait_vol": "Vol", "opportunity_coverage": "Coverage", "learning_confidence": "Learn Conf", "reason": "成立条件", "risk": "注意",
             }),
             hide_index=True,
             use_container_width=True,
         )
 
         st.caption(
-            "目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
+            "監視ソース：SHORT COVER / ME HUNTER / SHORT+ME（両方一致）。"
+            " 目安：🟢 ENTRY READY＝15分経過後もVWAP上＋ブレイク＋出来高継続。"
             " 🟡 WAIT＝条件未成立。🔴 CANCEL＝VWAP/15分安値など初動崩れ。"
             " 大幅GUは追いかけず注意側に評価します。"
         )
