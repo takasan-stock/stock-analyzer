@@ -120,6 +120,51 @@ def _normalize_master(raw: pd.DataFrame) -> pd.DataFrame:
     return out.drop_duplicates("ticker", keep="last")
 
 
+
+def _fetch_all_market_bars_by_date(
+    client: JQuantsV2Client,
+    *,
+    from_date: date,
+    to_date: date,
+) -> pd.DataFrame:
+    """Fetch all-market daily bars using the API's date-only mode.
+
+    J-Quants rejects an all-market range request when code is blank. The
+    supported pattern is to request one trading date at a time without code.
+    We iterate business days, tolerate exchange holidays, and concatenate
+    successful responses.
+    """
+    frames: list[pd.DataFrame] = []
+    dates = pd.bdate_range(from_date, to_date)
+
+    for idx, ts in enumerate(dates, start=1):
+        ymd = pd.Timestamp(ts).strftime("%Y%m%d")
+        try:
+            frame = client.daily_bars(
+                code="",
+                date=ymd,
+            )
+        except Exception as exc:
+            print(
+                f"[ME-PREFILTER] bars {ymd} unavailable: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+
+        if frame is not None and not frame.empty:
+            frames.append(frame)
+
+        if idx == 1 or idx % 20 == 0 or idx == len(dates):
+            print(
+                f"[ME-PREFILTER] all-market bars progress "
+                f"{idx}/{len(dates)} dates"
+            )
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def _normalize_market(
     bars: pd.DataFrame,
     valuation: pd.DataFrame,
@@ -522,27 +567,25 @@ def main() -> int:
         raise SystemExit("Listed issue master returned no usable TSE codes.")
 
     print(
-        f"[ME-PREFILTER] fetching all-market bars "
+        f"[ME-PREFILTER] fetching all-market bars by trading date "
         f"{from_date.isoformat()}..{to_date.isoformat()} ..."
     )
-    bars = client.daily_bars(
-        code="",
-        from_date=from_date.strftime("%Y%m%d"),
-        to_date=to_date.strftime("%Y%m%d"),
+    bars = _fetch_all_market_bars_by_date(
+        client,
+        from_date=from_date,
+        to_date=to_date,
     )
     if bars.empty:
         raise SystemExit("All-market daily bars returned no rows.")
 
-    print("[ME-PREFILTER] fetching all-market valuation ...")
-    try:
-        valuation = client.valuation(
-            code="",
-            from_date=from_date.strftime("%Y%m%d"),
-            to_date=to_date.strftime("%Y%m%d"),
-        )
-    except Exception as exc:
-        print(f"[ME-PREFILTER] valuation unavailable: {exc}")
-        valuation = pd.DataFrame()
+    # The all-market range form is not accepted by J-Quants v2 when code is
+    # blank. The heavy PIT/FCF stage performs the real valuation work, so the
+    # lightweight prefilter intentionally remains price/liquidity-led here.
+    valuation = pd.DataFrame()
+    print(
+        "[ME-PREFILTER] skipping all-market valuation in lightweight stage; "
+        "heavy MEX stage will compute exact valuation for shortlisted names."
+    )
 
     market = _normalize_market(bars, valuation)
     universe = _build_universe_snapshot(
