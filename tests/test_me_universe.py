@@ -105,3 +105,20 @@ def test_all_market_bars_are_fetched_by_date_only():
     assert [x["date"] for x in client.calls] == ["20261001", "20261002"]
     assert all(x["code"] == "" for x in client.calls)
     assert all(x["from"] == "" and x["to"] == "" for x in client.calls)
+
+
+def test_coarse_multiple_features_handles_missing_valuation_columns():
+    from scripts.build_me_universe import _coarse_multiple_features
+
+    frame = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2026-01-01", periods=70),
+            "ticker": ["1111"] * 70,
+            "close": [1000 + i for i in range(70)],
+            "volume": [100000] * 70,
+        }
+    )
+    out = _coarse_multiple_features(frame)
+    assert len(out) == 70
+    assert "coarse_mlp" in out.columns
+    assert out["coarse_multiple_source"].iloc[-1] == "PRICE ONLY"
