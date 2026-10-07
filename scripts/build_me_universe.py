@@ -690,8 +690,12 @@ def main() -> int:
     parser.add_argument(
         "--lookback-days",
         type=int,
-        default=190,
-        help="Calendar-day lookback for all-market bars/valuation.",
+        default=110,
+        help=(
+            "Calendar-day lookback for the lightweight all-market bootstrap. "
+            "110 days is enough for the 60-session history gate while keeping "
+            "the first J-Quants cache build practical."
+        ),
     )
     parser.add_argument(
         "--max-candidates",
