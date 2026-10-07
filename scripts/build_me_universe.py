@@ -15,6 +15,111 @@ from jquants_mex_adapter import JQuantsV2Client
 
 OUT_DIR = Path("data/multiple_expansion")
 DEFAULT_PORTFOLIO = "portfolio_data.csv"
+BARS_CACHE = OUT_DIR / "me_all_market_bars_cache.csv.gz"
+
+
+
+def _load_bar_cache(path: Path = BARS_CACHE) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        cache = pd.read_csv(path, dtype={"Code": str, "code": str})
+    except Exception as exc:
+        print(
+            f"[ME-PREFILTER] cache load failed; rebuilding: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return pd.DataFrame()
+
+    date_col = "Date" if "Date" in cache.columns else (
+        "date" if "date" in cache.columns else None
+    )
+    if date_col is None:
+        return pd.DataFrame()
+
+    cache["_cache_date"] = pd.to_datetime(
+        cache[date_col], errors="coerce"
+    ).dt.normalize()
+    cache = cache.dropna(subset=["_cache_date"]).copy()
+    return cache
+
+
+def _merge_bar_cache(
+    cache: pd.DataFrame,
+    fresh: pd.DataFrame,
+    *,
+    to_date: date,
+    keep_calendar_days: int = 230,
+) -> pd.DataFrame:
+    frames = [x for x in [cache, fresh] if x is not None and not x.empty]
+    if not frames:
+        return pd.DataFrame()
+
+    merged = pd.concat(frames, ignore_index=True, sort=False)
+    date_col = "Date" if "Date" in merged.columns else (
+        "date" if "date" in merged.columns else None
+    )
+    code_col = "Code" if "Code" in merged.columns else (
+        "code" if "code" in merged.columns else None
+    )
+    if date_col is None or code_col is None:
+        return merged
+
+    merged["_cache_date"] = pd.to_datetime(
+        merged[date_col], errors="coerce"
+    ).dt.normalize()
+    merged["_cache_code"] = merged[code_col].map(_code4)
+    merged = merged.dropna(subset=["_cache_date"]).copy()
+    merged = merged[merged["_cache_code"] != ""].copy()
+
+    floor = pd.Timestamp(to_date) - pd.Timedelta(
+        days=max(190, int(keep_calendar_days))
+    )
+    merged = merged[merged["_cache_date"] >= floor.normalize()].copy()
+    merged = merged.sort_values(
+        ["_cache_date", "_cache_code"]
+    ).drop_duplicates(
+        subset=["_cache_date", "_cache_code"],
+        keep="last",
+    )
+    return merged.reset_index(drop=True)
+
+
+def _next_fetch_start(
+    cache: pd.DataFrame,
+    *,
+    requested_from: date,
+    to_date: date,
+) -> date:
+    if cache is None or cache.empty or "_cache_date" not in cache.columns:
+        return requested_from
+
+    latest = pd.to_datetime(
+        cache["_cache_date"], errors="coerce"
+    ).dropna()
+    if latest.empty:
+        return requested_from
+
+    next_day = (latest.max() + pd.Timedelta(days=1)).date()
+    return min(max(requested_from, next_day), to_date)
+
+
+def _save_bar_cache(
+    frame: pd.DataFrame,
+    path: Path = BARS_CACHE,
+) -> None:
+    if frame is None or frame.empty:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = frame.drop(
+        columns=["_cache_date", "_cache_code"],
+        errors="ignore",
+    )
+    out.to_csv(
+        path,
+        index=False,
+        compression="gzip",
+    )
 
 
 def _num(value: Any) -> float | None:
@@ -127,8 +232,8 @@ def _fetch_all_market_bars_by_date(
     *,
     from_date: date,
     to_date: date,
-    request_delay_seconds: float = 1.0,
-    max_retries: int = 4,
+    request_delay_seconds: float = 4.0,
+    max_retries: int = 3,
 ) -> pd.DataFrame:
     """Fetch all-market bars one date at a time with rate-limit protection.
 
@@ -625,17 +730,55 @@ def main() -> int:
     if master.empty:
         raise SystemExit("Listed issue master returned no usable TSE codes.")
 
-    print(
-        f"[ME-PREFILTER] fetching all-market bars by trading date "
-        f"{from_date.isoformat()}..{to_date.isoformat()} ..."
+    cache = _load_bar_cache()
+    fetch_from = _next_fetch_start(
+        cache,
+        requested_from=from_date,
+        to_date=to_date,
     )
-    bars = _fetch_all_market_bars_by_date(
-        client,
-        from_date=from_date,
+
+    if cache.empty:
+        print(
+            f"[ME-PREFILTER] first-run bootstrap: all-market bars "
+            f"{from_date.isoformat()}..{to_date.isoformat()} "
+            f"with rate-limit-safe pacing"
+        )
+    else:
+        cache_latest = pd.to_datetime(
+            cache["_cache_date"], errors="coerce"
+        ).max()
+        print(
+            f"[ME-PREFILTER] cache loaded: {len(cache):,} rows; "
+            f"latest={cache_latest.date() if pd.notna(cache_latest) else 'n/a'}"
+        )
+
+    fresh = pd.DataFrame()
+    if fetch_from <= to_date:
+        print(
+            f"[ME-PREFILTER] fetching incremental all-market bars "
+            f"{fetch_from.isoformat()}..{to_date.isoformat()} ..."
+        )
+        fresh = _fetch_all_market_bars_by_date(
+            client,
+            from_date=fetch_from,
+            to_date=to_date,
+        )
+    else:
+        print("[ME-PREFILTER] cache is already current; no bar fetch needed.")
+
+    bars = _merge_bar_cache(
+        cache,
+        fresh,
         to_date=to_date,
     )
     if bars.empty:
         raise SystemExit("All-market daily bars returned no rows.")
+
+    _save_bar_cache(bars)
+    print(
+        f"[ME-PREFILTER] cache saved: {len(bars):,} rows "
+        f"to {BARS_CACHE}"
+    )
 
     # The all-market range form is not accepted by J-Quants v2 when code is
     # blank. The heavy PIT/FCF stage performs the real valuation work, so the
