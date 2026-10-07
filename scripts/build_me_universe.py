@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -126,44 +127,96 @@ def _fetch_all_market_bars_by_date(
     *,
     from_date: date,
     to_date: date,
+    request_delay_seconds: float = 1.0,
+    max_retries: int = 4,
 ) -> pd.DataFrame:
-    """Fetch all-market daily bars using the API's date-only mode.
+    """Fetch all-market bars one date at a time with rate-limit protection.
 
-    J-Quants rejects an all-market range request when code is blank. The
-    supported pattern is to request one trading date at a time without code.
-    We iterate business days, tolerate exchange holidays, and concatenate
-    successful responses.
+    J-Quants v2 rejects blank-code range requests. Date-only all-market
+    requests work, but they can hit HTTP 429 when fired too quickly. We pace
+    calls, retry 429s with exponential backoff, and fail clearly if coverage
+    is too incomplete to build a reliable universe snapshot.
     """
     frames: list[pd.DataFrame] = []
     dates = pd.bdate_range(from_date, to_date)
+    successful_dates: list[pd.Timestamp] = []
 
     for idx, ts in enumerate(dates, start=1):
         ymd = pd.Timestamp(ts).strftime("%Y%m%d")
-        try:
-            frame = client.daily_bars(
-                code="",
-                date=ymd,
-            )
-        except Exception as exc:
-            print(
-                f"[ME-PREFILTER] bars {ymd} unavailable: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            continue
+        frame = pd.DataFrame()
+
+        for attempt in range(max(1, int(max_retries)) + 1):
+            try:
+                frame = client.daily_bars(
+                    code="",
+                    date=ymd,
+                )
+                break
+            except Exception as exc:
+                status = getattr(
+                    getattr(exc, "response", None),
+                    "status_code",
+                    None,
+                )
+                if status == 429 and attempt < max_retries:
+                    wait_seconds = min(30.0, 3.0 * (2 ** attempt))
+                    print(
+                        f"[ME-PREFILTER] rate limited on {ymd}; "
+                        f"retry {attempt + 1}/{max_retries} "
+                        f"after {wait_seconds:.0f}s"
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+
+                print(
+                    f"[ME-PREFILTER] bars {ymd} unavailable: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                frame = pd.DataFrame()
+                break
 
         if frame is not None and not frame.empty:
             frames.append(frame)
+            successful_dates.append(pd.Timestamp(ts).normalize())
 
         if idx == 1 or idx % 20 == 0 or idx == len(dates):
             print(
                 f"[ME-PREFILTER] all-market bars progress "
-                f"{idx}/{len(dates)} dates"
+                f"{idx}/{len(dates)} dates; "
+                f"success={len(successful_dates)}"
             )
+
+        if request_delay_seconds > 0 and idx < len(dates):
+            time.sleep(float(request_delay_seconds))
 
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
 
+    out = pd.concat(frames, ignore_index=True)
+
+    expected = max(1, len(dates))
+    coverage = len(successful_dates) / expected
+    latest_success = max(successful_dates) if successful_dates else None
+    staleness_days = (
+        (pd.Timestamp(to_date) - latest_success).days
+        if latest_success is not None
+        else 9999
+    )
+
+    print(
+        f"[ME-PREFILTER] all-market coverage "
+        f"{len(successful_dates)}/{expected} ({coverage:.1%}); "
+        f"latest={latest_success.date() if latest_success is not None else 'n/a'}"
+    )
+
+    if coverage < 0.70 or staleness_days > 7:
+        raise RuntimeError(
+            "All-market bars coverage is too incomplete for a reliable "
+            "prefilter. This is usually caused by J-Quants rate limiting. "
+            f"coverage={coverage:.1%}, staleness_days={staleness_days}"
+        )
+
+    return out
 
 def _normalize_market(
     bars: pd.DataFrame,
@@ -236,8 +289,14 @@ def _coarse_multiple_features(group: pd.DataFrame) -> pd.DataFrame:
     g = group.copy()
     g = g.sort_values("trade_date").reset_index(drop=True)
 
-    per = pd.to_numeric(g.get("per"), errors="coerce")
-    pbr = pd.to_numeric(g.get("pbr"), errors="coerce")
+    per = pd.to_numeric(
+        g["per"] if "per" in g.columns else pd.Series(pd.NA, index=g.index),
+        errors="coerce",
+    )
+    pbr = pd.to_numeric(
+        g["pbr"] if "pbr" in g.columns else pd.Series(pd.NA, index=g.index),
+        errors="coerce",
+    )
 
     per_valid = per.where(per > 0)
     pbr_valid = pbr.where(pbr > 0)
