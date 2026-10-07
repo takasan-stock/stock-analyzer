@@ -2,6 +2,7 @@ import pandas as pd
 
 from scripts.build_me_universe import (
     _build_universe_snapshot,
+    _fetch_all_market_bars_by_date,
     _select_candidates,
 )
 
@@ -72,3 +73,35 @@ def test_candidate_selector_pins_portfolio_and_reserves_growth():
     assert "3333" in set(out["ticker"])
     assert len(out) == 2
     assert out["prefilter_rank"].tolist() == [1, 2]
+
+
+class _FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    def daily_bars(self, *, code, from_date="", to_date="", date=""):
+        self.calls.append({
+            "code": code,
+            "from": from_date,
+            "to": to_date,
+            "date": date,
+        })
+        if date == "20261001":
+            return pd.DataFrame([{"Date": date, "Code": "1111", "C": 1000, "Vo": 100}])
+        if date == "20261002":
+            return pd.DataFrame([{"Date": date, "Code": "2222", "C": 2000, "Vo": 200}])
+        return pd.DataFrame()
+
+
+def test_all_market_bars_are_fetched_by_date_only():
+    client = _FakeClient()
+    out = _fetch_all_market_bars_by_date(
+        client,
+        from_date=pd.Timestamp("2026-10-01").date(),
+        to_date=pd.Timestamp("2026-10-02").date(),
+    )
+
+    assert len(out) == 2
+    assert [x["date"] for x in client.calls] == ["20261001", "20261002"]
+    assert all(x["code"] == "" for x in client.calls)
+    assert all(x["from"] == "" and x["to"] == "" for x in client.calls)
