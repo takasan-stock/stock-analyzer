@@ -1,16 +1,16 @@
 {
-  "run_at": "2026-10-06T16:53:03.352913",
+  "run_at": "2026-10-07T17:29:40.127653",
   "status": "🟢 READY",
   "active_version": "v1.0",
   "condition_text": "C50/I0/L70/P40/Q0",
-  "jpx_date": "2026-10-06 00:00:00",
+  "jpx_date": "2026-10-07 00:00:00",
   "jpx_lag": 0,
-  "market_date": "2026-10-05 00:00:00",
+  "market_date": "2026-10-06 00:00:00",
   "market_lag": 1,
   "warnings": [],
   "candidates": 60,
   "priority_count": 5,
-  "new_alerts": 0,
-  "official_alerts": 28,
-  "tracked_alerts": 20
+  "new_alerts": 1,
+  "official_alerts": 33,
+  "tracked_alerts": 28
 }
