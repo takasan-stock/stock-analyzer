@@ -122,3 +122,42 @@ def test_coarse_multiple_features_handles_missing_valuation_columns():
     assert len(out) == 70
     assert "coarse_mlp" in out.columns
     assert out["coarse_multiple_source"].iloc[-1] == "PRICE ONLY"
+
+
+def test_bar_cache_fetches_only_dates_after_latest_cache():
+    from scripts.build_me_universe import _next_fetch_start
+
+    cache = pd.DataFrame({
+        "_cache_date": pd.to_datetime(["2026-10-01", "2026-10-02"]),
+        "Code": ["1111", "2222"],
+    })
+    out = _next_fetch_start(
+        cache,
+        requested_from=pd.Timestamp("2026-09-01").date(),
+        to_date=pd.Timestamp("2026-10-07").date(),
+    )
+    assert out == pd.Timestamp("2026-10-03").date()
+
+
+def test_merge_bar_cache_deduplicates_same_date_code():
+    from scripts.build_me_universe import _merge_bar_cache
+
+    cache = pd.DataFrame({
+        "Date": ["2026-10-01"],
+        "Code": ["1111"],
+        "C": [1000],
+        "_cache_date": pd.to_datetime(["2026-10-01"]),
+        "_cache_code": ["1111"],
+    })
+    fresh = pd.DataFrame({
+        "Date": ["2026-10-01"],
+        "Code": ["1111"],
+        "C": [1010],
+    })
+    out = _merge_bar_cache(
+        cache,
+        fresh,
+        to_date=pd.Timestamp("2026-10-07").date(),
+    )
+    assert len(out) == 1
+    assert float(out.iloc[0]["C"]) == 1010
