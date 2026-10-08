@@ -368,3 +368,53 @@ def test_me_watch_candidate_does_not_promote_to_entry_hunter():
     assert watch.iloc[0]["ticker"] == "2670"
     assert watch.iloc[0]["signal_key"] == "ME|WATCH"
     assert watch.iloc[0]["alert_tier"] == "🟡 ME WATCH"
+
+
+def test_detect_me_entry_promotions_marks_latest_ready_change():
+    from entry_hunter_sources import detect_me_entry_promotions
+
+    frame = pd.DataFrame(
+        [
+            {
+                "ticker": "2670",
+                "trade_date": "2026-10-08",
+                "second_wave_state": "RE-WATCH READY",
+                "sw_decision": "READY",
+                "second_wave_state_changed": True,
+            },
+            {
+                "ticker": "6857",
+                "trade_date": "2026-10-08",
+                "second_wave_state": "RE-WATCH READY",
+                "sw_decision": "READY",
+                "second_wave_state_changed": False,
+            },
+        ]
+    )
+
+    out = detect_me_entry_promotions(
+        frame,
+        as_of="2026-10-09 09:20:00+09:00",
+        max_calendar_days=4,
+    )
+    assert out == ["2670"]
+
+
+def test_detect_me_entry_promotions_ignores_watch_only():
+    from entry_hunter_sources import detect_me_entry_promotions
+
+    frame = pd.DataFrame(
+        [{
+            "ticker": "2670",
+            "trade_date": "2026-10-08",
+            "second_wave_state": "EXP. DECELERATING",
+            "sw_decision": "WATCH",
+            "second_wave_state_changed": True,
+        }]
+    )
+
+    out = detect_me_entry_promotions(
+        frame,
+        as_of="2026-10-09",
+    )
+    assert out == []
