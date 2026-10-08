@@ -62,26 +62,38 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test_email }}" = "true" ]; then
-            git add data/short_cover_entry_status.json
+            PATHS="data/short_cover_entry_status.json"
             COMMIT_MESSAGE="Update Short Cover email test status"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.validate_only }}" = "true" ]; then
-            git add data/entry_hunter_validation_status.json
+            PATHS="data/entry_hunter_validation_status.json"
             COMMIT_MESSAGE="Update Entry Hunter validation status"
           else
-            git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
-            git add data/entry_hunter_candidate_history.csv
-            git add data/entry_hunter_source_performance.csv
-            git add data/entry_hunter_source_summary.csv
-            git add data/entry_hunter_signal_summary.csv
-            git add data/entry_hunter_trait_summary.csv
-            git add data/daily_command_center_latest.csv
-            git add data/daily_command_center_history.csv
+            PATHS="
+            data/short_cover_entry_notifications.csv
+            data/short_cover_entry_status.json
+            data/entry_hunter_candidate_history.csv
+            data/entry_hunter_source_performance.csv
+            data/entry_hunter_source_summary.csv
+            data/entry_hunter_signal_summary.csv
+            data/entry_hunter_trait_summary.csv
+            data/daily_command_center_latest.csv
+            data/daily_command_center_history.csv
+            "
             COMMIT_MESSAGE="Update Short Cover Entry alerts"
           fi
+
+          for path in $PATHS; do
+            if [ -e "$path" ]; then
+              git add "$path"
+            else
+              echo "Optional output not present: $path"
+            fi
+          done
 
           if git diff --cached --quiet; then
             echo "No Entry Hunter data changes"
             exit 0
           fi
+
           git commit -m "$COMMIT_MESSAGE"
           git push
