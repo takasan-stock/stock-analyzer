@@ -1046,6 +1046,7 @@ def fetch_ticker_bundle(
     to_date: str,
     include_details: bool = True,
     include_topix: bool = True,
+    include_market: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Fetch one ticker bundle. No data is written or backfilled here."""
     summary_raw = client.fin_summary(code=code)
@@ -1058,16 +1059,21 @@ def fetch_ticker_bundle(
         except PermissionError as exc:
             details_error = str(exc)
 
-    bars = client.daily_bars(
-        code=code,
-        from_date=_date_string(from_date),
-        to_date=_date_string(to_date),
-    )
-    valuation = client.valuation(
-        code=code,
-        from_date=_date_string(from_date),
-        to_date=_date_string(to_date),
-    )
+    if include_market:
+        bars = client.daily_bars(
+            code=code,
+            from_date=_date_string(from_date),
+            to_date=_date_string(to_date),
+        )
+        valuation = client.valuation(
+            code=code,
+            from_date=_date_string(from_date),
+            to_date=_date_string(to_date),
+        )
+    else:
+        bars = pd.DataFrame()
+        valuation = pd.DataFrame()
+
     topix = (
         client.topix(
             from_date=_date_string(from_date),
