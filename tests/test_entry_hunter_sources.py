@@ -331,3 +331,40 @@ def test_combine_sources_applies_small_fast_feedback_bonus():
     assert len(out) == 1
     assert 0 < float(out.iloc[0]["fast_bonus"]) <= 2.5
     assert out.iloc[0]["fast_confidence"] == "WARMING"
+
+
+def test_me_watch_candidate_does_not_promote_to_entry_hunter():
+    from entry_hunter_sources import (
+        select_me_entry_candidates,
+        select_me_watch_candidates,
+    )
+
+    row = {
+        "ticker": "2670",
+        "company_name": "ABC-Mart",
+        "trade_date": "2026-10-08",
+        "second_wave_state": "EXP. DECELERATING",
+        "sw_decision": "WATCH",
+        "candidate_type": "SECOND WAVE",
+        "sw_score": 45.1,
+        "hist_edge_score": 45.0,
+        "fcf_engine_score": None,
+        "screen_rank": 1,
+        "re_route": "LOCKED",
+    }
+    frame = pd.DataFrame([row])
+
+    entry = select_me_entry_candidates(
+        frame,
+        as_of="2026-10-09",
+    )
+    watch = select_me_watch_candidates(
+        frame,
+        as_of="2026-10-09",
+    )
+
+    assert entry.empty
+    assert len(watch) == 1
+    assert watch.iloc[0]["ticker"] == "2670"
+    assert watch.iloc[0]["signal_key"] == "ME|WATCH"
+    assert watch.iloc[0]["alert_tier"] == "🟡 ME WATCH"

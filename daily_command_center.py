@@ -4,7 +4,10 @@ from typing import Any
 
 import pandas as pd
 
-from entry_hunter_sources import select_me_entry_candidates
+from entry_hunter_sources import (
+    select_me_entry_candidates,
+    select_me_watch_candidates,
+)
 from entry_opportunity import build_entry_opportunity
 
 
@@ -313,6 +316,15 @@ def _from_me_screener(
         max_calendar_days=5,
         limit=8,
     )
+    watch_only = False
+    if candidates.empty:
+        candidates = select_me_watch_candidates(
+            me_screener,
+            as_of=as_of,
+            max_calendar_days=5,
+            limit=8,
+        )
+        watch_only = not candidates.empty
     if candidates.empty:
         return _empty()
 
@@ -328,10 +340,14 @@ def _from_me_screener(
                 "name": _text(candidate.get("name")),
                 "opportunity_score": opportunity["opportunity_score"],
                 "opportunity_rating": opportunity["opportunity_rating"],
-                "opportunity_action": "PRE-MARKET WATCH",
+                "opportunity_action": (
+                    "WATCH ONLY" if watch_only else "PRE-MARKET WATCH"
+                ),
                 "source": _text(candidate.get("source")),
                 "signal_key": _text(candidate.get("signal_key")),
-                "entry_status": "⏳ PRE-MARKET",
+                "entry_status": (
+                    "🟡 ME WATCH" if watch_only else "⏳ PRE-MARKET"
+                ),
                 "coverage": opportunity["opportunity_coverage"],
                 "source_bonus": opportunity.get("source_bonus", 0.0),
                 "setup_bonus": opportunity.get("setup_bonus", 0.0),
@@ -383,6 +399,8 @@ def build_decision_card(row: pd.Series | dict[str, Any]) -> str:
         parts.append("条件待ち")
     elif status == "⏳ PRE-MARKET":
         parts.append("寄り後確認待ち")
+    elif status == "🟡 ME WATCH":
+        parts.append("再加速待ち")
 
     evidence = []
     if "Source実績+" in reason:

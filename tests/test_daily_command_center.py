@@ -376,3 +376,34 @@ def test_score_breakdown_rows_clip_to_component_caps():
     assert by_label["Trait"]["value"] == 2.5
     assert by_label["Fast0D"]["value"] == -2.5
     assert all(item["percent"] == 100.0 for item in out)
+
+
+def test_command_center_shows_me_watch_without_promoting_entry():
+    me = pd.DataFrame(
+        [{
+            "ticker": "2670",
+            "company_name": "ABC-Mart",
+            "trade_date": "2026-10-08",
+            "second_wave_state": "EXP. DECELERATING",
+            "sw_decision": "WATCH",
+            "candidate_type": "SECOND WAVE",
+            "sw_score": 45.1,
+            "hist_edge_score": 45.0,
+            "fcf_engine_score": None,
+            "screen_rank": 1,
+            "re_route": "LOCKED",
+        }]
+    )
+    out = build_daily_command_center(
+        {},
+        me,
+        as_of="2026-10-09 08:30:00+09:00",
+        limit=3,
+    )
+
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert row["ticker"] == "2670"
+    assert row["opportunity_action"] == "WATCH ONLY"
+    assert row["entry_status"] == "🟡 ME WATCH"
+    assert "再加速待ち" in row["decision_card"]

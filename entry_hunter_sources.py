@@ -498,7 +498,12 @@ def select_me_entry_candidates(
     if s.empty:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
 
-    ref = pd.Timestamp(as_of if as_of is not None else pd.Timestamp.now()).normalize()
+    ref = pd.Timestamp(
+        as_of if as_of is not None else pd.Timestamp.now()
+    )
+    if ref.tzinfo is not None:
+        ref = ref.tz_convert("Asia/Tokyo").tz_localize(None)
+    ref = ref.normalize()
     s = s[s["trade_date"] < ref].copy()
     if s.empty:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
@@ -623,6 +628,147 @@ def select_me_entry_candidates(
 
     return normalize_entry_candidates(
         s.head(int(limit)),
+        default_source="ME HUNTER",
+    )
+
+
+
+def select_me_watch_candidates(
+    screener: pd.DataFrame | None,
+    *,
+    as_of=None,
+    max_calendar_days: int = 5,
+    limit: int = 5,
+) -> pd.DataFrame:
+    """Return ME watch-only names without promoting them to Entry Hunter.
+
+    This lane is intentionally separate from the Entry Hunter selector.
+    Typical use is the Daily Command Center, where users should still see a
+    decelerating second-wave setup even though the intraday Entry Hunter must
+    wait for READY / PRIORITY / RE-EXP.
+
+    Eligible watch-only rows:
+      - latest completed ME date before as_of
+      - second-wave candidate
+      - WATCH decision
+      - not already eligible for the Entry Hunter handoff
+    """
+    if screener is None or screener.empty:
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+
+    s = screener.copy()
+    if "ticker" not in s.columns:
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+
+    s["ticker"] = s["ticker"].map(_ticker)
+    s["trade_date"] = pd.to_datetime(
+        s.get("trade_date"),
+        errors="coerce",
+    ).dt.normalize()
+    s = s.dropna(subset=["trade_date"])
+    if s.empty:
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+
+    ref = pd.Timestamp(
+        as_of if as_of is not None else pd.Timestamp.now()
+    )
+    if ref.tzinfo is not None:
+        ref = ref.tz_convert("Asia/Tokyo").tz_localize(None)
+    ref = ref.normalize()
+    s = s[s["trade_date"] < ref].copy()
+    if s.empty:
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+
+    latest = s["trade_date"].max()
+    if (ref - latest).days > int(max_calendar_days):
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+    s = s[s["trade_date"] == latest].copy()
+
+    decision = s.get(
+        "sw_decision",
+        pd.Series("", index=s.index),
+    ).fillna("").astype(str)
+    candidate_type = s.get(
+        "candidate_type",
+        pd.Series("", index=s.index),
+    ).fillna("").astype(str)
+    state = s.get(
+        "second_wave_state",
+        pd.Series("", index=s.index),
+    ).fillna("").astype(str)
+
+    mature = (
+        state.eq("RE-EXP")
+        | decision.eq("ACTIVE")
+        | decision.eq("PRIORITY WATCH")
+        | state.eq("RE-WATCH READY")
+        | decision.eq("READY")
+    )
+    watch_only = (
+        decision.eq("WATCH")
+        & (
+            candidate_type.eq("SECOND WAVE")
+            | state.eq("EXP. DECELERATING")
+            | state.eq("RE-WATCH EARLY")
+        )
+        & ~mature
+    )
+    s = s[watch_only].copy()
+    if s.empty:
+        return pd.DataFrame(columns=ENTRY_COLUMNS)
+
+    sw = pd.to_numeric(
+        s.get("sw_score", pd.Series(0, index=s.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    hist = pd.to_numeric(
+        s.get("hist_edge_score", pd.Series(45, index=s.index)),
+        errors="coerce",
+    ).fillna(45.0)
+    fcf = pd.to_numeric(
+        s.get("fcf_engine_score", pd.Series(50, index=s.index)),
+        errors="coerce",
+    ).fillna(50.0)
+    rank = pd.to_numeric(
+        s.get("screen_rank", pd.Series(pd.NA, index=s.index)),
+        errors="coerce",
+    )
+
+    s["source_score"] = (
+        sw.clip(0, 100) * 0.70
+        + hist.clip(0, 100) * 0.15
+        + fcf.clip(0, 100) * 0.15
+    ).clip(0, 100)
+    s["source_rank"] = rank
+    s["name"] = s.get(
+        "company_name",
+        pd.Series("", index=s.index),
+    ).fillna("")
+    s["alert_date"] = s["trade_date"]
+    s["source"] = "ME HUNTER"
+    s["condition_version"] = "ME-v0.9"
+    s["alert_tier"] = "🟡 ME WATCH"
+    s["signal_key"] = "ME|WATCH"
+
+    details = []
+    for _, row in s.iterrows():
+        detail = (
+            f"{str(row.get('second_wave_state', '') or '')} / "
+            f"{str(row.get('sw_decision', '') or '')}"
+        )
+        route = str(row.get("re_route", "") or "")
+        if route:
+            detail += f" / {route}"
+        details.append(detail)
+    s["source_detail"] = details
+
+    s = s.sort_values(
+        ["source_score", "source_rank", "ticker"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+    return normalize_entry_candidates(
+        s.head(max(1, int(limit))),
         default_source="ME HUNTER",
     )
 
