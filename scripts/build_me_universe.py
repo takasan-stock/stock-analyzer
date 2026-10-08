@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yfinance as yf
 
 from jquants_mex_adapter import JQuantsV2Client
 
@@ -225,6 +226,127 @@ def _normalize_master(raw: pd.DataFrame) -> pd.DataFrame:
 
     return out.drop_duplicates("ticker", keep="last")
 
+
+
+
+def _fetch_all_market_bars_yfinance(
+    master: pd.DataFrame,
+    *,
+    from_date: date,
+    to_date: date,
+    batch_size: int = 150,
+) -> pd.DataFrame:
+    """Fetch TSE bars in Yahoo Finance batches for the lightweight prefilter.
+
+    J-Quants remains the authoritative source for the shortlisted heavy MEX
+    stage. This lightweight stage only needs close/volume/history to reduce
+    ~4,000 names to a small heavy-analysis set, so batching via yfinance avoids
+    the date-by-date J-Quants 429 bottleneck.
+    """
+    if master is None or master.empty or "ticker" not in master.columns:
+        return pd.DataFrame()
+
+    codes = (
+        master["ticker"]
+        .dropna()
+        .astype(str)
+        .map(_code4)
+    )
+    codes = [x for x in codes.tolist() if x]
+    if not codes:
+        return pd.DataFrame()
+
+    start = pd.Timestamp(from_date).strftime("%Y-%m-%d")
+    end = (pd.Timestamp(to_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    rows: list[pd.DataFrame] = []
+    batches = [
+        codes[i : i + max(1, int(batch_size))]
+        for i in range(0, len(codes), max(1, int(batch_size)))
+    ]
+
+    for idx, batch in enumerate(batches, start=1):
+        symbols = [f"{code}.T" for code in batch]
+        print(
+            f"[ME-PREFILTER] yfinance batch {idx}/{len(batches)} "
+            f"symbols={len(symbols)}"
+        )
+        try:
+            raw = yf.download(
+                tickers=symbols,
+                start=start,
+                end=end,
+                auto_adjust=True,
+                progress=False,
+                group_by="column",
+                threads=True,
+            )
+        except Exception as exc:
+            print(
+                f"[ME-PREFILTER] yfinance batch {idx} failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            continue
+
+        if raw is None or raw.empty:
+            continue
+
+        if isinstance(raw.columns, pd.MultiIndex):
+            try:
+                long = raw.stack(
+                    level=1,
+                    future_stack=True,
+                ).reset_index()
+            except TypeError:
+                long = raw.stack(level=1).reset_index()
+
+            if long.empty:
+                continue
+
+            symbol_col = long.columns[1]
+            long = long.rename(
+                columns={
+                    long.columns[0]: "Date",
+                    symbol_col: "Symbol",
+                    "Close": "C",
+                    "Volume": "Vo",
+                }
+            )
+            long["Code"] = long["Symbol"].astype(str).str.replace(
+                r"\.T$",
+                "",
+                regex=True,
+            )
+            keep = [
+                col
+                for col in ["Date", "Code", "C", "Vo"]
+                if col in long.columns
+            ]
+            rows.append(long[keep].copy())
+        else:
+            # Defensive path for a single-symbol response.
+            code = batch[0]
+            one = raw.reset_index().rename(
+                columns={"Close": "C", "Volume": "Vo"}
+            )
+            one["Code"] = code
+            keep = [
+                col
+                for col in ["Date", "Code", "C", "Vo"]
+                if col in one.columns
+            ]
+            rows.append(one[keep].copy())
+
+    if not rows:
+        return pd.DataFrame()
+
+    out = pd.concat(rows, ignore_index=True)
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out["Code"] = out["Code"].map(_code4)
+    out["C"] = pd.to_numeric(out.get("C"), errors="coerce")
+    out["Vo"] = pd.to_numeric(out.get("Vo"), errors="coerce")
+    out = out.dropna(subset=["Date", "Code", "C"])
+    out = out[out["Code"].str.fullmatch(r"\d{4}", na=False)].copy()
+    return out.sort_values(["Date", "Code"]).reset_index(drop=True)
 
 
 def _fetch_all_market_bars_by_date(
@@ -759,11 +881,11 @@ def main() -> int:
     fresh = pd.DataFrame()
     if fetch_from <= to_date:
         print(
-            f"[ME-PREFILTER] fetching incremental all-market bars "
-            f"{fetch_from.isoformat()}..{to_date.isoformat()} ..."
+            f"[ME-PREFILTER] fetching lightweight all-market bars via "
+            f"yfinance {fetch_from.isoformat()}..{to_date.isoformat()} ..."
         )
-        fresh = _fetch_all_market_bars_by_date(
-            client,
+        fresh = _fetch_all_market_bars_yfinance(
+            master,
             from_date=fetch_from,
             to_date=to_date,
         )

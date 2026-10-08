@@ -3,6 +3,7 @@ import pandas as pd
 from scripts.build_me_universe import (
     _build_universe_snapshot,
     _fetch_all_market_bars_by_date,
+    _fetch_all_market_bars_yfinance,
     _select_candidates,
 )
 
@@ -161,3 +162,39 @@ def test_merge_bar_cache_deduplicates_same_date_code():
     )
     assert len(out) == 1
     assert float(out.iloc[0]["C"]) == 1010
+
+
+def test_yfinance_all_market_batch_normalizes_multiindex(monkeypatch):
+    dates = pd.to_datetime(["2026-10-01", "2026-10-02"])
+    columns = pd.MultiIndex.from_product(
+        [["Close", "Volume"], ["1111.T", "2222.T"]]
+    )
+    raw = pd.DataFrame(
+        [
+            [1000.0, 2000.0, 100000, 200000],
+            [1010.0, 1980.0, 110000, 210000],
+        ],
+        index=dates,
+        columns=columns,
+    )
+
+    def fake_download(**kwargs):
+        assert set(kwargs["tickers"]) == {"1111.T", "2222.T"}
+        return raw
+
+    monkeypatch.setattr(
+        "scripts.build_me_universe.yf.download",
+        fake_download,
+    )
+
+    master = pd.DataFrame({"ticker": ["1111", "2222"]})
+    out = _fetch_all_market_bars_yfinance(
+        master,
+        from_date=pd.Timestamp("2026-10-01").date(),
+        to_date=pd.Timestamp("2026-10-02").date(),
+        batch_size=150,
+    )
+
+    assert set(out["Code"]) == {"1111", "2222"}
+    assert len(out) == 4
+    assert set(out.columns) >= {"Date", "Code", "C", "Vo"}
