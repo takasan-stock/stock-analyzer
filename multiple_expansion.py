@@ -170,8 +170,14 @@ def calculate_valuation_multiples(df: pd.DataFrame) -> pd.DataFrame:
     fcf = pd.to_numeric(out.get("fcf_ttm"), errors="coerce")
     ebitda = pd.to_numeric(out.get("ebitda_ttm"), errors="coerce")
     net_income = pd.to_numeric(out.get("net_income_ttm"), errors="coerce")
-    debt = pd.to_numeric(out.get("total_debt", 0.0), errors="coerce").fillna(0.0)
-    cash = pd.to_numeric(out.get("cash_and_equivalents", 0.0), errors="coerce").fillna(0.0)
+    debt = pd.to_numeric(
+        out.get("total_debt", pd.Series(0.0, index=out.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    cash = pd.to_numeric(
+        out.get("cash_and_equivalents", pd.Series(0.0, index=out.index)),
+        errors="coerce",
+    ).fillna(0.0)
     price = pd.to_numeric(out.get("adj_close"), errors="coerce")
     shares = pd.to_numeric(
         out.get(
