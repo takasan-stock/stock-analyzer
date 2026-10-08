@@ -219,3 +219,25 @@ class MultipleExpansionGoldenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_valuation_multiple_falls_back_to_per_share_when_market_cap_missing():
+    from multiple_expansion import calculate_valuation_multiples
+
+    df = pd.DataFrame(
+        {
+            "adj_close": [1000.0],
+            "market_cap_pti": [pd.NA],
+            "fcf_ttm": [100.0],
+            "fcf_per_share_ttm": [50.0],
+            "net_income_ttm": [200.0],
+            "diluted_shares_ttm": [10.0],
+            "ebitda_ttm": [300.0],
+        }
+    )
+    out = calculate_valuation_multiples(df)
+
+    assert float(out.iloc[0]["p_fcf"]) == 20.0
+    assert float(out.iloc[0]["per"]) == 50.0
+    assert pd.isna(out.iloc[0]["ev_ebitda"])
+    assert int(out.iloc[0]["valid_multiple_count"]) == 2

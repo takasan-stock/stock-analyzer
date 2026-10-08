@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -178,16 +179,34 @@ class JQuantsV2Client:
         out: list[dict[str, Any]] = []
 
         while True:
-            response = requests.get(
-                url,
-                params=query,
-                headers={"x-api-key": self.api_key},
-                timeout=self.timeout,
-            )
-            if response.status_code == 403:
-                raise PermissionError(
-                    f"J-Quants plan does not permit {path}, or the API key lacks access."
+            response = None
+            for attempt in range(5):
+                response = requests.get(
+                    url,
+                    params=query,
+                    headers={"x-api-key": self.api_key},
+                    timeout=self.timeout,
                 )
+                if response.status_code == 403:
+                    raise PermissionError(
+                        f"J-Quants plan does not permit {path}, or the API key lacks access."
+                    )
+                if response.status_code != 429:
+                    break
+
+                retry_after = response.headers.get("Retry-After", "").strip()
+                try:
+                    wait_seconds = float(retry_after)
+                except (TypeError, ValueError):
+                    wait_seconds = min(30.0, 3.0 * (2 ** attempt))
+                print(
+                    f"[JQUANTS] rate limited on {path}; "
+                    f"retry {attempt + 1}/5 after {wait_seconds:.0f}s"
+                )
+                time.sleep(max(1.0, wait_seconds))
+
+            if response is None:
+                raise RuntimeError(f"J-Quants request failed before response: {path}")
             response.raise_for_status()
             payload = response.json()
             batch = payload.get("data", [])
@@ -1027,6 +1046,7 @@ def fetch_ticker_bundle(
     to_date: str,
     include_details: bool = True,
     include_topix: bool = True,
+    include_market: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Fetch one ticker bundle. No data is written or backfilled here."""
     summary_raw = client.fin_summary(code=code)
@@ -1039,16 +1059,21 @@ def fetch_ticker_bundle(
         except PermissionError as exc:
             details_error = str(exc)
 
-    bars = client.daily_bars(
-        code=code,
-        from_date=_date_string(from_date),
-        to_date=_date_string(to_date),
-    )
-    valuation = client.valuation(
-        code=code,
-        from_date=_date_string(from_date),
-        to_date=_date_string(to_date),
-    )
+    if include_market:
+        bars = client.daily_bars(
+            code=code,
+            from_date=_date_string(from_date),
+            to_date=_date_string(to_date),
+        )
+        valuation = client.valuation(
+            code=code,
+            from_date=_date_string(from_date),
+            to_date=_date_string(to_date),
+        )
+    else:
+        bars = pd.DataFrame()
+        valuation = pd.DataFrame()
+
     topix = (
         client.topix(
             from_date=_date_string(from_date),

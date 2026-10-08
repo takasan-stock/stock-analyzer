@@ -155,24 +155,62 @@ def build_point_in_time_financials(
 
 
 def calculate_valuation_multiples(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate valuation multiples from already point-in-time aligned inputs."""
+    """Calculate PIT valuation multiples with per-share fallbacks.
+
+    J-Quants valuation history can be plan-limited. When market_cap_pti is
+    unavailable, P/FCF and PER are still computable without look-ahead from
+    PIT-aligned financial snapshots using price divided by per-share FCF/EPS.
+    """
     out = df.copy()
 
-    market_cap = pd.to_numeric(out.get("market_cap_pti"), errors="coerce")
+    market_cap = pd.to_numeric(
+        out.get("market_cap_pti", pd.Series(index=out.index, dtype=float)),
+        errors="coerce",
+    )
     fcf = pd.to_numeric(out.get("fcf_ttm"), errors="coerce")
     ebitda = pd.to_numeric(out.get("ebitda_ttm"), errors="coerce")
     net_income = pd.to_numeric(out.get("net_income_ttm"), errors="coerce")
-    debt = pd.to_numeric(out.get("total_debt", 0.0), errors="coerce").fillna(0.0)
-    cash = pd.to_numeric(out.get("cash_and_equivalents", 0.0), errors="coerce").fillna(0.0)
+    debt = pd.to_numeric(
+        out.get("total_debt", pd.Series(0.0, index=out.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    cash = pd.to_numeric(
+        out.get("cash_and_equivalents", pd.Series(0.0, index=out.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    price = pd.to_numeric(out.get("adj_close"), errors="coerce")
+    shares = pd.to_numeric(
+        out.get(
+            "diluted_shares_ttm",
+            out.get(
+                "shares_outstanding_pti",
+                pd.Series(index=out.index, dtype=float),
+            ),
+        ),
+        errors="coerce",
+    )
+    fcf_ps = pd.to_numeric(
+        out.get("fcf_per_share_ttm", pd.Series(index=out.index, dtype=float)),
+        errors="coerce",
+    )
+    eps_ps = (net_income / shares).where(
+        (shares > 0) & net_income.notna()
+    )
 
-    out["p_fcf"] = (market_cap / fcf).where((market_cap > 0) & (fcf > 0))
+    p_fcf_cap = (market_cap / fcf).where((market_cap > 0) & (fcf > 0))
+    p_fcf_ps = (price / fcf_ps).where((price > 0) & (fcf_ps > 0))
+    out["p_fcf"] = p_fcf_cap.combine_first(p_fcf_ps)
+
     enterprise_value = market_cap + debt - cash
     out["ev_ebitda"] = (enterprise_value / ebitda).where(
         (enterprise_value > 0) & (ebitda > 0)
     )
-    out["per"] = (market_cap / net_income).where(
+
+    per_cap = (market_cap / net_income).where(
         (market_cap > 0) & (net_income > 0)
     )
+    per_ps = (price / eps_ps).where((price > 0) & (eps_ps > 0))
+    out["per"] = per_cap.combine_first(per_ps)
 
     out["valid_multiple_count"] = out[list(MULTIPLE_WEIGHTS)].notna().sum(axis=1)
     return out
