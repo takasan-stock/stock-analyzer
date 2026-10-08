@@ -25,6 +25,7 @@ from entry_hunter_sources import (
     combine_entry_candidates,
     detect_me_entry_promotions,
     select_me_entry_candidates,
+    select_me_watch_candidates,
 )
 from entry_opportunity import build_entry_opportunity
 from daily_command_center import (
@@ -56,6 +57,7 @@ ME_UNIVERSE_FILE = DATA_DIR / "multiple_expansion" / "me_universe_snapshot.csv"
 COMMAND_CENTER_LATEST_FILE = DATA_DIR / "daily_command_center_latest.csv"
 COMMAND_CENTER_HISTORY_FILE = DATA_DIR / "daily_command_center_history.csv"
 AFTER_CLOSE_FEEDBACK_FILE = DATA_DIR / "after_close_feedback_summary.csv"
+VALIDATION_FILE = DATA_DIR / "entry_hunter_validation_status.json"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -333,6 +335,15 @@ def parse_args():
         action="store_true",
         help="Send one test email and exit without touching Entry Hunter history.",
     )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help=(
+            "Run one read-only Entry Hunter validation outside the normal "
+            "monitoring window. No emails, notifications, performance, or "
+            "candidate history are mutated."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -371,13 +382,14 @@ def main() -> int:
     # Scheduled workflow runs a wider UTC window. Keep the actual monitoring
     # window strictly between 09:15 and 11:00 JST on weekdays. This covers
     # READY detection plus roughly 30-90 minutes of post-entry follow-up.
-    if now.weekday() >= 5:
-        print("Short Cover Entry Alert: weekend skip")
-        return 0
-    hhmm = now.hour * 60 + now.minute
-    if hhmm < 9 * 60 + 15 or hhmm > 11 * 60:
-        print(f"Short Cover Entry Alert: outside monitoring window ({now:%H:%M} JST)")
-        return 0
+    if not args.validate_only:
+        if now.weekday() >= 5:
+            print("Short Cover Entry Alert: weekend skip")
+            return 0
+        hhmm = now.hour * 60 + now.minute
+        if hhmm < 9 * 60 + 15 or hhmm > 11 * 60:
+            print(f"Short Cover Entry Alert: outside monitoring window ({now:%H:%M} JST)")
+            return 0
 
     history = load_history()
     notifications = load_notifications()
@@ -432,6 +444,98 @@ def main() -> int:
         universe_meta=load_me_universe(),
         fast_feedback_summary=load_after_close_feedback(),
     )
+
+    if args.validate_only:
+        watch_candidates = select_me_watch_candidates(
+            me_screener,
+            as_of=now.tz_localize(None),
+            max_calendar_days=4,
+            limit=8,
+        )
+        validation_rows = []
+        for _, candidate in candidates.iterrows():
+            ticker = str(candidate["ticker"])
+            try:
+                daily, intraday = load_prices(ticker)
+                entry = build_entry_hunter_snapshot(daily, intraday)
+                market_date = pd.to_datetime(
+                    entry.get("market_date"),
+                    errors="coerce",
+                )
+                alert_date = pd.to_datetime(
+                    candidate.get("alert_date"),
+                    errors="coerce",
+                )
+                if (
+                    pd.notna(market_date)
+                    and pd.notna(alert_date)
+                    and pd.Timestamp(market_date).normalize()
+                    <= pd.Timestamp(alert_date).normalize()
+                ):
+                    entry["status"] = "🟡 WAIT"
+                    entry["score"] = 0.0
+                    entry["reason"] = "翌営業日の取引データ待ち"
+                    entry["risk"] = ""
+                opportunity = build_entry_opportunity(
+                    candidate.to_dict(),
+                    entry,
+                )
+                validation_rows.append({
+                    "ticker": ticker,
+                    "name": candidate.get("name", ""),
+                    "source": candidate.get("source", ""),
+                    "signal_key": candidate.get("signal_key", ""),
+                    "me_promotion": ticker in me_promoted_tickers,
+                    "entry_status": entry.get("status", "⚪ NO DATA"),
+                    "entry_score": entry.get("score", 0),
+                    "market_date": market_date,
+                    "opportunity_score": opportunity.get("opportunity_score"),
+                    "opportunity_rating": opportunity.get("opportunity_rating"),
+                    "opportunity_action": opportunity.get("opportunity_action"),
+                    "opportunity_reason": opportunity.get("opportunity_reason"),
+                })
+            except Exception as exc:
+                validation_rows.append({
+                    "ticker": ticker,
+                    "name": candidate.get("name", ""),
+                    "source": candidate.get("source", ""),
+                    "signal_key": candidate.get("signal_key", ""),
+                    "me_promotion": ticker in me_promoted_tickers,
+                    "entry_status": "⚪ NO DATA",
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                })
+
+        payload = {
+            "run_at": now.isoformat(),
+            "mode": "VALIDATION_ONLY",
+            "side_effects": "NONE",
+            "candidate_count": int(len(candidates)),
+            "short_cover_candidates": int(len(short_candidates)),
+            "me_entry_candidates": int(len(me_candidates)),
+            "me_watch_candidates": int(len(watch_candidates)),
+            "me_watch_tickers": (
+                watch_candidates.get("ticker", pd.Series(dtype=str))
+                .dropna()
+                .astype(str)
+                .tolist()
+            ),
+            "me_promoted_count": int(len(me_promoted_tickers)),
+            "me_promoted_tickers": me_promoted_tickers,
+            "rows": validation_rows,
+        }
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        VALIDATION_FILE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        print(
+            "Entry Hunter Validation:",
+            f"candidates={len(candidates)}",
+            f"me_watch={len(watch_candidates)}",
+            f"me_promoted={len(me_promoted_tickers)}",
+            "side_effects=NONE",
+        )
+        return 0
 
     status_rows = []
     new_ready = 0

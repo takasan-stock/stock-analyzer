@@ -10,6 +10,11 @@ on:
         required: false
         default: false
         type: boolean
+      validate_only:
+        description: "Run read-only Entry Hunter validation outside market hours"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -45,6 +50,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test_email }}" = "true" ]; then
             python scripts/short_cover_entry_alert.py --test-email
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.validate_only }}" = "true" ]; then
+            python scripts/short_cover_entry_alert.py --validate-only
           else
             python scripts/short_cover_entry_alert.py
           fi
@@ -57,6 +64,9 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.test_email }}" = "true" ]; then
             git add data/short_cover_entry_status.json
             COMMIT_MESSAGE="Update Short Cover email test status"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.validate_only }}" = "true" ]; then
+            git add data/entry_hunter_validation_status.json
+            COMMIT_MESSAGE="Update Entry Hunter validation status"
           else
             git add data/short_cover_entry_notifications.csv data/short_cover_entry_status.json
             git add data/entry_hunter_candidate_history.csv
