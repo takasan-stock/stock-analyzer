@@ -7,16 +7,57 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+import yfinance as yf
 
 from jquants_mex_adapter import (
     JQuantsV2Client,
     add_simple_rs_proxy,
     fetch_ticker_bundle,
+    normalize_jquants_daily_market,
 )
 from multiple_expansion import run_multiple_expansion_pipeline
 
 
 OUT_DIR = Path("data/multiple_expansion")
+
+def _fetch_yfinance_market(
+    code: str,
+    *,
+    from_date: str,
+    to_date: str,
+) -> pd.DataFrame:
+    symbol = f"{code}.T"
+    raw = yf.download(
+        symbol,
+        start=from_date,
+        end=(pd.Timestamp(to_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+        auto_adjust=True,
+        progress=False,
+        threads=False,
+    )
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+
+    frame = raw.reset_index()
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = [
+            col[0] if isinstance(col, tuple) else col
+            for col in frame.columns
+        ]
+
+    bars = pd.DataFrame({
+        "Date": pd.to_datetime(frame["Date"], errors="coerce"),
+        "Code": f"{code}0" if len(str(code)) == 4 else str(code),
+        "AdjC": pd.to_numeric(frame.get("Close"), errors="coerce"),
+        "AdjVo": pd.to_numeric(frame.get("Volume"), errors="coerce"),
+    })
+    bars = bars.dropna(subset=["Date", "AdjC"])
+    return normalize_jquants_daily_market(
+        bars,
+        pd.DataFrame(),
+    )
+
+
 
 
 def _codes_from_portfolio(path: str) -> list[str]:
@@ -222,6 +263,7 @@ def main() -> int:
                 # --allow-summary-proxy.
                 include_details=not args.allow_summary_proxy,
                 include_topix=False,
+                include_market=False,
             )
         except Exception as exc:
             diagnostics.append({
@@ -232,8 +274,22 @@ def main() -> int:
             print(f"[MEX] {code}: ERROR {exc}")
             continue
 
-        market = add_simple_rs_proxy(bundle["market"], topix)
+        market = _fetch_yfinance_market(
+            code,
+            from_date=args.from_date,
+            to_date=args.to_date,
+        )
+        market = add_simple_rs_proxy(market, topix)
         financial = bundle["financial_events"].copy()
+
+        if market.empty:
+            diagnostics.append({
+                "code": code,
+                "status": "NO_MARKET_DATA",
+                "reason": "yfinance returned no usable daily bars.",
+            })
+            print(f"[MEX] {code}: NO_MARKET_DATA")
+            continue
 
         if financial.empty:
             diagnostics.append({
