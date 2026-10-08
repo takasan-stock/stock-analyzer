@@ -498,7 +498,12 @@ def select_me_entry_candidates(
     if s.empty:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
 
-    ref = pd.Timestamp(as_of if as_of is not None else pd.Timestamp.now()).normalize()
+    ref = pd.Timestamp(
+        as_of if as_of is not None else pd.Timestamp.now()
+    )
+    if ref.tzinfo is not None:
+        ref = ref.tz_convert("Asia/Tokyo").tz_localize(None)
+    ref = ref.normalize()
     s = s[s["trade_date"] < ref].copy()
     if s.empty:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
@@ -666,7 +671,10 @@ def select_me_watch_candidates(
 
     ref = pd.Timestamp(
         as_of if as_of is not None else pd.Timestamp.now()
-    ).normalize()
+    )
+    if ref.tzinfo is not None:
+        ref = ref.tz_convert("Asia/Tokyo").tz_localize(None)
+    ref = ref.normalize()
     s = s[s["trade_date"] < ref].copy()
     if s.empty:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
