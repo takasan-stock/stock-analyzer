@@ -395,22 +395,28 @@ def main() -> int:
     notifications = load_notifications()
     cfg = email_config()
 
+    # Validation-only runs happen after the close. Evaluate candidate handoff
+    # from the next-session perspective so today's completed ME row is eligible.
+    candidate_as_of = now.tz_localize(None)
+    if args.validate_only:
+        candidate_as_of = candidate_as_of + pd.Timedelta(days=1)
+
     short_candidates = select_entry_hunter_candidates(
         history,
-        as_of=now.tz_localize(None),
+        as_of=candidate_as_of,
         max_calendar_days=4,
         limit=5,
     )
     me_screener = load_me_screener()
     me_candidates = select_me_entry_candidates(
         me_screener,
-        as_of=now.tz_localize(None),
+        as_of=candidate_as_of,
         max_calendar_days=4,
         limit=5,
     )
     me_promoted_tickers = detect_me_entry_promotions(
         me_screener,
-        as_of=now.tz_localize(None),
+        as_of=candidate_as_of,
         max_calendar_days=4,
     )
     source_summary_for_rank = pd.DataFrame()
@@ -448,7 +454,7 @@ def main() -> int:
     if args.validate_only:
         watch_candidates = select_me_watch_candidates(
             me_screener,
-            as_of=now.tz_localize(None),
+            as_of=candidate_as_of,
             max_calendar_days=4,
             limit=8,
         )
@@ -507,6 +513,7 @@ def main() -> int:
 
         payload = {
             "run_at": now.isoformat(),
+            "validation_as_of": candidate_as_of.isoformat(),
             "mode": "VALIDATION_ONLY",
             "side_effects": "NONE",
             "candidate_count": int(len(candidates)),
