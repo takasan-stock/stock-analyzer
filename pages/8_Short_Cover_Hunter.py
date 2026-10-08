@@ -1053,6 +1053,18 @@ _eas5.metric(
     help="C=ENTRY CONFIRMED / W=WEAKENING / X=EXIT WATCH",
 )
 
+_me_promoted = [
+    str(x)
+    for x in (_entry_alert_status.get("me_promoted_tickers", []) or [])
+    if str(x)
+]
+if _me_promoted:
+    st.success(
+        "🚀 ME昇格 → Entry Hunter: "
+        + ", ".join(_me_promoted)
+        + "｜WATCHからREADY / PRIORITY / RE-EXPへ進んだ候補です。"
+    )
+
 if not bool(_entry_alert_status.get("email_configured")):
     st.info(
         "Entry Hunterの自動監視は動作できますが、メール通知はまだ未設定です。"
