@@ -1,0 +1,16 @@
+{
+  "review_date": "2026-10-08",
+  "ready_count": 0,
+  "confirmed_count": 0,
+  "weakening_count": 0,
+  "exit_watch_count": 0,
+  "carryover_count": 0,
+  "top3_avg_return_pct": null,
+  "avg_close_return_pct": null,
+  "avg_mfe_pct": null,
+  "avg_mae_pct": null,
+  "price_coverage": 0,
+  "tracked_entries": 0,
+  "rows": [],
+  "built_at": "2026-10-08T21:42:17.561446+09:00"
+}

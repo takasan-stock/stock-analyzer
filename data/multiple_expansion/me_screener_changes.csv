@@ -1,0 +1,1 @@
+event_id,market_date,ticker,company_name,event_type,severity,previous_state,current_state,previous_decision,current_decision,previous_rank,current_rank,sw_score,hist_edge_score,fcf_engine_score,change_reason
