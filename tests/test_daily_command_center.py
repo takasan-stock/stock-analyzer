@@ -5,6 +5,7 @@ from daily_command_center import (
     build_command_center_session,
     build_daily_command_center,
     build_score_breakdown_rows,
+    execution_handoff_allowed,
     resolve_command_center_mode,
     tradingview_url,
 )
@@ -407,3 +408,55 @@ def test_command_center_shows_me_watch_without_promoting_entry():
     assert row["opportunity_action"] == "WATCH ONLY"
     assert row["entry_status"] == "🟡 ME WATCH"
     assert "再加速待ち" in row["decision_card"]
+
+
+def test_watch_only_blocks_execution_handoff():
+    row = {
+        "ticker": "2670",
+        "opportunity_action": "WATCH ONLY",
+        "entry_status": "🟡 ME WATCH",
+        "signal_key": "ME|WATCH",
+    }
+    assert execution_handoff_allowed(row) is False
+
+
+def test_ready_me_allows_execution_handoff():
+    row = {
+        "ticker": "2670",
+        "opportunity_action": "PRE-MARKET WATCH",
+        "entry_status": "⏳ PRE-MARKET",
+        "signal_key": "ME|R-READY",
+    }
+    assert execution_handoff_allowed(row) is True
+
+
+def test_me_watch_promotes_when_state_becomes_ready():
+    me = pd.DataFrame(
+        [{
+            "ticker": "2670",
+            "company_name": "ABC-Mart",
+            "trade_date": "2026-10-08",
+            "second_wave_state": "RE-WATCH READY",
+            "sw_decision": "READY",
+            "candidate_type": "SECOND WAVE",
+            "sw_score": 72.0,
+            "hist_edge_score": 55.0,
+            "fcf_engine_score": 60.0,
+            "screen_rank": 1,
+            "re_route": "OPEN",
+        }]
+    )
+    out = build_daily_command_center(
+        {},
+        me,
+        as_of="2026-10-09 08:30:00+09:00",
+        limit=3,
+    )
+
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert row["ticker"] == "2670"
+    assert row["signal_key"] == "ME|R-READY"
+    assert row["opportunity_action"] == "PRE-MARKET WATCH"
+    assert row["entry_status"] == "⏳ PRE-MARKET"
+    assert execution_handoff_allowed(row) is True
