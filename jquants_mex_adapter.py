@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -178,16 +179,34 @@ class JQuantsV2Client:
         out: list[dict[str, Any]] = []
 
         while True:
-            response = requests.get(
-                url,
-                params=query,
-                headers={"x-api-key": self.api_key},
-                timeout=self.timeout,
-            )
-            if response.status_code == 403:
-                raise PermissionError(
-                    f"J-Quants plan does not permit {path}, or the API key lacks access."
+            response = None
+            for attempt in range(5):
+                response = requests.get(
+                    url,
+                    params=query,
+                    headers={"x-api-key": self.api_key},
+                    timeout=self.timeout,
                 )
+                if response.status_code == 403:
+                    raise PermissionError(
+                        f"J-Quants plan does not permit {path}, or the API key lacks access."
+                    )
+                if response.status_code != 429:
+                    break
+
+                retry_after = response.headers.get("Retry-After", "").strip()
+                try:
+                    wait_seconds = float(retry_after)
+                except (TypeError, ValueError):
+                    wait_seconds = min(30.0, 3.0 * (2 ** attempt))
+                print(
+                    f"[JQUANTS] rate limited on {path}; "
+                    f"retry {attempt + 1}/5 after {wait_seconds:.0f}s"
+                )
+                time.sleep(max(1.0, wait_seconds))
+
+            if response is None:
+                raise RuntimeError(f"J-Quants request failed before response: {path}")
             response.raise_for_status()
             payload = response.json()
             batch = payload.get("data", [])
