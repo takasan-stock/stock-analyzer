@@ -57,3 +57,12 @@ def test_daily_screener_ranks_latest_row():
         "FIRST WAVE",
         "OTHER",
     }
+
+
+def test_daily_screener_handles_missing_topix_close():
+    history = _history().drop(columns=["topix_close"])
+    out = build_daily_screener(history)
+
+    assert len(out) == 1
+    assert "hist_edge_score" in out.columns
+    assert int(out.iloc[0]["screen_rank"]) == 1
