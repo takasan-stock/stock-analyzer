@@ -276,8 +276,20 @@ def add_historical_edge(history: pd.DataFrame) -> pd.DataFrame:
 
     for ticker, g in out.groupby("ticker", sort=False):
         g = g.copy().reset_index(drop=True)
-        price = pd.to_numeric(g.get("adj_close"), errors="coerce")
-        bench = pd.to_numeric(g.get("topix_close"), errors="coerce")
+        price = pd.to_numeric(
+            g.get(
+                "adj_close",
+                pd.Series(pd.NA, index=g.index, dtype="Float64"),
+            ),
+            errors="coerce",
+        )
+        bench = pd.to_numeric(
+            g.get(
+                "topix_close",
+                pd.Series(pd.NA, index=g.index, dtype="Float64"),
+            ),
+            errors="coerce",
+        )
         state = g["second_wave_state"].astype(str)
         changed = state.ne(state.shift(1))
 
