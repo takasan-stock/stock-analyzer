@@ -21,7 +21,11 @@ from short_cover import (
     normalize_alert_history,
     select_entry_hunter_candidates,
 )
-from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
+from entry_hunter_sources import (
+    combine_entry_candidates,
+    detect_me_entry_promotions,
+    select_me_entry_candidates,
+)
 from entry_opportunity import build_entry_opportunity
 from daily_command_center import (
     build_daily_command_center,
@@ -385,11 +389,17 @@ def main() -> int:
         max_calendar_days=4,
         limit=5,
     )
+    me_screener = load_me_screener()
     me_candidates = select_me_entry_candidates(
-        load_me_screener(),
+        me_screener,
         as_of=now.tz_localize(None),
         max_calendar_days=4,
         limit=5,
+    )
+    me_promoted_tickers = detect_me_entry_promotions(
+        me_screener,
+        as_of=now.tz_localize(None),
+        max_calendar_days=4,
     )
     source_summary_for_rank = pd.DataFrame()
     if ENTRY_SOURCE_SUMMARY_FILE.exists():
@@ -461,6 +471,7 @@ def main() -> int:
                 "opportunity_reason": opportunity.get("opportunity_reason"),
                 "opportunity_coverage": opportunity.get("opportunity_coverage"),
                 "learning_confidence": opportunity.get("learning_confidence"),
+            "me_promotion": ticker in me_promoted_tickers,
                 "source_bonus": opportunity.get("source_bonus"),
                 "setup_bonus": opportunity.get("setup_bonus"),
                 "trait_bonus": opportunity.get("trait_bonus"),
@@ -754,6 +765,8 @@ def main() -> int:
         "candidate_count": int(len(candidates)),
         "short_cover_candidates": int(len(short_candidates)),
         "me_candidates": int(len(me_candidates)),
+        "me_promoted_count": int(len(me_promoted_tickers)),
+        "me_promoted_tickers": me_promoted_tickers,
         "confluence_candidates": int(sum(1 for x in candidates.get("source", pd.Series(dtype=str)).astype(str) if x == "SHORT+ME")),
         "ready_count": int(sum(
             1 for row in status_rows if row.get("status") == "🟢 ENTRY READY"
@@ -809,6 +822,7 @@ def main() -> int:
     print(
         "Short Cover Entry Alert:",
         f"candidates={len(candidates)}",
+        f"me_promoted={len(me_promoted_tickers)}",
         f"new_ready={new_ready}",
         f"emails_sent={emails_sent}",
         f"email_configured={bool(cfg['to'] and cfg['user'] and cfg['password'])}",
