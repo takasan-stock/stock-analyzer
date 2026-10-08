@@ -291,3 +291,32 @@ class JQuantsMexAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_fetch_bundle_can_skip_market_endpoints():
+    from jquants_mex_adapter import fetch_ticker_bundle
+
+    class FakeClient:
+        def fin_summary(self, *, code="", date=""):
+            return pd.DataFrame()
+        def fin_details(self, *, code="", date=""):
+            return pd.DataFrame()
+        def daily_bars(self, **kwargs):
+            raise AssertionError("daily_bars should not be called")
+        def valuation(self, **kwargs):
+            raise AssertionError("valuation should not be called")
+        def topix(self, **kwargs):
+            raise AssertionError("topix should not be called")
+
+    out = fetch_ticker_bundle(
+        FakeClient(),
+        code="1111",
+        from_date="2026-01-01",
+        to_date="2026-10-08",
+        include_details=False,
+        include_topix=False,
+        include_market=False,
+    )
+
+    assert out["market"].empty
+    assert out["financial_events"].empty
