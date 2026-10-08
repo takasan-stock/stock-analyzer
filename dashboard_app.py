@@ -16,6 +16,7 @@ from daily_command_center import (
     build_command_center_handoff,
     build_command_center_session,
     build_score_breakdown_rows,
+    execution_handoff_allowed,
     tradingview_url,
 )
 from email.utils import parsedate_to_datetime
@@ -2128,16 +2129,24 @@ def _render_command_center_cards(frame, *, key_prefix):
                 _render_score_breakdown(_row)
 
             _handoff = build_command_center_handoff(_row)
+            _execution_ready = execution_handoff_allowed(_row)
             st.link_button(
                 "📈 TradingView",
                 tradingview_url(_row["ticker"]),
                 use_container_width=True,
             )
 
+            if not _execution_ready:
+                st.caption(
+                    "🟡 WATCH ONLY｜再加速待ち。"
+                    " READY / PRIORITY WATCH / RE-EXP でEntry Hunterへ昇格します。"
+                )
+
             if st.button(
                 "🎯 Entry Hunter",
                 key=f"{key_prefix}_entry_{_row['ticker']}_{int(_row['rank'])}",
                 use_container_width=True,
+                disabled=not _execution_ready,
             ):
                 st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
                 st.session_state["command_center_focus_name"] = _handoff["name"]
@@ -2148,6 +2157,7 @@ def _render_command_center_cards(frame, *, key_prefix):
                 "🛡️ Pre-Trade",
                 key=f"{key_prefix}_pretrade_{_row['ticker']}_{int(_row['rank'])}",
                 use_container_width=True,
+                disabled=not _execution_ready,
             ):
                 st.session_state["pretrade_ticker"] = _handoff["ticker"]
                 st.session_state["pretrade_name"] = _handoff["name"]
