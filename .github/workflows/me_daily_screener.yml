@@ -72,7 +72,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/multiple_expansion/me_all_market_bars_cache.csv.gz
-          git add data/multiple_expansion/me_all_market_bars_cache.csv.gz
           git add data/multiple_expansion/me_universe_snapshot.csv
           git add data/multiple_expansion/me_universe_candidates.csv
           if git diff --cached --quiet; then
@@ -115,21 +114,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/multiple_expansion/me_universe_snapshot.csv
-          git add data/multiple_expansion/me_universe_candidates.csv
-          git add data/multiple_expansion/mex_latest.csv
-          git add data/multiple_expansion/mex_history.csv
-          git add data/multiple_expansion/mex_events.csv
-          git add data/multiple_expansion/mex_build_diagnostics.csv
-          git add data/multiple_expansion/me_screener_latest.csv
-          git add data/multiple_expansion/me_screener_candidates.csv
-          git add data/multiple_expansion/me_screener_changes.csv
-          git add data/multiple_expansion/me_screener_change_history.csv
-          git add data/multiple_expansion/me_screener_alert_status.json
-          git add data/after_close_review_latest.json
-          git add data/after_close_review_latest.csv
-          git add data/after_close_review_history.csv
-          git add data/after_close_feedback_summary.csv
+
+          for path in             data/multiple_expansion/me_all_market_bars_cache.csv.gz             data/multiple_expansion/me_universe_snapshot.csv             data/multiple_expansion/me_universe_candidates.csv             data/multiple_expansion/mex_latest.csv             data/multiple_expansion/mex_history.csv             data/multiple_expansion/mex_events.csv             data/multiple_expansion/mex_build_diagnostics.csv             data/multiple_expansion/me_screener_latest.csv             data/multiple_expansion/me_screener_candidates.csv             data/multiple_expansion/me_screener_changes.csv             data/multiple_expansion/me_screener_change_history.csv             data/multiple_expansion/me_screener_alert_status.json             data/after_close_review_latest.json             data/after_close_review_latest.csv             data/after_close_review_history.csv             data/after_close_feedback_summary.csv
+          do
+            if [ -e "$path" ]; then
+              git add "$path"
+            else
+              echo "Optional output not present: $path"
+            fi
+          done
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
