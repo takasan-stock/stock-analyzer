@@ -307,9 +307,18 @@ def main() -> int:
                 ] = pd.NA
 
         try:
+            # Daily screening runs need enough history to normalize multiples,
+            # but plan-limited / PIT-aligned data can leave fewer than 504
+            # fully usable valuation observations. Use a shorter, still
+            # conservative warm-up for the automated daily scan.
             mex = run_multiple_expansion_pipeline(
                 market,
                 financial,
+                config={
+                    "lookback_days": 756,
+                    "min_history_days": 126,
+                    "core_ema_span": 40,
+                },
             )
         except Exception as exc:
             diagnostics.append({
