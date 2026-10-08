@@ -105,6 +105,28 @@ def tradingview_url(ticker: Any) -> str:
     return f"https://www.tradingview.com/chart/?symbol=TSE%3A{code}"
 
 
+
+def execution_handoff_allowed(
+    row: pd.Series | dict[str, Any],
+) -> bool:
+    """Whether Command Center may open Entry Hunter / Pre-Trade.
+
+    WATCH ONLY is discovery, not execution. It must stay visible for review
+    and TradingView inspection, but it cannot jump the maturity gates.
+    """
+    action = _text(row.get("opportunity_action")).upper()
+    status = _text(row.get("entry_status")).upper()
+    signal = _text(row.get("signal_key")).upper()
+
+    if action == "WATCH ONLY":
+        return False
+    if status == "🟡 ME WATCH":
+        return False
+    if signal == "ME|WATCH":
+        return False
+    return True
+
+
 def build_command_center_handoff(
     row: pd.Series | dict[str, Any],
 ) -> dict[str, Any]:
