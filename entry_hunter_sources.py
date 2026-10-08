@@ -633,6 +633,82 @@ def select_me_entry_candidates(
 
 
 
+
+def detect_me_entry_promotions(
+    screener: pd.DataFrame | None,
+    *,
+    as_of=None,
+    max_calendar_days: int = 5,
+) -> list[str]:
+    """Return tickers that matured into the Entry Hunter lane on the latest ME date.
+
+    A promotion requires:
+      - latest completed ME date before as_of
+      - an Entry-Hunter-eligible mature state/decision
+      - second_wave_state_changed=True on that latest row
+
+    This is observability only; the actual handoff still uses
+    select_me_entry_candidates().
+    """
+    if screener is None or screener.empty or "ticker" not in screener.columns:
+        return []
+
+    s = screener.copy()
+    s["ticker"] = s["ticker"].map(_ticker)
+    s["trade_date"] = pd.to_datetime(
+        s.get("trade_date"),
+        errors="coerce",
+    ).dt.normalize()
+    s = s.dropna(subset=["trade_date"])
+    if s.empty:
+        return []
+
+    ref = pd.Timestamp(
+        as_of if as_of is not None else pd.Timestamp.now()
+    )
+    if ref.tzinfo is not None:
+        ref = ref.tz_convert("Asia/Tokyo").tz_localize(None)
+    ref = ref.normalize()
+
+    s = s[s["trade_date"] < ref].copy()
+    if s.empty:
+        return []
+
+    latest = s["trade_date"].max()
+    if (ref - latest).days > int(max_calendar_days):
+        return []
+    s = s[s["trade_date"] == latest].copy()
+
+    state = s.get(
+        "second_wave_state",
+        pd.Series("", index=s.index),
+    ).fillna("").astype(str)
+    decision = s.get(
+        "sw_decision",
+        pd.Series("", index=s.index),
+    ).fillna("").astype(str)
+    changed = s.get(
+        "second_wave_state_changed",
+        pd.Series(False, index=s.index),
+    )
+    changed = changed.fillna(False).astype(bool)
+
+    mature = (
+        state.eq("RE-EXP")
+        | decision.eq("ACTIVE")
+        | decision.eq("PRIORITY WATCH")
+        | state.eq("RE-WATCH READY")
+        | decision.eq("READY")
+    )
+    promoted = s[mature & changed].copy()
+    if promoted.empty:
+        return []
+
+    return sorted(
+        promoted["ticker"].dropna().astype(str).unique().tolist()
+    )
+
+
 def select_me_watch_candidates(
     screener: pd.DataFrame | None,
     *,
