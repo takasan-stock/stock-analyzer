@@ -1,0 +1,89 @@
+{
+  "run_at": "2026-10-09T19:47:33.577832+09:00",
+  "validation_as_of": "2026-10-10T19:47:33.577832",
+  "mode": "VALIDATION_ONLY",
+  "side_effects": "NONE",
+  "candidate_count": 5,
+  "short_cover_candidates": 5,
+  "me_entry_candidates": 0,
+  "me_watch_candidates": 3,
+  "me_watch_tickers": [
+    "2760",
+    "4477",
+    "6323"
+  ],
+  "me_promoted_count": 0,
+  "me_promoted_tickers": [],
+  "rows": [
+    {
+      "ticker": "3498",
+      "name": "霞ヶ関キャピタル",
+      "source": "SHORT COVER",
+      "signal_key": "SC|CONFIRMED",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-09 00:00:00",
+      "opportunity_score": 50.3,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質GOOD / ENTRY条件待ち"
+    },
+    {
+      "ticker": "6951",
+      "name": "日本電子",
+      "source": "SHORT COVER",
+      "signal_key": "SC|CONFIRMED",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-09 00:00:00",
+      "opportunity_score": 49.3,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質GOOD / ENTRY条件待ち"
+    },
+    {
+      "ticker": "6227",
+      "name": "ＡＩメカテック",
+      "source": "SHORT COVER",
+      "signal_key": "SC|CONFIRMED",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-09 00:00:00",
+      "opportunity_score": 45.2,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質GOOD / ENTRY条件待ち"
+    },
+    {
+      "ticker": "3692",
+      "name": "ＦＦＲＩセキュリティ",
+      "source": "SHORT COVER",
+      "signal_key": "SC|EARLY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-09 00:00:00",
+      "opportunity_score": 36.0,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
+    },
+    {
+      "ticker": "3374",
+      "name": "内外テック",
+      "source": "SHORT COVER",
+      "signal_key": "SC|OTHER",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-09 00:00:00",
+      "opportunity_score": 29.3,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|OTHER / ENTRY条件待ち"
+    }
+  ]
+}
