@@ -918,9 +918,13 @@ def combine_entry_candidates(
         fast_feedback_summary
     )
 
-    merged = pd.concat([short_df, me_df], ignore_index=True)
-    if merged.empty:
+    frames = [df for df in [short_df, me_df] if not df.empty]
+    if not frames:
         return pd.DataFrame(columns=ENTRY_COLUMNS)
+    if len(frames) == 1:
+        merged = frames[0].copy().reset_index(drop=True)
+    else:
+        merged = pd.concat(frames, ignore_index=True)
 
     rows = []
     for ticker, group in merged.groupby("ticker", sort=False):
