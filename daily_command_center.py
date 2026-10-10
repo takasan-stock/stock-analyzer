@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from tse_calendar import next_tse_session
+
 from entry_hunter_sources import (
     select_me_entry_candidates,
     select_me_watch_candidates,
@@ -714,7 +716,9 @@ def build_command_center_session(
     if today_review.empty:
         today_review = _latest_history_snapshot(history, as_of=ref)
 
-    next_ref = ref + pd.Timedelta(days=1)
+    next_ref = pd.Timestamp(
+        next_tse_session(ref)
+    ) + pd.Timedelta(hours=9)
     next_watch = build_daily_command_center(
         {},
         me_screener,
