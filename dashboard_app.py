@@ -19,6 +19,7 @@ from daily_command_center import (
     execution_handoff_allowed,
     tradingview_url,
 )
+from operational_health import build_operational_health, health_icon
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2021,6 +2022,46 @@ if "df" not in st.session_state:
 sync_reports_from_github()
 
 st.title("📊 銘柄管理ダッシュボード")
+
+# ==========================================
+# Operational Health（ME / Entry Hunter 稼働確認）
+# ==========================================
+_health = build_operational_health("data")
+_health_overall = str(_health.get("overall", "PENDING") or "PENDING")
+_health_icon = health_icon(_health_overall)
+
+with st.expander(
+    f"{_health_icon} 運用ヘルスチェック｜{_health_overall}",
+    expanded=_health_overall in {"ALERT", "WARN"},
+):
+    _h1, _h2 = st.columns(2)
+    _h1.metric(
+        "直近完了セッション",
+        str(_health.get("expected_session", "—")),
+    )
+    _h2.metric(
+        "次の東証セッション",
+        str(_health.get("next_session", "—")),
+    )
+
+    for _row in _health.get("rows", []):
+        _status = str(_row.get("status", "") or "")
+        _component = str(_row.get("component", "") or "")
+        _detail = str(_row.get("detail", "") or "")
+        st.markdown(
+            f"{health_icon(_status)} **{_component}｜{_status}**  \n"
+            f"{_detail}"
+        )
+
+    if _health_overall == "ALERT":
+        st.error(
+            "古い市場データまたは場中監視の更新停止を検知しています。"
+            " 売買候補への昇格前に各コンポーネントを確認してください。"
+        )
+    elif _health_overall == "WARN":
+        st.warning("一部コンポーネントの更新状況を確認してください。")
+    elif _health_overall == "OK":
+        st.caption("主要なME / Entry Hunter運用データは正常範囲です。")
 
 # ==========================================
 # Daily Command Center（今日の最優先3銘柄）
