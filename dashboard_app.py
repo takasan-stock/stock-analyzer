@@ -20,6 +20,7 @@ from daily_command_center import (
     tradingview_url,
 )
 from operational_health import build_operational_health, health_icon
+from deep_fcf_top5 import build_deep_fcf_top5
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2062,6 +2063,93 @@ with st.expander(
         st.warning("一部コンポーネントの更新状況を確認してください。")
     elif _health_overall == "OK":
         st.caption("主要なME / Entry Hunter運用データは正常範囲です。")
+
+# ==========================================
+# Deep FCF TOP5（FCFの裏付けが強いME候補）
+# ==========================================
+def _load_deep_fcf_me_screener():
+    path = "data/multiple_expansion/me_screener_latest.csv"
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+_deep_fcf_frame = build_deep_fcf_top5(
+    _load_deep_fcf_me_screener(),
+    limit=5,
+    min_coverage=0.45,
+)
+
+st.markdown("### 💵 Deep FCF TOP5")
+st.caption(
+    "ME候補をFCFの質・持続性・変換効率・P/FCFで再評価した研究優先度です。"
+    " 売買シグナルではなく、Entry Hunter / Pre-Tradeの成熟ゲートはそのまま維持します。"
+)
+
+if _deep_fcf_frame.empty:
+    st.caption(
+        "Deep FCFの最低カバレッジを満たす銘柄がまだありません。"
+        " 次回の財務データ更新後に再評価します。"
+    )
+else:
+    _fcf_cols = st.columns(len(_deep_fcf_frame))
+    for _i, (_, _fcf_row) in enumerate(_deep_fcf_frame.iterrows()):
+        with _fcf_cols[_i]:
+            _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
+            _coverage = float(_fcf_row.get("deep_fcf_coverage", 0.0) or 0.0) * 100.0
+            _ticker = str(_fcf_row.get("ticker", "") or "")
+            _name = str(_fcf_row.get("company_name", "") or "")
+            _gate_open = bool(_fcf_row.get("execution_ready", False))
+            _gate = "🟢 GATE OPEN" if _gate_open else "🟡 GATE WAIT"
+
+            st.metric(
+                f"#{int(_fcf_row['rank'])} {_ticker}",
+                f"{_score:.0f}",
+                delta=_name,
+            )
+            st.caption(
+                f"{_gate}｜Coverage {_coverage:.0f}%  \n"
+                f"{str(_fcf_row.get('reason', '') or '')}"
+            )
+
+            st.link_button(
+                "📈 TradingView",
+                tradingview_url(_ticker),
+                use_container_width=True,
+            )
+
+            if st.button(
+                "🎯 Entry Hunter",
+                key=f"deep_fcf_entry_{_ticker}_{int(_fcf_row['rank'])}",
+                use_container_width=True,
+                disabled=not _gate_open,
+            ):
+                st.session_state["command_center_focus_ticker"] = _ticker
+                st.session_state["command_center_focus_name"] = _name
+                st.session_state["command_center_focus_reason"] = (
+                    f"Deep FCF TOP5 #{int(_fcf_row['rank'])}｜"
+                    f"{str(_fcf_row.get('reason', '') or '')}"
+                )
+                st.switch_page("pages/8_Short_Cover_Hunter.py")
+
+            if st.button(
+                "🛡️ Pre-Trade",
+                key=f"deep_fcf_pretrade_{_ticker}_{int(_fcf_row['rank'])}",
+                use_container_width=True,
+                disabled=not _gate_open,
+            ):
+                st.session_state["pretrade_ticker"] = _ticker
+                st.session_state["pretrade_name"] = _name
+                st.session_state["pretrade_source"] = (
+                    f"Deep FCF TOP5 #{int(_fcf_row['rank'])}"
+                )
+                st.session_state["pretrade_opportunity_reason"] = str(
+                    _fcf_row.get("reason", "") or ""
+                )
+                st.switch_page("pages/9_Pre_Trade_Check.py")
 
 # ==========================================
 # Daily Command Center（今日の最優先3銘柄）
