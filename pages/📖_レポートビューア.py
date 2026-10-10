@@ -4,6 +4,7 @@ GitHubリポジトリ（stock-reports）から直接Markdownを読み込んで�
 スマホからでも過去の分析をサクッと振り返れるシンプル閲覧専用ページ。
 """
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 import requests
 import base64
 from collections import defaultdict
@@ -13,6 +14,7 @@ st.set_page_config(
     page_icon="📖",
     layout="wide"
 )
+render_sidebar_navigation()
 
 # ==========================================
 # GitHub API ヘルパー
