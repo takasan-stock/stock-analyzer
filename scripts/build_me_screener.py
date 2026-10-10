@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
+
+from tse_calendar import latest_completed_tse_session
 
 from me_screener_alerts import detect_screener_changes
 from multiple_expansion_screener import build_daily_screener, candidate_only
@@ -17,6 +20,12 @@ CANDIDATE_FILE = Path("data/multiple_expansion/me_screener_candidates.csv")
 CHANGE_FILE = Path("data/multiple_expansion/me_screener_changes.csv")
 CHANGE_HISTORY_FILE = Path(
     "data/multiple_expansion/me_screener_change_history.csv"
+)
+FRESHNESS_FILE = Path(
+    "data/multiple_expansion/me_screener_freshness_status.json"
+)
+STALE_PREVIEW_FILE = Path(
+    "data/multiple_expansion/me_screener_stale_preview.csv"
 )
 
 
@@ -151,6 +160,63 @@ def _write_changes(
     return changes
 
 
+
+def _latest_trade_date(frame: pd.DataFrame) -> pd.Timestamp | None:
+    if frame is None or frame.empty or "trade_date" not in frame.columns:
+        return None
+    values = pd.to_datetime(frame["trade_date"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return pd.Timestamp(values.max()).normalize()
+
+
+def _write_freshness_status(
+    *,
+    actual: pd.Timestamp | None,
+    expected: pd.Timestamp,
+    stale: bool,
+    reason: str,
+) -> None:
+    FRESHNESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "checked_at": pd.Timestamp.now(tz="Asia/Tokyo").isoformat(),
+        "actual_trade_date": (
+            actual.strftime("%Y-%m-%d") if actual is not None else None
+        ),
+        "expected_trade_date": expected.strftime("%Y-%m-%d"),
+        "stale": bool(stale),
+        "status": "STALE" if stale else "FRESH",
+        "reason": reason,
+    }
+    FRESHNESS_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _write_empty_changes() -> None:
+    pd.DataFrame(
+        columns=[
+            "event_id",
+            "market_date",
+            "ticker",
+            "company_name",
+            "event_type",
+            "severity",
+            "previous_state",
+            "current_state",
+            "previous_decision",
+            "current_decision",
+            "previous_rank",
+            "current_rank",
+            "sw_score",
+            "hist_edge_score",
+            "fcf_engine_score",
+            "change_reason",
+        ]
+    ).to_csv(CHANGE_FILE, index=False)
+
+
 def main() -> int:
     if not HISTORY_FILE.exists():
         raise SystemExit(f"Missing {HISTORY_FILE}. Run MEX build first.")
@@ -167,6 +233,50 @@ def main() -> int:
     candidates = candidate_only(screener)
 
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    actual_trade_date = _latest_trade_date(screener)
+    expected_trade_date = pd.Timestamp(
+        latest_completed_tse_session()
+    ).normalize()
+    stale = (
+        actual_trade_date is None
+        or actual_trade_date < expected_trade_date
+    )
+    if stale:
+        reason = (
+            "No usable trade_date was produced."
+            if actual_trade_date is None
+            else (
+                f"Latest market data is {actual_trade_date:%Y-%m-%d}; "
+                f"expected completed TSE session is "
+                f"{expected_trade_date:%Y-%m-%d}."
+            )
+        )
+        _write_freshness_status(
+            actual=actual_trade_date,
+            expected=expected_trade_date,
+            stale=True,
+            reason=reason,
+        )
+        screener.to_csv(STALE_PREVIEW_FILE, index=False)
+        pd.DataFrame(columns=screener.columns).to_csv(
+            CANDIDATE_FILE,
+            index=False,
+        )
+        _write_empty_changes()
+        print(f"[ME] STALE GUARD: {reason}")
+        print(
+            "[ME] preserved previous me_screener_latest.csv; "
+            "suppressed candidates and state-change alerts."
+        )
+        return 0
+
+    _write_freshness_status(
+        actual=actual_trade_date,
+        expected=expected_trade_date,
+        stale=False,
+        reason="Latest market data matches the completed TSE session.",
+    )
 
     # Important: compare BEFORE overwriting the previous committed snapshot.
     changes = _write_changes(previous, screener)
