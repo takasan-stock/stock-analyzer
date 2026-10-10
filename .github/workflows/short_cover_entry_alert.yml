@@ -2,7 +2,8 @@ name: Short Cover Entry Alerts
 
 on:
   schedule:
-    - cron: "*/5 0-2 * * 1-5"
+    # Offset from common :00/:05 boundaries to reduce GitHub scheduler congestion.
+    - cron: "3-58/5 0-2 * * 1-5"
   workflow_dispatch:
     inputs:
       test_email:
@@ -18,6 +19,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: short-cover-entry-alerts
+  cancel-in-progress: true
 
 jobs:
   entry-alerts:
