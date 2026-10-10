@@ -1,4 +1,5 @@
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -28,6 +29,7 @@ from urllib.parse import quote
 # ページ設定
 # ==========================================
 st.set_page_config(page_title="銘柄管理ダッシュボード", layout="wide", page_icon="📊")
+render_sidebar_navigation()
 
 # データ保存用のローカルCSVファイル名
 DATA_FILE = "portfolio_data.csv"
