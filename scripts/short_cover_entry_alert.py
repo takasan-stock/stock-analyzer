@@ -33,6 +33,7 @@ from daily_command_center import (
     normalize_command_center_history,
     update_command_center_history,
 )
+from tse_calendar import next_tse_session
 from entry_source_performance import (
     build_ready_performance,
     normalize_candidate_history,
@@ -58,6 +59,7 @@ COMMAND_CENTER_LATEST_FILE = DATA_DIR / "daily_command_center_latest.csv"
 COMMAND_CENTER_HISTORY_FILE = DATA_DIR / "daily_command_center_history.csv"
 AFTER_CLOSE_FEEDBACK_FILE = DATA_DIR / "after_close_feedback_summary.csv"
 VALIDATION_FILE = DATA_DIR / "entry_hunter_validation_status.json"
+ME_FRESHNESS_FILE = DATA_DIR / "multiple_expansion" / "me_screener_freshness_status.json"
 
 NOTIFICATION_COLUMNS = [
     "market_date", "ticker", "name", "alert_date", "condition_version",
@@ -93,6 +95,20 @@ def load_me_universe() -> pd.DataFrame:
 
 
 def load_me_screener() -> pd.DataFrame:
+    if ME_FRESHNESS_FILE.exists():
+        try:
+            freshness = json.loads(
+                ME_FRESHNESS_FILE.read_text(encoding="utf-8")
+            )
+            if bool(freshness.get("stale")):
+                print(
+                    "Entry Hunter: ME screener suppressed by STALE GUARD "
+                    f"({freshness.get('reason', '')})"
+                )
+                return pd.DataFrame()
+        except Exception:
+            pass
+
     if not ME_SCREENER_FILE.exists():
         return pd.DataFrame()
     try:
@@ -399,7 +415,9 @@ def main() -> int:
     # from the next-session perspective so today's completed ME row is eligible.
     candidate_as_of = now.tz_localize(None)
     if args.validate_only:
-        candidate_as_of = candidate_as_of + pd.Timedelta(days=1)
+        candidate_as_of = pd.Timestamp(
+            next_tse_session(now)
+        ) + pd.Timedelta(hours=9)
 
     short_candidates = select_entry_hunter_candidates(
         history,
