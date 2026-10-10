@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 import yfinance as yf
 
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
@@ -49,6 +50,7 @@ from short_cover import (
 )
 
 st.set_page_config(page_title="Short Cover Hunter", page_icon="🔥", layout="wide")
+render_sidebar_navigation()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

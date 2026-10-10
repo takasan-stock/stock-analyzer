@@ -7,12 +7,14 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 from calibration_backtest import build_calibration_backtest
 from trade_journal import JOURNAL_COLUMNS, normalize_journal
 
 
 st.set_page_config(page_title="Calibration Backtest", page_icon="🧭", layout="wide")
+render_sidebar_navigation()
 
 JOURNAL_FILE = "data/trade_journal.csv"
 

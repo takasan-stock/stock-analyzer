@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 
 st.set_page_config(
@@ -12,6 +13,7 @@ st.set_page_config(
     page_icon="🚀",
     layout="wide",
 )
+render_sidebar_navigation()
 
 LATEST_FILE = "data/multiple_expansion/mex_latest.csv"
 HISTORY_FILE = "data/multiple_expansion/mex_history.csv"

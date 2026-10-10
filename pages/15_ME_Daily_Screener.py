@@ -4,6 +4,7 @@ import os
 
 import pandas as pd
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 from multiple_expansion_screener import build_daily_screener, candidate_only
 
@@ -13,6 +14,7 @@ st.set_page_config(
     page_icon="🔥",
     layout="wide",
 )
+render_sidebar_navigation()
 
 HISTORY_FILE = "data/multiple_expansion/mex_history.csv"
 SCREENER_FILE = "data/multiple_expansion/me_screener_latest.csv"

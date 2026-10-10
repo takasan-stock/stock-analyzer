@@ -7,12 +7,14 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 from score_calibration import build_calibration_report
 from trade_journal import JOURNAL_COLUMNS, build_group_summary, normalize_journal
 
 
 st.set_page_config(page_title="Score Calibration", page_icon="🧪", layout="wide")
+render_sidebar_navigation()
 
 JOURNAL_FILE = "data/trade_journal.csv"
 

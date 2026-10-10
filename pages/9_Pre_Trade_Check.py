@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 import yfinance as yf
 
 from daily_command_center import build_score_breakdown_rows
@@ -15,6 +16,7 @@ from short_cover import build_entry_hunter_snapshot, normalize_ticker
 
 
 st.set_page_config(page_title="Pre-Trade Check", page_icon="🛡️", layout="wide")
+render_sidebar_navigation()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
