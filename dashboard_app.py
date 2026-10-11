@@ -39,6 +39,13 @@ from portfolio_integration import (
     load_me_screener,
     split_news_by_age,
 )
+from report_storage_v2 import (
+    display_entry_key,
+    make_unique_entry_key,
+    merge_report_entries,
+    unwrap_report_content,
+    wrap_report_content,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -1867,35 +1874,42 @@ def entry_filepath(ticker_code: str, kind: str, key: str) -> str:
     return os.path.join(REPORT_DIR, f"{safe_name}_{kind}_{safe_key}.md")
 
 def load_entries(ticker_code: str, kind: str) -> list:
-    """
-    reports/ フォルダから <ticker>_<kind>_<key>.md を検索して
-    新しい順（key降順）で返す。
-    各エントリは {"key": "2026-05-14", "content": "...", "updated_at": "..."} の形式。
-    """
+    """Load local report entries with Report Storage v2 metadata support."""
     safe_name = safe_ticker_filename(ticker_code)
     prefix = f"{safe_name}_{kind}_"
     entries = []
     for fname in os.listdir(REPORT_DIR):
         if fname.startswith(prefix) and fname.endswith(".md"):
             fpath = os.path.join(REPORT_DIR, fname)
-            key = fname[len(prefix):-3]  # プレフィックスと .md を除いた部分
+            key = fname[len(prefix):-3]
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
-                    content = f.read()
+                    raw_content = f.read()
+                content, meta = unwrap_report_content(raw_content)
                 mtime = os.path.getmtime(fpath)
-                updated_at = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-                entries.append({"key": key, "content": content, "updated_at": updated_at})
+                fallback_updated = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                entries.append({
+                    "key": key,
+                    "content": content,
+                    "created_at": str(meta.get("created_at", "") or ""),
+                    "updated_at": str(meta.get("updated_at", "") or fallback_updated),
+                    "_sync_status": "LOCAL ONLY",
+                })
             except OSError:
                 pass
-    entries.sort(key=lambda e: e["key"], reverse=True)
+    entries.sort(
+        key=lambda e: (
+            str(e.get("updated_at", "") or ""),
+            str(e.get("key", "") or ""),
+        ),
+        reverse=True,
+    )
     return entries
 
 def save_entry(ticker_code: str, kind: str, key: str, content: str) -> None:
-    """
-    1エントリ=1ファイルとして保存する。
-    上書き前に _backup/ にタイムスタンプ付きで退避する。
-    """
+    """Save one local report entry with invisible v2 metadata and backup."""
     fpath = entry_filepath(ticker_code, kind, key)
+    created_at = None
 
     if os.path.exists(fpath):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1904,13 +1918,21 @@ def save_entry(ticker_code: str, kind: str, key: str, content: str) -> None:
         try:
             with open(fpath, "r", encoding="utf-8") as f_old:
                 old = f_old.read()
+            _, old_meta = unwrap_report_content(old)
+            created_at = str(old_meta.get("created_at", "") or "") or None
             with open(backup_path, "w", encoding="utf-8") as f_bk:
                 f_bk.write(old)
         except Exception:
             pass
 
+    wrapped = wrap_report_content(
+        content,
+        kind=kind,
+        key=key,
+        created_at=created_at,
+    )
     with open(fpath, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(wrapped)
 
 def delete_entry(ticker_code: str, kind: str, key: str) -> None:
     """エントリファイルを削除する（削除前に _backup/ に退避）"""
@@ -1988,10 +2010,9 @@ def get_github_config():
 
 @st.cache_data(ttl=120)
 def github_fetch_entries(token: str, repo: str, branch: str, ticker_code: str, kind: str) -> list:
-    """GitHubのreports/フォルダから <ticker>_<kind>_<key>.md を検索して新しい順で返す。"""
+    """List matching GitHub report files. Content metadata supplies timestamps."""
     safe_name = safe_ticker_filename(ticker_code)
     prefix = f"{safe_name}_{kind}_"
-    # gh.list_filesを使う（GitHubStorageに集約）
     items = gh.list_files("reports")
     entries = []
     for item in items:
@@ -2028,37 +2049,94 @@ def github_upload_report(file_stem: str, content: str, company_name: str = "", e
 
 def load_entries_smart(ticker: str, kind: str, github_config: dict | None) -> list:
     """
-    GitHub設定があればGitHubから直接読み込む。
-    なければローカルの reports/ フォルダから読み込む（フォールバック）。
-    GitHub読み込み成功時は、ローカルにも同期してキャッシュとして残す。
+    Merge GitHub and local entries.
+
+    GitHub wins for the same key, while local-only entries remain visible so a
+    failed GitHub save never looks like data loss.
     """
-    if github_config:
-        gh_entries = github_fetch_entries(
-            github_config["token"], github_config["repo"],
-            github_config["branch"], ticker, kind
+    local_entries = load_entries(ticker, kind)
+    if not github_config:
+        return local_entries
+
+    gh_entries = github_fetch_entries(
+        github_config["token"], github_config["repo"],
+        github_config["branch"], ticker, kind
+    )
+    remote_full = []
+    for e in gh_entries:
+        raw_content = github_fetch_content(
+            github_config["token"],
+            e["download_url"],
         )
-        # 本文をGitHubから取得してローカルにキャッシュ
-        full_entries = []
-        for e in gh_entries:
-            content = github_fetch_content(github_config["token"], e["download_url"])
-            # ローカルにも書き込んで再起動後の一瞬のギャップを埋める
-            local_path = entry_filepath(ticker, kind, e["key"])
-            if content and not os.path.exists(local_path):
-                try:
-                    with open(local_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                except OSError:
-                    pass
-            full_entries.append({
-                "key": e["key"],
-                "content": content,
-                "updated_at": e.get("updated_at", ""),
-                "_sha": e["sha"],
-                "_path": e["path"],
-            })
-        return full_entries
-    else:
-        return load_entries(ticker, kind)
+        content, meta = unwrap_report_content(raw_content)
+
+        local_path = entry_filepath(ticker, kind, e["key"])
+        if raw_content:
+            try:
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.write(raw_content)
+            except OSError:
+                pass
+
+        remote_full.append({
+            "key": e["key"],
+            "content": content,
+            "created_at": str(meta.get("created_at", "") or ""),
+            "updated_at": str(meta.get("updated_at", "") or ""),
+            "_sha": e["sha"],
+            "_path": e["path"],
+            "_sync_status": "GITHUB",
+        })
+
+    return merge_report_entries(local_entries, remote_full)
+
+
+def read_entry_raw(ticker_code: str, kind: str, key: str) -> str:
+    """Read the serialized on-disk entry including invisible metadata."""
+    fpath = entry_filepath(ticker_code, kind, key)
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def delete_entry_smart(
+    ticker_code: str,
+    kind: str,
+    entry: dict,
+    github_config: dict | None,
+) -> tuple[bool, str]:
+    """
+    Delete remote first when the entry exists on GitHub.
+
+    If remote deletion fails, keep the local copy so the report does not
+    disappear and then unexpectedly reappear on the next refresh.
+    """
+    key = str(entry.get("key", "") or "")
+    if not key:
+        return False, "エントリキーが不正です。"
+
+    remote_path = str(entry.get("_path", "") or "")
+    remote_sha = str(entry.get("_sha", "") or "")
+
+    if github_config and remote_path and remote_sha:
+        ok, msg = github_delete_file(
+            github_config["token"],
+            github_config["repo"],
+            github_config["branch"],
+            remote_path,
+            remote_sha,
+            f"Delete report: {remote_path}",
+        )
+        if not ok:
+            return False, f"GitHub削除に失敗したためローカルは残しました: {msg}"
+
+        github_fetch_entries.clear()
+        github_fetch_content.clear()
+
+    delete_entry(ticker_code, kind, key)
+    return True, "削除しました。"
 
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
@@ -4389,29 +4467,54 @@ with tab5:
                 if not new_analysis_content.strip():
                     st.error("⚠️ レポート本文が空です。")
                 else:
-                    date_key = new_analysis_date.strftime("%Y-%m-%d")
-                    save_entry(selected_ticker, "analysis", date_key, new_analysis_content)
-                    st.success(f"✅ {date_key} のレポートを保存しました！")
+                    _base_key = new_analysis_date.strftime("%Y-%m-%d")
+                    _existing_keys = {e["key"] for e in analysis_entries}
+                    date_key = make_unique_entry_key(_base_key, _existing_keys)
+
+                    save_entry(
+                        selected_ticker,
+                        "analysis",
+                        date_key,
+                        new_analysis_content,
+                    )
+                    _sync_ok = not bool(github_config)
+                    _sync_msg = "ローカル保存しました。"
 
                     if github_config:
                         with st.spinner("GitHubにも保存中..."):
                             file_stem = f"{safe_ticker_filename(selected_ticker)}_analysis_{date_key}"
                             gh_ok, gh_message = github_upload_report(
-                                file_stem, new_analysis_content, company_name
+                                file_stem,
+                                read_entry_raw(selected_ticker, "analysis", date_key),
+                                company_name,
                             )
+                        _sync_ok = gh_ok
+                        _sync_msg = gh_message
                         if gh_ok:
-                            st.success(f"✅ {gh_message}")
                             github_fetch_entries.clear()
                             github_fetch_content.clear()
-                        else:
-                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
+
+                    if _sync_ok:
+                        st.success(
+                            f"✅ {display_entry_key(date_key, 'analysis')} のレポートを保存しました。"
+                            + (" GitHub同期済み。" if github_config else "")
+                        )
+                    else:
+                        st.warning(
+                            "⚠️ レポートはローカルに保持しています。"
+                            f" GitHub同期は失敗しました: {_sync_msg}"
+                        )
 
                     st.rerun()
 
         if analysis_entries:
             st.caption(f"📚 記録済み: {len(analysis_entries)} 件（新しい順）")
             for entry in analysis_entries:
-                with st.expander(f"📅 {entry['key']}（最終更新: {entry.get('updated_at', '不明')}）"):
+                _label = display_entry_key(entry["key"], "analysis")
+                _updated = str(entry.get("updated_at", "") or "不明")
+                _sync = str(entry.get("_sync_status", "") or "")
+                _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
+                with st.expander(f"📅 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
                     st.markdown(entry["content"])
                     col_ae1, col_ae2 = st.columns([1, 1])
                     with col_ae1:
@@ -4424,21 +4527,18 @@ with tab5:
                         )
                     with col_ae2:
                         if st.button("🗑️ このエントリを削除", key=f"analysis_del_{selected_ticker}_{entry['key']}"):
-                            delete_entry(selected_ticker, "analysis", entry["key"])
-                            if github_config and entry.get("_sha") and entry.get("_path"):
-                                with st.spinner("GitHubからも削除中..."):
-                                    gh_ok, gh_msg = github_delete_file(
-                                        github_config["token"], github_config["repo"],
-                                        github_config["branch"], entry["_path"], entry["_sha"],
-                                        f"Delete report: {entry['_path']}"
-                                    )
-                                if gh_ok:
-                                    github_fetch_entries.clear()
-                                    github_fetch_content.clear()
-                                else:
-                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
-                            st.success(f"{entry['key']} のレポートを削除しました。")
-                            st.rerun()
+                            with st.spinner("削除中..."):
+                                _ok, _msg = delete_entry_smart(
+                                    selected_ticker,
+                                    "analysis",
+                                    entry,
+                                    github_config,
+                                )
+                            if _ok:
+                                st.success(f"✅ {_label} のレポートを削除しました。")
+                                st.rerun()
+                            else:
+                                st.error(f"⚠️ {_msg}")
         else:
             st.info("まだこの銘柄の銘柄レポートは登録されていません。上の「➕ 新しい銘柄レポートを追加」から登録してください。")
 
@@ -4477,30 +4577,54 @@ with tab5:
                 elif not new_earnings_content.strip():
                     st.error("⚠️ レポート本文が空です。")
                 else:
-                    quarter_key = new_earnings_quarter.strip()
-                    save_entry(selected_ticker, "earnings", quarter_key, new_earnings_content)
-                    st.success(f"✅ {quarter_key} の決算分析レポートを保存しました！")
+                    _quarter_base = new_earnings_quarter.strip()
+                    _existing_keys = {e["key"] for e in earnings_entries}
+                    quarter_key = make_unique_entry_key(_quarter_base, _existing_keys)
+
+                    save_entry(
+                        selected_ticker,
+                        "earnings",
+                        quarter_key,
+                        new_earnings_content,
+                    )
+                    _sync_ok = not bool(github_config)
+                    _sync_msg = "ローカル保存しました。"
 
                     if github_config:
                         with st.spinner("GitHubにも保存中..."):
-                            safe_q = "".join(c if c.isalnum() or c in ("-", "_") else "-" for c in quarter_key)
-                            file_stem = f"{safe_ticker_filename(selected_ticker)}_earnings_{safe_q}"
+                            file_stem = f"{safe_ticker_filename(selected_ticker)}_earnings_{quarter_key}"
                             gh_ok, gh_message = github_upload_report(
-                                file_stem, new_earnings_content, company_name
+                                file_stem,
+                                read_entry_raw(selected_ticker, "earnings", quarter_key),
+                                company_name,
                             )
+                        _sync_ok = gh_ok
+                        _sync_msg = gh_message
                         if gh_ok:
-                            st.success(f"✅ {gh_message}")
                             github_fetch_entries.clear()
                             github_fetch_content.clear()
-                        else:
-                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
+
+                    if _sync_ok:
+                        st.success(
+                            f"✅ {display_entry_key(quarter_key, 'earnings')} の決算分析レポートを保存しました。"
+                            + (" GitHub同期済み。" if github_config else "")
+                        )
+                    else:
+                        st.warning(
+                            "⚠️ 決算分析レポートはローカルに保持しています。"
+                            f" GitHub同期は失敗しました: {_sync_msg}"
+                        )
 
                     st.rerun()
 
         if earnings_entries:
             st.caption(f"📚 記録済み: {len(earnings_entries)} 件（新しい順）")
             for entry in earnings_entries:
-                with st.expander(f"📊 {entry['key']}（最終更新: {entry.get('updated_at', '不明')}）"):
+                _label = display_entry_key(entry["key"], "earnings")
+                _updated = str(entry.get("updated_at", "") or "不明")
+                _sync = str(entry.get("_sync_status", "") or "")
+                _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
+                with st.expander(f"📊 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
                     st.markdown(entry["content"])
                     col_ee1, col_ee2 = st.columns([1, 1])
                     with col_ee1:
@@ -4513,21 +4637,18 @@ with tab5:
                         )
                     with col_ee2:
                         if st.button("🗑️ このエントリを削除", key=f"earnings_del_{selected_ticker}_{entry['key']}"):
-                            delete_entry(selected_ticker, "earnings", entry["key"])
-                            if github_config and entry.get("_sha") and entry.get("_path"):
-                                with st.spinner("GitHubからも削除中..."):
-                                    gh_ok, gh_msg = github_delete_file(
-                                        github_config["token"], github_config["repo"],
-                                        github_config["branch"], entry["_path"], entry["_sha"],
-                                        f"Delete report: {entry['_path']}"
-                                    )
-                                if gh_ok:
-                                    github_fetch_entries.clear()
-                                    github_fetch_content.clear()
-                                else:
-                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
-                            st.success(f"{entry['key']} の決算分析レポートを削除しました。")
-                            st.rerun()
+                            with st.spinner("削除中..."):
+                                _ok, _msg = delete_entry_smart(
+                                    selected_ticker,
+                                    "earnings",
+                                    entry,
+                                    github_config,
+                                )
+                            if _ok:
+                                st.success(f"✅ {_label} の決算分析レポートを削除しました。")
+                                st.rerun()
+                            else:
+                                st.error(f"⚠️ {_msg}")
         else:
             st.info("まだこの銘柄の決算分析レポートは登録されていません。上の「➕ 新しい決算分析レポートを追加」から登録してください。")
 
