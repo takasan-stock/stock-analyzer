@@ -154,8 +154,71 @@ def build_portfolio_signal_overlay(
     )
     out.loc[me_watch_mask, "Entry状態"] = "🟡 ME WATCH"
 
-    return out.drop(columns=["_ticker_norm"])
+    out = out.drop(columns=["_ticker_norm"])
+    return apply_portfolio_priority(out)
 
+
+
+def _parse_opportunity(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text or text == "—":
+        return None
+    m = __import__("re").search(r"(-?\d+(?:\.\d+)?)", text)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]:
+    """
+    Display-only priority for deciding what to inspect first.
+
+    This does not open entry gates or modify trading scores.
+    """
+    entry = str(row.get("Entry状態", "") or "").upper()
+    me = str(row.get("ME状態", "") or "").upper()
+    deep = str(row.get("Deep FCF", "") or "").upper()
+    opp = _parse_opportunity(row.get("Opportunity"))
+
+    if "READY" in entry or "ENTRY" in entry and "READY" in entry:
+        return "🔴 P1 今すぐ確認", 1
+
+    if opp is not None and opp >= 70:
+        return "🔴 P1 今すぐ確認", 1
+
+    if (
+        "ME WATCH" in entry
+        or "WAIT" in entry
+        or me in {"READY", "PRIORITY WATCH", "ACTIVE"}
+        or (opp is not None and opp >= 55)
+    ):
+        return "🟠 P2 優先監視", 2
+
+    if deep != "—" and any(tag in deep for tag in ("STRONG", "GOOD", "SOLID", "PASS")):
+        return "🟡 P3 通常監視", 3
+
+    if me not in {"", "—", "UNAVAILABLE", "NONE", "NAN"}:
+        return "🟡 P3 通常監視", 3
+
+    return "⚪ P4 待機", 4
+
+
+def apply_portfolio_priority(frame: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None:
+        return pd.DataFrame()
+    out = frame.copy()
+    if out.empty:
+        out["今日の優先度"] = []
+        out["_priority_rank"] = []
+        return out
+
+    labels = out.apply(portfolio_priority_label, axis=1)
+    out["今日の優先度"] = [x[0] for x in labels]
+    out["_priority_rank"] = [x[1] for x in labels]
+    return out
 
 def split_news_by_age(
     news_items: list[dict[str, Any]] | None,
