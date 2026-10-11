@@ -21,7 +21,7 @@ from daily_command_center import (
     tradingview_url,
 )
 from operational_health import build_operational_health, health_icon
-from deep_fcf_top5 import build_deep_fcf_top5
+from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_strength
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2083,33 +2083,29 @@ _deep_fcf_frame = build_deep_fcf_top5(
     _load_deep_fcf_me_screener(),
     limit=5,
     min_coverage=0.60,
+    min_score=55.0,
+    min_quality_grade="C",
 )
 
 st.markdown("### 💵 Deep FCF TOP5")
 st.caption(
     "ME候補をFCFの質・持続性・変換効率・P/FCFで再評価した研究優先度です。"
-    " 売買シグナルではなく、Entry Hunter / Pre-Tradeの成熟ゲートはそのまま維持します。"
+    " 表示条件は Coverage 60%以上・Deep FCF 55点以上・Quality C以上。"
+    " 条件未達なら5枠を埋めません。"
 )
 
 if _deep_fcf_frame.empty:
     st.caption(
-        "Deep FCFはCoverage 60%以上を表示対象にしています。"
-        " 条件を満たす銘柄がない場合は、次回の財務データ更新後に再評価します。"
+        "現在は Deep FCF の表示基準（Coverage 60%以上・Score 55以上・Quality C以上）"
+        "を満たす銘柄がありません。次回の財務データ更新後に再評価します。"
     )
 else:
     _fcf_rows = list(_deep_fcf_frame.iterrows())
-    _fcf_layout = [3, 2]
-    _fcf_offset = 0
-    for _row_count in _fcf_layout:
-        if _fcf_offset >= len(_fcf_rows):
-            break
-        _fcf_cols = st.columns(_row_count)
-        for _local_i in range(_row_count):
-            if _fcf_offset >= len(_fcf_rows):
-                break
-            _, _fcf_row = _fcf_rows[_fcf_offset]
-            _fcf_offset += 1
-
+    for _row_start in range(0, len(_fcf_rows), 3):
+        _fcf_cols = st.columns(3)
+        for _local_i, (_, _fcf_row) in enumerate(
+            _fcf_rows[_row_start : _row_start + 3]
+        ):
             with _fcf_cols[_local_i]:
                 _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
                 _coverage = (
@@ -2117,6 +2113,8 @@ else:
                 )
                 _ticker = str(_fcf_row.get("ticker", "") or "")
                 _name = str(_fcf_row.get("company_name", "") or "")
+                _quality = str(_fcf_row.get("fcf_quality_grade", "") or "—")
+                _strength = deep_fcf_strength(_score)
                 _gate_open = bool(_fcf_row.get("execution_ready", False))
                 _gate = "🟢 GATE OPEN" if _gate_open else "🟡 GATE WAIT"
 
@@ -2126,8 +2124,24 @@ else:
                 )
                 st.markdown(f"**{_name or '—'}**")
                 st.caption(
-                    f"{_gate}｜Coverage {_coverage:.0f}%  \n"
-                    f"{str(_fcf_row.get('reason', '') or '')}"
+                    f"💵 {_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
+                )
+
+                _margin = _fcf_row.get("fcf_margin")
+                _conversion = _fcf_row.get("cash_conversion")
+                _p_fcf = _fcf_row.get("p_fcf")
+                _margin_text = (
+                    "—" if pd.isna(_margin) else f"{float(_margin) * 100:.1f}%"
+                )
+                _conversion_text = (
+                    "—" if pd.isna(_conversion) else f"{float(_conversion):.2f}x"
+                )
+                _p_fcf_text = (
+                    "—" if pd.isna(_p_fcf) else f"{float(_p_fcf):.1f}x"
+                )
+                st.caption(
+                    f"{_gate}  \n"
+                    f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}｜P/FCF {_p_fcf_text}"
                 )
 
                 st.link_button(
@@ -2146,7 +2160,7 @@ else:
                     st.session_state["command_center_focus_name"] = _name
                     st.session_state["command_center_focus_reason"] = (
                         f"Deep FCF TOP5 #{int(_fcf_row['rank'])}｜"
-                        f"{str(_fcf_row.get('reason', '') or '')}"
+                        f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
                     )
                     st.switch_page("pages/8_Short_Cover_Hunter.py")
 
@@ -2161,8 +2175,10 @@ else:
                     st.session_state["pretrade_source"] = (
                         f"Deep FCF TOP5 #{int(_fcf_row['rank'])}"
                     )
-                    st.session_state["pretrade_opportunity_reason"] = str(
-                        _fcf_row.get("reason", "") or ""
+                    st.session_state["pretrade_opportunity_reason"] = (
+                        f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%｜"
+                        f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}｜"
+                        f"P/FCF {_p_fcf_text}"
                     )
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 
