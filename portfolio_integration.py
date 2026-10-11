@@ -73,6 +73,41 @@ def _compact_me_label(row: pd.Series) -> str:
     return "—"
 
 
+
+BASELINE_ME_DISPLAY = {
+    "BASE": "⚪ 通常",
+    "RE-ACCEL WATCH": "🟡 再加速監視",
+    "RE-READY PROXY": "🟠 再拡大準備",
+    "EXPANDING PROXY": "🟢 拡大中",
+}
+
+
+def baseline_me_display_label(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if text in {"", "—", "UNAVAILABLE", "NONE", "NAN"}:
+        return "—"
+    return BASELINE_ME_DISPLAY.get(text, f"⚪ {str(value).strip()}")
+
+
+def baseline_score_display_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text == "—":
+        return "—"
+
+    low_coverage = "LOW COVERAGE" in text.upper()
+    score = _parse_opportunity(text)
+    if score is None:
+        return "⚠ 低カバレッジ" if low_coverage else text
+
+    score_text = f"{score:.0f}"
+    if low_coverage:
+        return f"⚠ {score_text}｜低カバレッジ"
+    if score >= 75:
+        return f"🟢 {score_text}"
+    if score >= 65:
+        return f"🟡 {score_text}"
+    return f"⚪ {score_text}"
+
 def build_portfolio_signal_overlay(
     portfolio: pd.DataFrame | None,
     me_screener: pd.DataFrame | None,
@@ -195,6 +230,8 @@ def build_portfolio_signal_overlay(
     out["Opportunity"] = out["_ticker_norm"].map(opp_map).fillna("—")
     out["Baseline ME"] = out["_ticker_norm"].map(baseline_state_map).fillna("—")
     out["Baseline Score"] = out["_ticker_norm"].map(baseline_score_map).fillna("—")
+    out["Baseline ME表示"] = out["Baseline ME"].map(baseline_me_display_label)
+    out["Baseline Score表示"] = out["Baseline Score"].map(baseline_score_display_label)
 
     me_watch_mask = (
         out["_ticker_norm"].isin(watch_tickers)
