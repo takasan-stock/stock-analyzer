@@ -101,7 +101,7 @@ def test_deep_fcf_requires_minimum_component_coverage():
     assert out.empty
 
 
-def test_deep_fcf_allows_partial_but_reports_confidence():
+def test_deep_fcf_default_rejects_below_60pct_coverage():
     frame = pd.DataFrame(
         [
             _row(
@@ -113,8 +113,24 @@ def test_deep_fcf_allows_partial_but_reports_confidence():
         ]
     )
 
-    out = build_deep_fcf_top5(frame, min_coverage=0.45)
+    out = build_deep_fcf_top5(frame)
+
+    assert out.empty
+
+
+def test_deep_fcf_accepts_60pct_coverage_and_reports_confidence():
+    frame = pd.DataFrame(
+        [
+            _row(
+                ticker="8888",
+                fcf_per_share_3y_cagr_score=None,
+                fcf_per_share_yoy_score=None,
+            )
+        ]
+    )
+
+    out = build_deep_fcf_top5(frame)
 
     assert len(out) == 1
-    assert out.iloc[0]["deep_fcf_coverage"] >= 0.45
-    assert out.iloc[0]["deep_fcf_confidence"] in {"LOW", "MEDIUM", "HIGH"}
+    assert out.iloc[0]["deep_fcf_coverage"] >= 0.60
+    assert out.iloc[0]["deep_fcf_confidence"] in {"MEDIUM", "HIGH"}
