@@ -178,6 +178,11 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
     Display-only priority for deciding what to inspect first.
 
     This does not open entry gates or modify trading scores.
+
+    P1: Entry READY, or Opportunity >= 70
+    P2: ME READY / PRIORITY WATCH / ACTIVE, or WAIT + Opportunity >= 55
+    P3: ME WATCH, Opportunity 40-54, or qualifying Deep FCF
+    P4: everything else
     """
     entry = str(row.get("Entry状態", "") or "").upper()
     me = str(row.get("ME状態", "") or "").upper()
@@ -190,18 +195,19 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
     if opp is not None and opp >= 70:
         return "🔴 P1 今すぐ確認", 1
 
-    if (
-        "ME WATCH" in entry
-        or "WAIT" in entry
-        or me in {"READY", "PRIORITY WATCH", "ACTIVE"}
-        or (opp is not None and opp >= 55)
-    ):
+    if me in {"READY", "PRIORITY WATCH", "ACTIVE"}:
         return "🟠 P2 優先監視", 2
 
-    if deep != "—" and any(tag in deep for tag in ("STRONG", "GOOD", "SOLID", "PASS")):
+    if "WAIT" in entry and opp is not None and opp >= 55:
+        return "🟠 P2 優先監視", 2
+
+    if "ME WATCH" in entry:
         return "🟡 P3 通常監視", 3
 
-    if me not in {"", "—", "UNAVAILABLE", "NONE", "NAN"}:
+    if opp is not None and opp >= 40:
+        return "🟡 P3 通常監視", 3
+
+    if deep != "—" and any(tag in deep for tag in ("STRONG", "GOOD", "SOLID", "PASS")):
         return "🟡 P3 通常監視", 3
 
     return "⚪ P4 待機", 4
