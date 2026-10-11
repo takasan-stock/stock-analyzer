@@ -2082,7 +2082,7 @@ def _load_deep_fcf_me_screener():
 _deep_fcf_frame = build_deep_fcf_top5(
     _load_deep_fcf_me_screener(),
     limit=5,
-    min_coverage=0.45,
+    min_coverage=0.60,
 )
 
 st.markdown("### 💵 Deep FCF TOP5")
@@ -2097,9 +2097,19 @@ if _deep_fcf_frame.empty:
         " 次回の財務データ更新後に再評価します。"
     )
 else:
-    _fcf_cols = st.columns(len(_deep_fcf_frame))
-    for _i, (_, _fcf_row) in enumerate(_deep_fcf_frame.iterrows()):
-        with _fcf_cols[_i]:
+    _fcf_rows = list(_deep_fcf_frame.iterrows())
+    _fcf_layout = [3, 2]
+    _fcf_offset = 0
+    for _row_count in _fcf_layout:
+        if _fcf_offset >= len(_fcf_rows):
+            break
+        _fcf_cols = st.columns(_row_count)
+        for _local_i in range(_row_count):
+            if _fcf_offset >= len(_fcf_rows):
+                break
+            _, _fcf_row = _fcf_rows[_fcf_offset]
+            _fcf_offset += 1
+            with _fcf_cols[_local_i]:
             _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
             _coverage = float(_fcf_row.get("deep_fcf_coverage", 0.0) or 0.0) * 100.0
             _ticker = str(_fcf_row.get("ticker", "") or "")
@@ -2110,8 +2120,8 @@ else:
             st.metric(
                 f"#{int(_fcf_row['rank'])} {_ticker}",
                 f"{_score:.0f}",
-                delta=_name,
             )
+            st.markdown(f"**{_name or '—'}**")
             st.caption(
                 f"{_gate}｜Coverage {_coverage:.0f}%  \n"
                 f"{str(_fcf_row.get('reason', '') or '')}"
@@ -2254,9 +2264,15 @@ def _render_command_center_cards(frame, *, key_prefix):
                 f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
             )
 
+            _breakdown_items = build_score_breakdown_rows(_row)
+            _has_score_breakdown = any(
+                abs(float(_item["value"])) >= 0.05
+                for _item in _breakdown_items
+            )
             _breakdown = str(_row.get("adaptive_breakdown", "") or "")
-            if _breakdown:
-                st.caption(f"🧮 {_breakdown}")
+            if _has_score_breakdown:
+                if _breakdown:
+                    st.caption(f"🧮 {_breakdown}")
                 _render_score_breakdown(_row)
 
             _handoff = build_command_center_handoff(_row)
