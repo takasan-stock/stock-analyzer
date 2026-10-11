@@ -3174,11 +3174,22 @@ with tab1:
                                 st.session_state.df["ティッカー"].astype(str) == ticker
                             ].index
                             if len(idx) > 0:
-                                st.session_state.df.at[idx[0], "ステータス"] = new_status
-                                st.session_state.df.at[idx[0], "更新日"] = \
+                                _candidate_df = st.session_state.df.copy()
+                                _candidate_df.at[idx[0], "ステータス"] = new_status
+                                _candidate_df.at[idx[0], "更新日"] = \
                                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                                save_data(st.session_state.df)
-                                st.rerun()
+                                _save_status, _save_msg, _normalized = save_data(
+                                    _candidate_df
+                                )
+                                if _save_status == "error":
+                                    st.error(f"⚠️ {_save_msg}")
+                                else:
+                                    st.session_state.df = _normalized
+                                    if _save_status == "github":
+                                        st.toast("✅ ステータスをGitHubまで保存しました", icon="✅")
+                                    else:
+                                        st.toast(f"⚠️ {_save_msg}", icon="⚠️")
+                                    st.rerun()
 
                     st.markdown('</div>', unsafe_allow_html=True)
 
