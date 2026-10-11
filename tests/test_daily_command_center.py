@@ -368,6 +368,7 @@ def test_score_breakdown_rows_clip_to_component_caps():
         "setup_bonus": -99,
         "trait_bonus": 99,
         "fast_bonus": -99,
+        "deep_fcf_bonus": 99,
     }
     out = build_score_breakdown_rows(row)
     by_label = {item["label"]: item for item in out}
@@ -376,6 +377,7 @@ def test_score_breakdown_rows_clip_to_component_caps():
     assert by_label["Setup"]["value"] == -4.0
     assert by_label["Trait"]["value"] == 2.5
     assert by_label["Fast0D"]["value"] == -2.5
+    assert by_label["Deep FCF"]["value"] == 2.5
     assert all(item["percent"] == 100.0 for item in out)
 
 
