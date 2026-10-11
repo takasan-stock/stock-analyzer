@@ -3422,7 +3422,7 @@ with tab1:
         # ==========================================
         else:
             # --- 検索・絞り込み（表示用） ---
-            col_f1, col_f2 = st.columns([2, 1])
+            col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
             with col_f1:
                 keyword = st.text_input("🔎 ティッカー・銘柄名で検索", "")
             with col_f2:
@@ -3431,6 +3431,23 @@ with tab1:
                     "ステータスで絞り込み",
                     options=status_options,
                     default=status_options
+                )
+            with col_f3:
+                priority_filter = st.multiselect(
+                    "今日の優先度",
+                    options=[
+                        "🔴 P1 今すぐ確認",
+                        "🟠 P2 優先監視",
+                        "🟡 P3 通常監視",
+                        "⚪ P4 待機",
+                    ],
+                    default=[
+                        "🔴 P1 今すぐ確認",
+                        "🟠 P2 優先監視",
+                        "🟡 P3 通常監視",
+                        "⚪ P4 待機",
+                    ],
+                    key="portfolio_priority_filter",
                 )
 
             view_df = df[df["ステータス"].isin(status_filter)]
@@ -3448,7 +3465,19 @@ with tab1:
                 load_me_screener(),
                 load_entry_validation(),
             )
-            _display_df = display_portfolio_dataframe(_overlay_df)
+            if "今日の優先度" in _overlay_df.columns:
+                _overlay_df = _overlay_df[
+                    _overlay_df["今日の優先度"].isin(priority_filter)
+                ].copy()
+            if "_priority_rank" in _overlay_df.columns:
+                _overlay_df = _overlay_df.sort_values(
+                    ["_priority_rank", "Opportunity", "ティッカー"],
+                    ascending=[True, False, True],
+                    na_position="last",
+                )
+            _display_df = display_portfolio_dataframe(
+                _overlay_df.drop(columns=["_priority_rank"], errors="ignore")
+            )
             _display_df.insert(
                 0, "📰",
                 [
@@ -3459,9 +3488,10 @@ with tab1:
             )
 
             _important_cols = [
-                "📰", "ティッカー", "銘柄名", "ステータス",
+                "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
+                "ME状態", "Deep FCF", "Entry状態", "Opportunity",
                 "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
-                "ME状態", "Deep FCF", "Entry状態", "Opportunity", "更新日",
+                "更新日",
             ]
             _important_cols = [
                 col for col in _important_cols if col in _display_df.columns
@@ -3472,8 +3502,8 @@ with tab1:
                 hide_index=True,
             )
             st.caption(
-                "💡 ME / Deep FCF / Entry / Opportunity は最新スクリーナー・検証結果を"
-                "画面上で重ねた派生情報です。portfolio_data.csv には保存しません。"
+                "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity は"
+                "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
             )
 
             st.divider()
