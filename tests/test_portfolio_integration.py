@@ -316,7 +316,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(baseline_score_display_label("75"), "🟢 75")
         self.assertEqual(
             baseline_score_display_label("38 / LOW COVERAGE"),
-            "⚠ 38｜低カバレッジ",
+            "⚠ 38 低信頼",
         )
 
     def test_overlay_keeps_raw_baseline_for_priority_and_adds_display_columns(self):
