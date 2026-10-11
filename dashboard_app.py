@@ -3469,6 +3469,12 @@ with tab1:
                     ],
                     key="portfolio_priority_filter",
                 )
+                p3_candidate_only = st.checkbox(
+                    "🔵 P3候補だけ表示",
+                    value=False,
+                    key="portfolio_p3_candidate_only",
+                    help="信頼できるBaseline Score 60〜64の銘柄だけを表示します。P3への昇格ではありません。",
+                )
 
             view_df = df[df["ステータス"].isin(status_filter)]
             if keyword:
@@ -3504,10 +3510,23 @@ with tab1:
                 if "今日の優先度" in _overlay_df.columns
                 else {}
             )
+            _p3_candidate_count = int(
+                _overlay_df.get(
+                    "P3候補",
+                    pd.Series(False, index=_overlay_df.index),
+                ).fillna(False).astype(bool).sum()
+            )
 
             if "今日の優先度" in _overlay_df.columns:
                 _overlay_df = _overlay_df[
                     _overlay_df["今日の優先度"].isin(priority_filter)
+                ].copy()
+            if p3_candidate_only:
+                _overlay_df = _overlay_df[
+                    _overlay_df.get(
+                        "P3候補",
+                        pd.Series(False, index=_overlay_df.index),
+                    ).fillna(False).astype(bool)
                 ].copy()
             if "_priority_rank" in _overlay_df.columns:
                 # Keep P1-P3 / unassessed ordering stable, but within P4 put
@@ -3530,12 +3549,13 @@ with tab1:
                     ascending=[True, False, True],
                     na_position="last",
                 )
-            _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns(5)
+            _pc1, _pc2, _pc3, _pc4, _pc5, _pc6 = st.columns(6)
             _pc1.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
             _pc2.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
             _pc3.metric("🟡 P3 通常監視", int(_priority_counts.get("🟡 P3 通常監視", 0)))
             _pc4.metric("⚪ P4 待機", int(_priority_counts.get("⚪ P4 待機", 0)))
-            _pc5.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
+            _pc5.metric("🔵 P3候補", _p3_candidate_count)
+            _pc6.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
 
             _display_df = display_portfolio_dataframe(
                 _overlay_df.drop(
@@ -3579,6 +3599,7 @@ with tab1:
                 " Baseline ME は全東証の軽量スクリーニングです。"
                 " 表示は ⚪通常 / 🟡再加速監視 / 🟠再拡大準備 / 🟢拡大中。"
                 " Baseline Score は 🔵60〜64がP3候補、🟡65以上がP3基準、🟢75以上が強めです。"
+                " 🔵P3候補はP4内の補助表示で、P3へ昇格した意味ではありません。"
                 " P1/P2やEntry Gateには昇格させません。"
                 " ⚪ 未評価は、これらの判定データがまだ無い銘柄です。"
                 " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
