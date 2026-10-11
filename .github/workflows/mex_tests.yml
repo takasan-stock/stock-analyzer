@@ -48,8 +48,8 @@ jobs:
 
       - name: Run MEX unit tests
         run: |
-          python -m unittest             tests.test_multiple_expansion             tests.test_jquants_mex_adapter
+          python -m unittest tests.test_multiple_expansion tests.test_jquants_mex_adapter tests.test_mex_backtest
 
       - name: Compile MEX files
         run: |
-          python -m py_compile             multiple_expansion.py             jquants_mex_adapter.py             scripts/build_mex_jquants.py             pages/14_Multiple_Expansion_Hunter.py
+          python -m py_compile multiple_expansion.py jquants_mex_adapter.py mex_backtest.py scripts/build_mex_jquants.py pages/14_Multiple_Expansion_Hunter.py
