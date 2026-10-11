@@ -82,14 +82,23 @@ def unwrap_report_content(content: str) -> tuple[str, dict[str, Any]]:
 
 def display_entry_key(key: Any, kind: str = "") -> str:
     text = str(key or "")
-    if kind == "analysis":
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})(?:_\d{8}_\d{6}(?:_\d+)?)?$", text)
-        if m:
-            return m.group(1)
-    if kind == "earnings":
-        m = re.match(r"^(.+?)(?:_\d{8}_\d{6}(?:_\d+)?)?$", text)
-        if m:
-            return m.group(1)
+    suffix = re.search(r"_(\d{8})_(\d{6})(?:_(\d+))?$", text)
+    if suffix:
+        date_part = suffix.group(1)
+        time_part = suffix.group(2)
+        sequence = suffix.group(3)
+        stamp = (
+            f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} "
+            f"{time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+        )
+        if sequence:
+            stamp += f" #{sequence}"
+
+        base = text[: suffix.start()]
+        if kind == "analysis":
+            return f"{base}｜追加保存 {stamp}"
+        if kind == "earnings":
+            return f"{base}｜追加保存 {stamp}"
     return text
 
 
@@ -118,6 +127,11 @@ def merge_report_entries(
         if not key:
             continue
         row = dict(item)
+        local = merged.get(key, {})
+        if not str(row.get("updated_at", "") or ""):
+            row["updated_at"] = str(local.get("updated_at", "") or "")
+        if not str(row.get("created_at", "") or ""):
+            row["created_at"] = str(local.get("created_at", "") or "")
         row["_sync_status"] = "GITHUB"
         merged[key] = row
 
