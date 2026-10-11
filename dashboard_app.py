@@ -38,7 +38,6 @@ from portfolio_integration import (
     build_portfolio_signal_overlay,
     load_entry_validation,
     load_me_screener,
-    load_me_universe_snapshot,
     split_news_by_age,
 )
 from report_storage_v2 import (
@@ -59,6 +58,23 @@ render_sidebar_navigation()
 
 # データ保存用のローカルCSVファイル名
 DATA_FILE = "portfolio_data.csv"
+
+# Baseline MEは大きな全東証スナップショットをdashboard側で直接読む。
+# Streamlit Cloudのホットリロード時に補助モジュールの新旧がずれても
+# dashboardの起動を止めないため、portfolio_integrationからはimportしない。
+ME_UNIVERSE_SNAPSHOT_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
+
+
+def load_me_universe_snapshot() -> pd.DataFrame:
+    try:
+        if os.path.exists(ME_UNIVERSE_SNAPSHOT_FILE):
+            return pd.read_csv(
+                ME_UNIVERSE_SNAPSHOT_FILE,
+                dtype={"ticker": str},
+            )
+    except Exception:
+        pass
+    return pd.DataFrame()
 
 # 個別銘柄レポート（Markdown）の保存先
 REPORT_DIR = "reports"
