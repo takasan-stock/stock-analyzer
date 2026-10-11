@@ -312,11 +312,29 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(baseline_me_display_label("—"), "—")
 
         self.assertEqual(baseline_score_display_label("59"), "⚪ 59")
+        self.assertEqual(
+            baseline_score_display_label("60"),
+            "🔵 60｜P3まであと5",
+        )
+        self.assertEqual(
+            baseline_score_display_label("63"),
+            "🔵 63｜P3まであと2",
+        )
+        self.assertEqual(
+            baseline_score_display_label("64"),
+            "🔵 64｜P3まであと1",
+        )
         self.assertEqual(baseline_score_display_label("65"), "🟡 65")
         self.assertEqual(baseline_score_display_label("75"), "🟢 75")
         self.assertEqual(
             baseline_score_display_label("38 / LOW COVERAGE"),
             "⚠ 38 低信頼",
+        )
+
+    def test_low_coverage_never_gets_p3_candidate_badge(self):
+        self.assertEqual(
+            baseline_score_display_label("63 / LOW COVERAGE"),
+            "⚠ 63 低信頼",
         )
 
     def test_overlay_keeps_raw_baseline_for_priority_and_adds_display_columns(self):
