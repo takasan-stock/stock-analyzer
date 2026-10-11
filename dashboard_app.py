@@ -39,6 +39,13 @@ from portfolio_integration import (
     load_me_screener,
     split_news_by_age,
 )
+from report_storage_v2 import (
+    display_entry_key,
+    make_unique_entry_key,
+    merge_report_entries,
+    unwrap_report_content,
+    wrap_report_content,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -1867,35 +1874,42 @@ def entry_filepath(ticker_code: str, kind: str, key: str) -> str:
     return os.path.join(REPORT_DIR, f"{safe_name}_{kind}_{safe_key}.md")
 
 def load_entries(ticker_code: str, kind: str) -> list:
-    """
-    reports/ フォルダから <ticker>_<kind>_<key>.md を検索して
-    新しい順（key降順）で返す。
-    各エントリは {"key": "2026-05-14", "content": "...", "updated_at": "..."} の形式。
-    """
+    """Load local report entries with Report Storage v2 metadata support."""
     safe_name = safe_ticker_filename(ticker_code)
     prefix = f"{safe_name}_{kind}_"
     entries = []
     for fname in os.listdir(REPORT_DIR):
         if fname.startswith(prefix) and fname.endswith(".md"):
             fpath = os.path.join(REPORT_DIR, fname)
-            key = fname[len(prefix):-3]  # プレフィックスと .md を除いた部分
+            key = fname[len(prefix):-3]
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
-                    content = f.read()
+                    raw_content = f.read()
+                content, meta = unwrap_report_content(raw_content)
                 mtime = os.path.getmtime(fpath)
-                updated_at = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-                entries.append({"key": key, "content": content, "updated_at": updated_at})
+                fallback_updated = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                entries.append({
+                    "key": key,
+                    "content": content,
+                    "created_at": str(meta.get("created_at", "") or ""),
+                    "updated_at": str(meta.get("updated_at", "") or fallback_updated),
+                    "_sync_status": "LOCAL ONLY",
+                })
             except OSError:
                 pass
-    entries.sort(key=lambda e: e["key"], reverse=True)
+    entries.sort(
+        key=lambda e: (
+            str(e.get("updated_at", "") or ""),
+            str(e.get("key", "") or ""),
+        ),
+        reverse=True,
+    )
     return entries
 
 def save_entry(ticker_code: str, kind: str, key: str, content: str) -> None:
-    """
-    1エントリ=1ファイルとして保存する。
-    上書き前に _backup/ にタイムスタンプ付きで退避する。
-    """
+    """Save one local report entry with invisible v2 metadata and backup."""
     fpath = entry_filepath(ticker_code, kind, key)
+    created_at = None
 
     if os.path.exists(fpath):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1904,13 +1918,21 @@ def save_entry(ticker_code: str, kind: str, key: str, content: str) -> None:
         try:
             with open(fpath, "r", encoding="utf-8") as f_old:
                 old = f_old.read()
+            _, old_meta = unwrap_report_content(old)
+            created_at = str(old_meta.get("created_at", "") or "") or None
             with open(backup_path, "w", encoding="utf-8") as f_bk:
                 f_bk.write(old)
         except Exception:
             pass
 
+    wrapped = wrap_report_content(
+        content,
+        kind=kind,
+        key=key,
+        created_at=created_at,
+    )
     with open(fpath, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(wrapped)
 
 def delete_entry(ticker_code: str, kind: str, key: str) -> None:
     """エントリファイルを削除する（削除前に _backup/ に退避）"""
@@ -1988,10 +2010,9 @@ def get_github_config():
 
 @st.cache_data(ttl=120)
 def github_fetch_entries(token: str, repo: str, branch: str, ticker_code: str, kind: str) -> list:
-    """GitHubのreports/フォルダから <ticker>_<kind>_<key>.md を検索して新しい順で返す。"""
+    """List matching GitHub report files. Content metadata supplies timestamps."""
     safe_name = safe_ticker_filename(ticker_code)
     prefix = f"{safe_name}_{kind}_"
-    # gh.list_filesを使う（GitHubStorageに集約）
     items = gh.list_files("reports")
     entries = []
     for item in items:
@@ -2028,37 +2049,46 @@ def github_upload_report(file_stem: str, content: str, company_name: str = "", e
 
 def load_entries_smart(ticker: str, kind: str, github_config: dict | None) -> list:
     """
-    GitHub設定があればGitHubから直接読み込む。
-    なければローカルの reports/ フォルダから読み込む（フォールバック）。
-    GitHub読み込み成功時は、ローカルにも同期してキャッシュとして残す。
+    Merge GitHub and local entries.
+
+    GitHub wins for the same key, while local-only entries remain visible so a
+    failed GitHub save never looks like data loss.
     """
-    if github_config:
-        gh_entries = github_fetch_entries(
-            github_config["token"], github_config["repo"],
-            github_config["branch"], ticker, kind
+    local_entries = load_entries(ticker, kind)
+    if not github_config:
+        return local_entries
+
+    gh_entries = github_fetch_entries(
+        github_config["token"], github_config["repo"],
+        github_config["branch"], ticker, kind
+    )
+    remote_full = []
+    for e in gh_entries:
+        raw_content = github_fetch_content(
+            github_config["token"],
+            e["download_url"],
         )
-        # 本文をGitHubから取得してローカルにキャッシュ
-        full_entries = []
-        for e in gh_entries:
-            content = github_fetch_content(github_config["token"], e["download_url"])
-            # ローカルにも書き込んで再起動後の一瞬のギャップを埋める
-            local_path = entry_filepath(ticker, kind, e["key"])
-            if content and not os.path.exists(local_path):
-                try:
-                    with open(local_path, "w", encoding="utf-8") as f:
-                        f.write(content)
-                except OSError:
-                    pass
-            full_entries.append({
-                "key": e["key"],
-                "content": content,
-                "updated_at": e.get("updated_at", ""),
-                "_sha": e["sha"],
-                "_path": e["path"],
-            })
-        return full_entries
-    else:
-        return load_entries(ticker, kind)
+        content, meta = unwrap_report_content(raw_content)
+
+        local_path = entry_filepath(ticker, kind, e["key"])
+        if raw_content:
+            try:
+                with open(local_path, "w", encoding="utf-8") as f:
+                    f.write(raw_content)
+            except OSError:
+                pass
+
+        remote_full.append({
+            "key": e["key"],
+            "content": content,
+            "created_at": str(meta.get("created_at", "") or ""),
+            "updated_at": str(meta.get("updated_at", "") or ""),
+            "_sha": e["sha"],
+            "_path": e["path"],
+            "_sync_status": "GITHUB",
+        })
+
+    return merge_report_entries(local_entries, remote_full)
 
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
