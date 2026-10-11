@@ -109,15 +109,26 @@ def build_operational_health(
         validation.get("validation_as_of"),
         errors="coerce",
     )
+    validation_as_of_raw = (
+        None
+        if pd.isna(validation_as_of)
+        else pd.Timestamp(validation_as_of).normalize()
+    )
+    validation_as_of_effective = validation_as_of_raw
+    validation_was_normalized = False
+    if (
+        validation_as_of_raw is not None
+        and not is_tse_business_day(validation_as_of_raw)
+    ):
+        validation_as_of_effective = pd.Timestamp(
+            next_tse_session(validation_as_of_raw)
+        ).normalize()
+        validation_was_normalized = True
     if validation_run is None:
         val_state = "PENDING"
         val_detail = "次セッション検証結果がまだありません。"
     else:
-        as_of_date = (
-            None
-            if pd.isna(validation_as_of)
-            else pd.Timestamp(validation_as_of).normalize()
-        )
+        as_of_date = validation_as_of_effective
         if as_of_date is not None and as_of_date >= next_session:
             val_state = "OK"
             val_detail = (
@@ -125,6 +136,11 @@ def build_operational_health(
                 f"ME昇格 {int(validation.get('me_promoted_count', 0) or 0)}件 / "
                 f"ME WATCH {int(validation.get('me_watch_candidates', 0) or 0)}件"
             )
+            if validation_was_normalized and validation_as_of_raw is not None:
+                val_detail += (
+                    f"（保存値 {validation_as_of_raw:%Y-%m-%d} を"
+                    "東証営業日に補正）"
+                )
         else:
             val_state = "WARN"
             val_detail = (

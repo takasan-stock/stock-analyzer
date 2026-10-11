@@ -73,7 +73,7 @@ def build_deep_fcf_top5(
     screener: pd.DataFrame | None,
     *,
     limit: int = 5,
-    min_coverage: float = 0.45,
+    min_coverage: float = 0.60,
 ) -> pd.DataFrame:
     """Rank latest ME names by cash-generation quality without bypassing entry gates.
 
