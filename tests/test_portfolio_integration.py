@@ -7,6 +7,7 @@ from portfolio_integration import (
     baseline_me_display_label,
     baseline_score_display_label,
     build_portfolio_signal_overlay,
+    is_p3_baseline_candidate,
     portfolio_priority_label,
     split_news_by_age,
 )
@@ -331,6 +332,15 @@ class PortfolioIntegrationTests(unittest.TestCase):
             "⚠ 38 低信頼",
         )
 
+    def test_p3_candidate_flag_matches_reliable_60_to_64_band(self):
+        self.assertFalse(is_p3_baseline_candidate("59"))
+        self.assertTrue(is_p3_baseline_candidate("60"))
+        self.assertTrue(is_p3_baseline_candidate("63"))
+        self.assertTrue(is_p3_baseline_candidate("64"))
+        self.assertFalse(is_p3_baseline_candidate("65"))
+        self.assertFalse(is_p3_baseline_candidate("63 / LOW COVERAGE"))
+        self.assertFalse(is_p3_baseline_candidate("—"))
+
     def test_low_coverage_never_gets_p3_candidate_badge(self):
         self.assertEqual(
             baseline_score_display_label("63 / LOW COVERAGE"),
@@ -361,6 +371,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(row["Baseline ME表示"], "🟡 再加速監視")
         self.assertEqual(row["Baseline Score"], "70")
         self.assertEqual(row["Baseline Score表示"], "🟡 70")
+        self.assertFalse(bool(row["P3候補"]))
         self.assertEqual(row["今日の優先度"], "🟡 P3 通常監視")
 
     def test_me_ready_is_p2_without_opportunity_score(self):
