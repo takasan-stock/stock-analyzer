@@ -22,6 +22,17 @@ from daily_command_center import (
 )
 from operational_health import build_operational_health, health_icon
 from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_strength, deep_fcf_valuation_label
+from portfolio_quality import (
+    build_company_news_query,
+    display_portfolio_dataframe,
+    find_duplicate_tickers,
+    format_number_metric,
+    format_percent_metric,
+    is_relevant_company_news,
+    normalize_metric_text,
+    normalize_portfolio_dataframe,
+    normalize_ticker_code,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -688,26 +699,48 @@ def load_data():
     for col in COLUMNS:
         if col not in df.columns:
             df[col] = ""
-    return df[COLUMNS]
+    return normalize_portfolio_dataframe(df[COLUMNS])
 
 def save_data(df):
     """
-    データ保存。ローカルCSVに保存 + GitHub設定ありならGitHubにも保存。
-    エラー時はローカル保存を維持してwarningを返す。
+    データ保存。保存前に数値・ティッカーを正規化し、
+    ローカルCSV + GitHub（設定時）へ保存する。
+    戻り値: (status, message, normalized_df)
+      status: "github" / "local" / "error"
     """
-    # まずローカルに保存（フォールバックとして常に実施）
-    df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-
-    if gh.enabled:
-        with open(DATA_FILE, "r", encoding="utf-8-sig") as f:
-            csv_text = f.read()
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        ok, msg = gh.write_text(
-            DATA_FILE, csv_text,
-            f"Update portfolio_data.csv - {timestamp}"
+    normalized = normalize_portfolio_dataframe(df)
+    duplicates = find_duplicate_tickers(normalized)
+    if duplicates:
+        return (
+            "error",
+            "重複ティッカーがあります: " + ", ".join(duplicates),
+            normalized,
         )
-        if not ok:
-            st.toast(f"⚠️ GitHub保存失敗（ローカルには保存済み）：{msg}", icon="⚠️")
+
+    normalized.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+
+    if not gh.enabled:
+        return (
+            "local",
+            "ローカル保存のみ完了しました。GitHub連携は無効です。",
+            normalized,
+        )
+
+    with open(DATA_FILE, "r", encoding="utf-8-sig") as f:
+        csv_text = f.read()
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    ok, msg = gh.write_text(
+        DATA_FILE, csv_text,
+        f"Update portfolio_data.csv - {timestamp}"
+    )
+    if ok:
+        return ("github", "GitHubまで保存完了しました。", normalized)
+
+    return (
+        "local",
+        f"ローカル保存のみ完了。GitHub保存失敗: {msg}",
+        normalized,
+    )
 
 # ==========================================
 # reports/ の起動時GitHub同期
@@ -760,18 +793,21 @@ def fetch_news_batch(companies: tuple, max_items: int = 5) -> dict:
             result[ticker] = []
             continue
         try:
-            query = quote(name)
+            query = quote(build_company_news_query(ticker, name))
             url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
             resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             items = []
             if resp.status_code == 200:
                 root = ET.fromstring(resp.content)
-                for item in root.findall(".//item")[:max_items]:
+                # Google側の上位だけでなく少し広めに見てから企業関連性で絞る
+                for item in root.findall(".//item")[: max_items * 4]:
                     title = (item.findtext("title") or "").strip()
                     link = (item.findtext("link") or "").strip()
                     pub_date_str = (item.findtext("pubDate") or "").strip()
                     source_el = item.find("source")
                     source = source_el.text.strip() if source_el is not None and source_el.text else ""
+                    if not is_relevant_company_news(title, ticker, name, source):
+                        continue
 
                     hours_ago = None
                     date_str = None
@@ -789,6 +825,8 @@ def fetch_news_batch(companies: tuple, max_items: int = 5) -> dict:
                         "source": source, "hours_ago": hours_ago,
                         "date_str": date_str,
                     })
+                    if len(items) >= max_items:
+                        break
             result[ticker] = items
         except Exception:
             result[ticker] = []
@@ -3170,7 +3208,7 @@ with tab1:
 
             # 直近24時間のニュース件数を先頭列として追加（閲覧用のみ、CSVには保存しない）
             _nb_t = st.session_state.get("news_batch", {})
-            _display_df = view_df.copy()
+            _display_df = display_portfolio_dataframe(view_df)
             _display_df.insert(
                 0, "📰",
                 [
@@ -3207,10 +3245,18 @@ with tab1:
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
                 if st.button("💾 変更を保存", type="primary"):
-                    st.session_state.df = edited_df.reset_index(drop=True)
-                    save_data(st.session_state.df)
-                    st.success("✅ 変更を保存しました！")
-                    st.rerun()
+                    _save_status, _save_msg, _normalized = save_data(
+                        edited_df.reset_index(drop=True)
+                    )
+                    if _save_status == "error":
+                        st.error(f"⚠️ {_save_msg}")
+                    else:
+                        st.session_state.df = _normalized
+                        if _save_status == "github":
+                            st.success(f"✅ {_save_msg}")
+                        else:
+                            st.warning(f"⚠️ {_save_msg}")
+                        st.rerun()
             with col_b2:
                 csv = df.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
@@ -3383,28 +3429,32 @@ with tab2:
         submitted = st.button("💾 データベースに登録", type="primary", key="reg_submit")
 
         if submitted:
-            if ticker == "":
+            _ticker_norm = normalize_ticker_code(ticker)
+            if _ticker_norm == "":
                 st.error("⚠️ ①でティッカーコードを入力してください！")
             else:
-                existing_tickers = st.session_state.df["ティッカー"].astype(str).tolist()
-                if ticker in existing_tickers:
-                    st.warning(
-                        f"⚠️ ティッカー {ticker} は既に登録されています。"
-                        "新しい行として追加されます。既存データを更新したい場合は"
-                        "「一覧・編集」タブで直接編集してください。"
+                existing_tickers = {
+                    normalize_ticker_code(v)
+                    for v in st.session_state.df["ティッカー"].tolist()
+                }
+                if _ticker_norm in existing_tickers:
+                    st.error(
+                        f"⚠️ ティッカー {_ticker_norm} は既に登録されています。"
+                        " 重複登録は行いません。「一覧・編集」から既存行を更新してください。"
                     )
+                    st.stop()
 
                 new_data = pd.DataFrame([{
-                    "ティッカー": ticker,
+                    "ティッカー": _ticker_norm,
                     "銘柄名": name,
                     "セクター": sector,
                     "ステータス": status,
-                    "売上5y CAGR": cagr,
+                    "売上5y CAGR": normalize_metric_text(cagr),
                     "売上予想": forecast,
-                    "PER": per,
+                    "PER": normalize_metric_text(per),
                     "ネットキャッシュ": net_cash,
-                    "ROIC": roic,
-                    "DPUP": dpup,
+                    "ROIC": normalize_metric_text(roic),
+                    "DPUP": normalize_metric_text(dpup),
                     "材料発生日": catalyst_date.strftime("%Y-%m-%d") if catalyst_date else "",
                     "材料時株価": catalyst_price,
                     "材料メモ": catalyst_memo,
@@ -3414,12 +3464,27 @@ with tab2:
                     "更新日": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                 }])
 
-                st.session_state.df = pd.concat([st.session_state.df, new_data], ignore_index=True)
-                save_data(st.session_state.df)
+                _candidate = pd.concat(
+                    [st.session_state.df, new_data],
+                    ignore_index=True,
+                )
+                _save_status, _save_msg, _normalized = save_data(_candidate)
 
-                st.success(f"✅ {ticker} ({name}) を登録しました！")
-                st.session_state.reset_new_form = True
-                st.rerun()
+                if _save_status == "error":
+                    st.error(f"⚠️ {_save_msg}")
+                else:
+                    st.session_state.df = _normalized
+                    if _save_status == "github":
+                        st.success(
+                            f"✅ {_ticker_norm} ({name}) を登録し、GitHubまで保存しました。"
+                        )
+                    else:
+                        st.warning(
+                            f"⚠️ {_ticker_norm} ({name}) はローカル保存済みですが、"
+                            f"GitHubには保存できていません。{_save_msg}"
+                        )
+                    st.session_state.reset_new_form = True
+                    st.rerun()
 
     back_to_top()
 
