@@ -358,7 +358,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
             "63",
             "流動性◎ / 高値接近○ / 形状△",
         )
-        self.assertEqual(label, "🔵 あと2｜流動性◎・高値接近○")
+        self.assertEqual(label, "流動性◎・高値接近○")
 
     def test_non_candidate_contribution_display_keeps_reasons(self):
         label = baseline_contribution_display(

@@ -200,17 +200,14 @@ def baseline_contribution_display(
     baseline_score: Any,
     reason: Any,
 ) -> str:
-    """Compact display: P3 candidates show distance + two strongest drivers."""
+    """Compact display: P3 candidates show only their two strongest drivers."""
     reason_text = str(reason or "").strip()
     if not reason_text or reason_text == "—":
         return "—"
 
     score_text = str(baseline_score or "").strip()
     if is_p3_baseline_candidate(score_text):
-        score = _parse_opportunity(score_text)
-        distance = 65 - int(round(score)) if score is not None else 0
-        top_two = "・".join(reason_text.split(" / ")[:2])
-        return f"🔵 あと{max(0, distance)}｜{top_two}"
+        return "・".join(reason_text.split(" / ")[:2])
 
     return reason_text
 
