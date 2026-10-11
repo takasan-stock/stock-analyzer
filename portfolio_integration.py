@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import pandas as pd
@@ -183,7 +184,7 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
     deep = str(row.get("Deep FCF", "") or "").upper()
     opp = _parse_opportunity(row.get("Opportunity"))
 
-    if "READY" in entry or "ENTRY" in entry and "READY" in entry:
+    if "READY" in entry:
         return "🔴 P1 今すぐ確認", 1
 
     if opp is not None and opp >= 70:
