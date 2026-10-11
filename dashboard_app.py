@@ -3575,7 +3575,7 @@ with tab1:
             _important_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
                 "ME状態", "Deep FCF", "Entry状態", "Opportunity",
-                "Baseline ME表示", "Baseline Score表示",
+                "Baseline ME表示", "Baseline Score表示", "Baseline理由",
                 "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
                 "更新日",
             ]
@@ -3599,6 +3599,7 @@ with tab1:
                 " Baseline ME は全東証の軽量スクリーニングです。"
                 " 表示は ⚪通常 / 🟡再加速監視 / 🟠再拡大準備 / 🟢拡大中。"
                 " Baseline Score は 🔵60〜64がP3候補、🟡65以上がP3基準、🟢75以上が強めです。"
+                " Baseline理由は、形状・流動性・価格・高値接近・出来高のうち寄与が大きい上位3項目です。"
                 " 🔵P3候補はP4内の補助表示で、P3へ昇格した意味ではありません。"
                 " P1/P2やEntry Gateには昇格させません。"
                 " ⚪ 未評価は、これらの判定データがまだ無い銘柄です。"
