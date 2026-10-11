@@ -5,6 +5,7 @@ import pandas as pd
 from portfolio_integration import (
     apply_portfolio_priority,
     baseline_me_display_label,
+    baseline_reason_label,
     baseline_score_display_label,
     build_portfolio_signal_overlay,
     is_p3_baseline_candidate,
@@ -332,6 +333,25 @@ class PortfolioIntegrationTests(unittest.TestCase):
             "⚠ 38 低信頼",
         )
 
+    def test_baseline_reason_label_shows_top_three_drivers(self):
+        row = {
+            "coarse_shape_score": 92.0,
+            "liquidity_score": 80.0,
+            "ret20": 0.10,
+            "distance_120d_high": -0.02,
+            "volume_ratio20": 1.2,
+        }
+
+        label = baseline_reason_label(row)
+
+        self.assertIn("形状◎", label)
+        self.assertIn("流動性◎", label)
+        self.assertIn("高値接近◎", label)
+        self.assertEqual(len(label.split(" / ")), 3)
+
+    def test_baseline_reason_label_handles_missing_data(self):
+        self.assertEqual(baseline_reason_label({}), "—")
+
     def test_p3_candidate_flag_matches_reliable_60_to_64_band(self):
         self.assertFalse(is_p3_baseline_candidate("59"))
         self.assertTrue(is_p3_baseline_candidate("60"))
@@ -371,6 +391,8 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(row["Baseline ME表示"], "🟡 再加速監視")
         self.assertEqual(row["Baseline Score"], "70")
         self.assertEqual(row["Baseline Score表示"], "🟡 70")
+        self.assertIn("Baseline理由", out.columns)
+        self.assertNotEqual(row["Baseline理由"], "—")
         self.assertFalse(bool(row["P3候補"]))
         self.assertEqual(row["今日の優先度"], "🟡 P3 通常監視")
 
