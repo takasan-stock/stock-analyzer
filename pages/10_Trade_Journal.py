@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 from trade_journal import (
     JOURNAL_COLUMNS,
@@ -20,6 +21,7 @@ from trade_journal import (
 
 
 st.set_page_config(page_title="Trade Journal", page_icon="📓", layout="wide")
+render_sidebar_navigation()
 
 PLAN_FILE = "data/pretrade_trade_plans.csv"
 JOURNAL_FILE = "data/trade_journal.csv"

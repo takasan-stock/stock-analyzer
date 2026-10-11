@@ -11,6 +11,7 @@ from entry_hunter_sources import (
     select_me_watch_candidates,
 )
 from entry_opportunity import build_entry_opportunity
+from deep_fcf_top5 import build_deep_fcf_top5
 
 
 COMMAND_CENTER_COLUMNS = [
@@ -31,6 +32,11 @@ COMMAND_CENTER_COLUMNS = [
     "setup_bonus",
     "trait_bonus",
     "fast_bonus",
+    "deep_fcf_rank",
+    "deep_fcf_score",
+    "deep_fcf_coverage",
+    "deep_fcf_confidence",
+    "deep_fcf_bonus",
     "adaptive_total",
     "adaptive_breakdown",
     "decision_card",
@@ -72,13 +78,14 @@ SCORE_BREAKDOWN_SPECS = [
     ("Setup", "setup_bonus", 4.0),
     ("Trait", "trait_bonus", 2.5),
     ("Fast0D", "fast_bonus", 2.5),
+    ("Deep FCF", "deep_fcf_bonus", 2.5),
 ]
 
 
 def build_score_breakdown_rows(
     row: pd.Series | dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Build compact normalized bars for the four adaptive contributions."""
+    """Build compact normalized bars for adaptive and Deep FCF contributions."""
     items: list[dict[str, Any]] = []
     for label, key, cap in SCORE_BREAKDOWN_SPECS:
         value = _num(row.get(key)) or 0.0
@@ -146,6 +153,11 @@ def build_command_center_handoff(
         "setup_bonus": _num(row.get("setup_bonus")),
         "trait_bonus": _num(row.get("trait_bonus")),
         "fast_bonus": _num(row.get("fast_bonus")),
+        "deep_fcf_rank": _num(row.get("deep_fcf_rank")),
+        "deep_fcf_score": _num(row.get("deep_fcf_score")),
+        "deep_fcf_coverage": _num(row.get("deep_fcf_coverage")),
+        "deep_fcf_confidence": _text(row.get("deep_fcf_confidence")),
+        "deep_fcf_bonus": _num(row.get("deep_fcf_bonus")),
         "adaptive_total": _num(row.get("adaptive_total")),
         "adaptive_breakdown": _text(row.get("adaptive_breakdown")),
         "decision_card": _text(row.get("decision_card")),
@@ -387,6 +399,94 @@ def _from_me_screener(
     return pd.DataFrame(rows)
 
 
+
+def _deep_fcf_bonus(score: Any, coverage: Any) -> float:
+    """Return a deliberately small quality bonus capped at +2.5 points."""
+    deep_score = _num(score)
+    deep_coverage = _num(coverage)
+    if deep_score is None or deep_coverage is None:
+        return 0.0
+    if deep_score <= 50.0 or deep_coverage < 0.45:
+        return 0.0
+
+    quality_component = min(2.5, max(0.0, (deep_score - 50.0) / 20.0))
+    coverage_factor = min(1.0, max(0.0, deep_coverage / 0.75))
+    return round(quality_component * coverage_factor, 2)
+
+
+def _apply_deep_fcf_overlay(
+    frame: pd.DataFrame,
+    me_screener: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Apply Deep FCF TOP5 as a weak ranking overlay, never as an entry gate."""
+    if frame is None or frame.empty:
+        return frame
+    out = frame.copy()
+
+    for col, default in [
+        ("deep_fcf_rank", pd.NA),
+        ("deep_fcf_score", pd.NA),
+        ("deep_fcf_coverage", pd.NA),
+        ("deep_fcf_confidence", ""),
+        ("deep_fcf_bonus", 0.0),
+    ]:
+        out[col] = default
+
+    deep = build_deep_fcf_top5(
+        me_screener,
+        limit=5,
+        min_coverage=0.45,
+    )
+    if deep.empty:
+        return out
+
+    deep = deep.copy()
+    deep["ticker"] = (
+        deep["ticker"].astype(str).str.replace(".0", "", regex=False)
+    )
+    lookup = deep.set_index("ticker")
+
+    for idx, row in out.iterrows():
+        ticker = _text(row.get("ticker")).replace(".T", "")
+        if ticker not in lookup.index:
+            continue
+        d = lookup.loc[ticker]
+        if isinstance(d, pd.DataFrame):
+            d = d.iloc[0]
+
+        deep_score = _num(d.get("deep_fcf_score"))
+        deep_coverage = _num(d.get("deep_fcf_coverage"))
+        bonus = _deep_fcf_bonus(deep_score, deep_coverage)
+
+        out.at[idx, "deep_fcf_rank"] = _num(d.get("rank"))
+        out.at[idx, "deep_fcf_score"] = deep_score
+        out.at[idx, "deep_fcf_coverage"] = deep_coverage
+        out.at[idx, "deep_fcf_confidence"] = _text(
+            d.get("deep_fcf_confidence")
+        )
+        out.at[idx, "deep_fcf_bonus"] = bonus
+
+        old_score = _num(out.at[idx, "opportunity_score"]) or 0.0
+        new_score = min(100.0, old_score + bonus)
+        out.at[idx, "opportunity_score"] = round(new_score, 1)
+        out.at[idx, "opportunity_rating"] = _rating(new_score)
+
+        reason = _text(out.at[idx, "reason"])
+        if bonus > 0:
+            label = f"Deep FCF+{bonus:.1f}"
+            out.at[idx, "reason"] = (
+                f"{reason} / {label}" if reason else label
+            )
+
+        breakdown = _text(out.at[idx, "adaptive_breakdown"])
+        deep_part = f"DeepFCF {bonus:+.1f}"
+        out.at[idx, "adaptive_breakdown"] = (
+            f"{breakdown}｜{deep_part}" if breakdown else deep_part
+        )
+
+    return out
+
+
 def build_decision_card(row: pd.Series | dict[str, Any]) -> str:
     source = _text(row.get("source"))
     signal_key = _text(row.get("signal_key"))
@@ -433,6 +533,8 @@ def build_decision_card(row: pd.Series | dict[str, Any]) -> str:
         evidence.append("Setup")
     if "銘柄特性+" in reason:
         evidence.append("Trait")
+    if "Deep FCF+" in reason:
+        evidence.append("DeepFCF")
     if evidence:
         parts.append("+".join(evidence) + "実績+")
 
@@ -590,6 +692,7 @@ def build_daily_command_center(
     if source.empty:
         return _empty()
 
+    source = _apply_deep_fcf_overlay(source, me_screener)
     source = source.copy()
     source["opportunity_score"] = pd.to_numeric(
         source["opportunity_score"], errors="coerce"

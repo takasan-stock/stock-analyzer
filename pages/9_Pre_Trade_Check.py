@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 import yfinance as yf
 
 from daily_command_center import build_score_breakdown_rows
@@ -15,6 +16,7 @@ from short_cover import build_entry_hunter_snapshot, normalize_ticker
 
 
 st.set_page_config(page_title="Pre-Trade Check", page_icon="🛡️", layout="wide")
+render_sidebar_navigation()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -257,6 +259,13 @@ incoming_source_bonus = st.session_state.pop("pretrade_source_bonus", None)
 incoming_setup_bonus = st.session_state.pop("pretrade_setup_bonus", None)
 incoming_trait_bonus = st.session_state.pop("pretrade_trait_bonus", None)
 incoming_fast_bonus = st.session_state.pop("pretrade_fast_bonus", None)
+incoming_deep_fcf_rank = st.session_state.pop("pretrade_deep_fcf_rank", None)
+incoming_deep_fcf_score = st.session_state.pop("pretrade_deep_fcf_score", None)
+incoming_deep_fcf_coverage = st.session_state.pop("pretrade_deep_fcf_coverage", None)
+incoming_deep_fcf_confidence = str(
+    st.session_state.pop("pretrade_deep_fcf_confidence", "") or ""
+)
+incoming_deep_fcf_bonus = st.session_state.pop("pretrade_deep_fcf_bonus", None)
 incoming_adaptive_total = st.session_state.pop("pretrade_adaptive_total", None)
 incoming_adaptive_breakdown = str(
     st.session_state.pop("pretrade_adaptive_breakdown", "") or ""
@@ -346,11 +355,42 @@ if _active_source and _source_ticker == ticker:
         if incoming_opportunity_reason:
             st.caption(f"Opportunity理由: {incoming_opportunity_reason}")
 
+        if incoming_deep_fcf_score is not None:
+            _df1, _df2, _df3 = st.columns(3)
+            _df1.metric(
+                "Deep FCF",
+                f"{float(incoming_deep_fcf_score):.0f}/100",
+                (
+                    None
+                    if incoming_deep_fcf_rank is None
+                    else f"TOP5 #{int(float(incoming_deep_fcf_rank))}"
+                ),
+            )
+            _df2.metric(
+                "FCF Coverage",
+                (
+                    "—"
+                    if incoming_deep_fcf_coverage is None
+                    else f"{float(incoming_deep_fcf_coverage) * 100:.0f}%"
+                ),
+                incoming_deep_fcf_confidence or None,
+            )
+            _df3.metric(
+                "Deep FCF補助点",
+                (
+                    "—"
+                    if incoming_deep_fcf_bonus is None
+                    else f"+{float(incoming_deep_fcf_bonus):.1f}"
+                ),
+                "最大 +2.5",
+            )
+
         _breakdown_row = {
             "source_bonus": incoming_source_bonus,
             "setup_bonus": incoming_setup_bonus,
             "trait_bonus": incoming_trait_bonus,
             "fast_bonus": incoming_fast_bonus,
+            "deep_fcf_bonus": incoming_deep_fcf_bonus,
         }
         _breakdown_items = build_score_breakdown_rows(_breakdown_row)
         _has_breakdown = any(abs(float(x["value"])) >= 0.05 for x in _breakdown_items)

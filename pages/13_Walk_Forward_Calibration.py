@@ -7,12 +7,14 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from sidebar_nav import render_sidebar_navigation
 
 from trade_journal import JOURNAL_COLUMNS, normalize_journal
 from walk_forward_calibration import build_walk_forward_report
 
 
 st.set_page_config(page_title="Walk-Forward Calibration", page_icon="🚶", layout="wide")
+render_sidebar_navigation()
 
 JOURNAL_FILE = "data/trade_journal.csv"
 

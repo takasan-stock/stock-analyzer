@@ -368,6 +368,7 @@ def test_score_breakdown_rows_clip_to_component_caps():
         "setup_bonus": -99,
         "trait_bonus": 99,
         "fast_bonus": -99,
+        "deep_fcf_bonus": 99,
     }
     out = build_score_breakdown_rows(row)
     by_label = {item["label"]: item for item in out}
@@ -376,6 +377,7 @@ def test_score_breakdown_rows_clip_to_component_caps():
     assert by_label["Setup"]["value"] == -4.0
     assert by_label["Trait"]["value"] == 2.5
     assert by_label["Fast0D"]["value"] == -2.5
+    assert by_label["Deep FCF"]["value"] == 2.5
     assert all(item["percent"] == 100.0 for item in out)
 
 
@@ -460,3 +462,159 @@ def test_me_watch_promotes_when_state_becomes_ready():
     assert row["opportunity_action"] == "PRE-MARKET WATCH"
     assert row["entry_status"] == "⏳ PRE-MARKET"
     assert execution_handoff_allowed(row) is True
+
+
+
+def test_deep_fcf_overlay_is_small_and_can_break_close_ranking():
+    me = pd.DataFrame(
+        [
+            {
+                "ticker": "1111",
+                "company_name": "Alpha",
+                "trade_date": "2026-10-09",
+                "second_wave_state": "RE-WATCH READY",
+                "sw_decision": "READY",
+                "candidate_type": "SECOND WAVE",
+                "sw_score": 80.0,
+                "hist_edge_score": 55.0,
+                "fcf_engine_score": 70.0,
+                "screen_rank": 1,
+                "re_route": "OPEN",
+                "fcf_ttm": 100.0,
+                "fcf_ttm_complete": True,
+                "fcf_per_share_3y_cagr_score": 95.0,
+                "fcf_per_share_yoy_score": 95.0,
+                "cfo_yoy_score": 95.0,
+                "roic_score": 95.0,
+                "fcf_margin_score": 95.0,
+                "cash_conversion_score": 95.0,
+                "net_cash_ratio_score": 95.0,
+                "dilution_score": 95.0,
+                "p_fcf": 10.0,
+            },
+            {
+                "ticker": "2222",
+                "company_name": "Beta",
+                "trade_date": "2026-10-09",
+                "second_wave_state": "RE-WATCH READY",
+                "sw_decision": "READY",
+                "candidate_type": "SECOND WAVE",
+                "sw_score": 81.0,
+                "hist_edge_score": 55.0,
+                "fcf_engine_score": 70.0,
+                "screen_rank": 2,
+                "re_route": "OPEN",
+                "fcf_ttm": 100.0,
+                "fcf_ttm_complete": True,
+                "fcf_per_share_3y_cagr_score": 55.0,
+                "fcf_per_share_yoy_score": 55.0,
+                "cfo_yoy_score": 55.0,
+                "roic_score": 55.0,
+                "fcf_margin_score": 55.0,
+                "cash_conversion_score": 55.0,
+                "net_cash_ratio_score": 55.0,
+                "dilution_score": 55.0,
+                "p_fcf": 40.0,
+            },
+        ]
+    )
+
+    out = build_daily_command_center(
+        {},
+        me,
+        as_of="2026-10-13 08:30:00+09:00",
+        limit=2,
+    )
+
+    assert len(out) == 2
+    assert float(out["deep_fcf_bonus"].max()) <= 2.5
+    alpha = out[out["ticker"] == "1111"].iloc[0]
+    beta = out[out["ticker"] == "2222"].iloc[0]
+    assert float(alpha["deep_fcf_bonus"]) > float(beta["deep_fcf_bonus"])
+    assert "Deep FCF+" in alpha["reason"]
+    assert "DeepFCF +" in alpha["adaptive_breakdown"]
+
+
+def test_deep_fcf_overlay_never_opens_watch_only_execution_gate():
+    me = pd.DataFrame(
+        [{
+            "ticker": "3333",
+            "company_name": "Gamma",
+            "trade_date": "2026-10-09",
+            "second_wave_state": "EXP. DECELERATING",
+            "sw_decision": "WATCH",
+            "candidate_type": "SECOND WAVE",
+            "sw_score": 60.0,
+            "hist_edge_score": 55.0,
+            "fcf_engine_score": 95.0,
+            "screen_rank": 1,
+            "re_route": "OPEN",
+            "fcf_ttm": 100.0,
+            "fcf_ttm_complete": True,
+            "fcf_per_share_3y_cagr_score": 100.0,
+            "fcf_per_share_yoy_score": 100.0,
+            "cfo_yoy_score": 100.0,
+            "roic_score": 100.0,
+            "fcf_margin_score": 100.0,
+            "cash_conversion_score": 100.0,
+            "net_cash_ratio_score": 100.0,
+            "dilution_score": 100.0,
+            "p_fcf": 8.0,
+        }]
+    )
+
+    out = build_daily_command_center(
+        {},
+        me,
+        as_of="2026-10-13 08:30:00+09:00",
+        limit=1,
+    )
+
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert float(row["deep_fcf_bonus"]) > 0.0
+    assert row["opportunity_action"] == "WATCH ONLY"
+    assert row["entry_status"] == "🟡 ME WATCH"
+    assert execution_handoff_allowed(row) is False
+
+
+def test_deep_fcf_top5_excludes_non_top5_from_bonus():
+    rows = []
+    for i in range(6):
+        rows.append(
+            {
+                "ticker": f"{4000 + i}",
+                "company_name": f"Name{i}",
+                "trade_date": "2026-10-09",
+                "second_wave_state": "RE-WATCH READY",
+                "sw_decision": "READY",
+                "candidate_type": "SECOND WAVE",
+                "sw_score": 75.0,
+                "hist_edge_score": 55.0,
+                "fcf_engine_score": 70.0,
+                "screen_rank": i + 1,
+                "re_route": "OPEN",
+                "fcf_ttm": 100.0,
+                "fcf_ttm_complete": True,
+                "fcf_per_share_3y_cagr_score": 100.0 - i * 8.0,
+                "fcf_per_share_yoy_score": 100.0 - i * 8.0,
+                "cfo_yoy_score": 100.0 - i * 8.0,
+                "roic_score": 100.0 - i * 8.0,
+                "fcf_margin_score": 100.0 - i * 8.0,
+                "cash_conversion_score": 100.0 - i * 8.0,
+                "net_cash_ratio_score": 100.0 - i * 8.0,
+                "dilution_score": 100.0 - i * 8.0,
+                "p_fcf": 10.0 + i * 5.0,
+            }
+        )
+    me = pd.DataFrame(rows)
+
+    out = build_daily_command_center(
+        {},
+        me,
+        as_of="2026-10-13 08:30:00+09:00",
+        limit=6,
+    )
+
+    assert len(out) == 6
+    assert int((pd.to_numeric(out["deep_fcf_bonus"], errors="coerce").fillna(0) > 0).sum()) <= 5
