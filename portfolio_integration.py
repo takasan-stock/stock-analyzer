@@ -182,12 +182,24 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
     P1: Entry READY, or Opportunity >= 70
     P2: ME READY / PRIORITY WATCH / ACTIVE, or WAIT + Opportunity >= 55
     P3: ME WATCH, Opportunity 40-54, or qualifying Deep FCF
-    P4: everything else
+    P4: evaluated but low-priority
+    未評価: no ME / Deep FCF / Entry / Opportunity data
     """
     entry = str(row.get("Entry状態", "") or "").upper()
     me = str(row.get("ME状態", "") or "").upper()
     deep = str(row.get("Deep FCF", "") or "").upper()
-    opp = _parse_opportunity(row.get("Opportunity"))
+    opp_text = str(row.get("Opportunity", "") or "").strip()
+    opp = _parse_opportunity(opp_text)
+
+    empty_markers = {"", "—", "UNAVAILABLE", "NONE", "NAN"}
+    has_any_signal_data = (
+        entry not in empty_markers
+        or me not in empty_markers
+        or deep not in empty_markers
+        or opp_text.upper() not in empty_markers
+    )
+    if not has_any_signal_data:
+        return "⚪ 未評価", 5
 
     if "READY" in entry:
         return "🔴 P1 今すぐ確認", 1

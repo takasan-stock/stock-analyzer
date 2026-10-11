@@ -3441,12 +3441,14 @@ with tab1:
                         "🟠 P2 優先監視",
                         "🟡 P3 通常監視",
                         "⚪ P4 待機",
+                        "⚪ 未評価",
                     ],
                     default=[
                         "🔴 P1 今すぐ確認",
                         "🟠 P2 優先監視",
                         "🟡 P3 通常監視",
                         "⚪ P4 待機",
+                        "⚪ 未評価",
                     ],
                     key="portfolio_priority_filter",
                 )
@@ -3495,11 +3497,12 @@ with tab1:
                     ascending=[True, True],
                     na_position="last",
                 )
-            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns(5)
             _pc1.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
             _pc2.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
             _pc3.metric("🟡 P3 通常監視", int(_priority_counts.get("🟡 P3 通常監視", 0)))
             _pc4.metric("⚪ P4 待機", int(_priority_counts.get("⚪ P4 待機", 0)))
+            _pc5.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
 
             _display_df = display_portfolio_dataframe(
                 _overlay_df.drop(columns=["_priority_rank"], errors="ignore")
@@ -3530,6 +3533,7 @@ with tab1:
             st.caption(
                 "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity は"
                 "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
+                " ⚪ 未評価は、ME / Deep FCF / Entry / Opportunity の判定データがまだ無い銘柄です。"
                 " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
             )
 

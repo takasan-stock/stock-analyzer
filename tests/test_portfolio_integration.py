@@ -145,10 +145,10 @@ class PortfolioIntegrationTests(unittest.TestCase):
                 "🔴 P1 今すぐ確認",
                 "🟠 P2 優先監視",
                 "🟡 P3 通常監視",
-                "⚪ P4 待機",
+                "⚪ 未評価",
             ],
         )
-        self.assertEqual(list(out["_priority_rank"]), [1, 2, 3, 4])
+        self.assertEqual(list(out["_priority_rank"]), [1, 2, 3, 5])
         self.assertEqual(list(out["Opportunity"]), ["A 82", "B 61", "—", "—"])
 
     def test_apply_priority_adds_columns_to_plain_portfolio(self):
@@ -163,7 +163,8 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         self.assertIn("今日の優先度", out.columns)
         self.assertIn("_priority_rank", out.columns)
-        self.assertEqual(list(out["今日の優先度"]), ["⚪ P4 待機", "⚪ P4 待機"])
+        self.assertEqual(list(out["今日の優先度"]), ["⚪ 未評価", "⚪ 未評価"])
+        self.assertEqual(list(out["_priority_rank"]), [5, 5])
 
     def test_priority_opportunity_thresholds(self):
         label, rank = portfolio_priority_label(
@@ -187,6 +188,17 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual((label, rank), ("🟠 P2 優先監視", 2))
 
     def test_wait_with_low_opportunity_stays_p4(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "🟡 WAIT",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "C 29",
+            }
+        )
+        self.assertEqual((label, rank), ("⚪ P4 待機", 4))
+
+    def test_low_signal_but_evaluated_name_is_p4(self):
         label, rank = portfolio_priority_label(
             {
                 "Entry状態": "🟡 WAIT",
