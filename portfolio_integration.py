@@ -89,6 +89,16 @@ def baseline_me_display_label(value: Any) -> str:
     return BASELINE_ME_DISPLAY.get(text, f"⚪ {str(value).strip()}")
 
 
+def is_p3_baseline_candidate(value: Any) -> bool:
+    """True only for reliable Baseline Score 60-64 (P3 threshold is 65)."""
+    text = str(value or "").strip()
+    if not text or text == "—" or "LOW COVERAGE" in text.upper():
+        return False
+
+    score = _parse_opportunity(text)
+    return score is not None and 60 <= score < 65
+
+
 def baseline_score_display_label(value: Any) -> str:
     text = str(value or "").strip()
     if not text or text == "—":
@@ -235,6 +245,7 @@ def build_portfolio_signal_overlay(
     out["Baseline Score"] = out["_ticker_norm"].map(baseline_score_map).fillna("—")
     out["Baseline ME表示"] = out["Baseline ME"].map(baseline_me_display_label)
     out["Baseline Score表示"] = out["Baseline Score"].map(baseline_score_display_label)
+    out["P3候補"] = out["Baseline Score"].map(is_p3_baseline_candidate)
 
     me_watch_mask = (
         out["_ticker_norm"].isin(watch_tickers)
