@@ -12,10 +12,20 @@ from portfolio_quality import normalize_ticker_code
 
 
 ME_PATH = "data/multiple_expansion/me_screener_latest.csv"
+ME_UNIVERSE_PATH = "data/multiple_expansion/me_universe_snapshot.csv"
 ENTRY_VALIDATION_PATH = "data/entry_hunter_validation_status.json"
 
 
 def load_me_screener(path: str = ME_PATH) -> pd.DataFrame:
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype={"ticker": str})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def load_me_universe_snapshot(path: str = ME_UNIVERSE_PATH) -> pd.DataFrame:
     try:
         if os.path.exists(path):
             return pd.read_csv(path, dtype={"ticker": str})
@@ -67,6 +77,7 @@ def build_portfolio_signal_overlay(
     portfolio: pd.DataFrame | None,
     me_screener: pd.DataFrame | None,
     entry_validation: dict[str, Any] | None,
+    me_universe: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Add read-only derived columns to portfolio rows.
@@ -76,6 +87,8 @@ def build_portfolio_signal_overlay(
       - Deep FCF
       - Entry状態
       - Opportunity
+      - Baseline ME
+      - Baseline Score
     """
     if portfolio is None:
         return pd.DataFrame()
@@ -116,6 +129,38 @@ def build_portfolio_signal_overlay(
             except (TypeError, ValueError):
                 deep_map[ticker] = "—"
 
+    baseline_state_map: dict[str, str] = {}
+    baseline_score_map: dict[str, str] = {}
+    if me_universe is not None and not me_universe.empty and "ticker" in me_universe.columns:
+        universe = me_universe.copy()
+        universe["ticker"] = universe["ticker"].map(normalize_ticker_code)
+        if "trade_date" in universe.columns:
+            universe["trade_date"] = pd.to_datetime(
+                universe["trade_date"], errors="coerce"
+            )
+            latest_universe_date = universe["trade_date"].max()
+            if pd.notna(latest_universe_date):
+                universe = universe[
+                    universe["trade_date"] == latest_universe_date
+                ].copy()
+
+        universe = universe.drop_duplicates("ticker", keep="first")
+        for _, row in universe.iterrows():
+            ticker = normalize_ticker_code(row.get("ticker"))
+            if not ticker:
+                continue
+            state = str(row.get("prefilter_state", "") or "").strip()
+            score = pd.to_numeric(
+                pd.Series([row.get("coarse_score")]),
+                errors="coerce",
+            ).iloc[0]
+            eligible = bool(row.get("eligible", False))
+            if state:
+                baseline_state_map[ticker] = state
+            if pd.notna(score):
+                suffix = "" if eligible else " / LOW COVERAGE"
+                baseline_score_map[ticker] = f"{float(score):.0f}{suffix}"
+
     validation = entry_validation or {}
     entry_map: dict[str, str] = {}
     opp_map: dict[str, str] = {}
@@ -148,6 +193,8 @@ def build_portfolio_signal_overlay(
     out["Deep FCF"] = out["_ticker_norm"].map(deep_map).fillna("—")
     out["Entry状態"] = out["_ticker_norm"].map(entry_map).fillna("—")
     out["Opportunity"] = out["_ticker_norm"].map(opp_map).fillna("—")
+    out["Baseline ME"] = out["_ticker_norm"].map(baseline_state_map).fillna("—")
+    out["Baseline Score"] = out["_ticker_norm"].map(baseline_score_map).fillna("—")
 
     me_watch_mask = (
         out["_ticker_norm"].isin(watch_tickers)
@@ -189,7 +236,10 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
     me = str(row.get("ME状態", "") or "").upper()
     deep = str(row.get("Deep FCF", "") or "").upper()
     opp_text = str(row.get("Opportunity", "") or "").strip()
+    baseline_state = str(row.get("Baseline ME", "") or "").upper()
+    baseline_score_text = str(row.get("Baseline Score", "") or "").strip()
     opp = _parse_opportunity(opp_text)
+    baseline_score = _parse_opportunity(baseline_score_text)
 
     empty_markers = {"", "—", "UNAVAILABLE", "NONE", "NAN"}
     has_any_signal_data = (
@@ -197,6 +247,8 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
         or me not in empty_markers
         or deep not in empty_markers
         or opp_text.upper() not in empty_markers
+        or baseline_state not in empty_markers
+        or baseline_score_text.upper() not in empty_markers
     )
     if not has_any_signal_data:
         return "⚪ 未評価", 5
@@ -220,6 +272,14 @@ def portfolio_priority_label(row: pd.Series | dict[str, Any]) -> tuple[str, int]
         return "🟡 P3 通常監視", 3
 
     if deep != "—" and any(tag in deep for tag in ("STRONG", "GOOD", "SOLID", "PASS")):
+        return "🟡 P3 通常監視", 3
+
+    # Baseline ME is lightweight all-market screening only.
+    # It can raise visibility to P3 but must never create P1/P2.
+    if baseline_state in {"RE-READY PROXY", "EXPANDING PROXY", "RE-ACCEL WATCH"}:
+        return "🟡 P3 通常監視", 3
+
+    if baseline_score is not None and baseline_score >= 65:
         return "🟡 P3 通常監視", 3
 
     return "⚪ P4 待機", 4
