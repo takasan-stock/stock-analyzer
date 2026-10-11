@@ -34,6 +34,7 @@ from portfolio_quality import (
     normalize_ticker_code,
 )
 from portfolio_integration import (
+    apply_portfolio_priority,
     build_portfolio_signal_overlay,
     load_entry_validation,
     load_me_screener,
@@ -3465,6 +3466,25 @@ with tab1:
                 load_me_screener(),
                 load_entry_validation(),
             )
+
+            # Defensive fallback:
+            # Imported helper modules can remain cached across a hot rerun on
+            # Streamlit Cloud. Ensure priority columns exist in dashboard_app
+            # before filtering/rendering.
+            if (
+                "今日の優先度" not in _overlay_df.columns
+                or "_priority_rank" not in _overlay_df.columns
+            ):
+                _overlay_df = apply_portfolio_priority(_overlay_df)
+
+            # Summary cards represent the whole search/status-filtered universe,
+            # not only the priorities currently selected in the multiselect.
+            _priority_counts = (
+                _overlay_df["今日の優先度"].value_counts().to_dict()
+                if "今日の優先度" in _overlay_df.columns
+                else {}
+            )
+
             if "今日の優先度" in _overlay_df.columns:
                 _overlay_df = _overlay_df[
                     _overlay_df["今日の優先度"].isin(priority_filter)
@@ -3475,11 +3495,6 @@ with tab1:
                     ascending=[True, True],
                     na_position="last",
                 )
-            _priority_counts = (
-                _overlay_df["今日の優先度"].value_counts().to_dict()
-                if "今日の優先度" in _overlay_df.columns
-                else {}
-            )
             _pc1, _pc2, _pc3, _pc4 = st.columns(4)
             _pc1.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
             _pc2.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
@@ -3515,6 +3530,7 @@ with tab1:
             st.caption(
                 "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity は"
                 "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
+                " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
             )
 
             st.divider()
