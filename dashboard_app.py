@@ -3440,6 +3440,25 @@ with tab1:
         # ==========================================
         else:
             # --- 検索・絞り込み（表示用） ---
+            _portfolio_priority_options = [
+                "🔴 P1 今すぐ確認",
+                "🟠 P2 優先監視",
+                "🟡 P3 通常監視",
+                "⚪ P4 待機",
+                "⚪ 未評価",
+            ]
+
+            def _set_portfolio_quick_filter(
+                priority_label: str | None = None,
+                p3_only: bool = False,
+            ) -> None:
+                st.session_state["portfolio_priority_filter"] = (
+                    [priority_label]
+                    if priority_label
+                    else list(_portfolio_priority_options)
+                )
+                st.session_state["portfolio_p3_candidate_only"] = bool(p3_only)
+
             col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
             with col_f1:
                 keyword = st.text_input("🔎 ティッカー・銘柄名で検索", "")
@@ -3453,20 +3472,8 @@ with tab1:
             with col_f3:
                 priority_filter = st.multiselect(
                     "今日の優先度",
-                    options=[
-                        "🔴 P1 今すぐ確認",
-                        "🟠 P2 優先監視",
-                        "🟡 P3 通常監視",
-                        "⚪ P4 待機",
-                        "⚪ 未評価",
-                    ],
-                    default=[
-                        "🔴 P1 今すぐ確認",
-                        "🟠 P2 優先監視",
-                        "🟡 P3 通常監視",
-                        "⚪ P4 待機",
-                        "⚪ 未評価",
-                    ],
+                    options=_portfolio_priority_options,
+                    default=_portfolio_priority_options,
                     key="portfolio_priority_filter",
                 )
                 p3_candidate_only = st.checkbox(
@@ -3480,6 +3487,14 @@ with tab1:
                     value=False,
                     key="portfolio_detail_view",
                     help="ONにすると財務指標と更新日まで表示します。通常はコンパクト表示です。",
+                )
+                st.button(
+                    "↩ 全件表示",
+                    key="portfolio_show_all",
+                    on_click=_set_portfolio_quick_filter,
+                    args=(None, False),
+                    use_container_width=True,
+                    help="優先度とP3候補の絞り込みを解除します。",
                 )
 
             view_df = df[df["ステータス"].isin(status_filter)]
@@ -3556,12 +3571,60 @@ with tab1:
                     na_position="last",
                 )
             _pc1, _pc2, _pc3, _pc4, _pc5, _pc6 = st.columns(6)
-            _pc1.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
-            _pc2.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
-            _pc3.metric("🟡 P3 通常監視", int(_priority_counts.get("🟡 P3 通常監視", 0)))
-            _pc4.metric("⚪ P4 待機", int(_priority_counts.get("⚪ P4 待機", 0)))
-            _pc5.metric("🔵 P3候補", _p3_candidate_count)
-            _pc6.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
+            with _pc1:
+                st.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
+                st.button(
+                    "表示",
+                    key="portfolio_quick_p1",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("🔴 P1 今すぐ確認", False),
+                    use_container_width=True,
+                )
+            with _pc2:
+                st.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
+                st.button(
+                    "表示",
+                    key="portfolio_quick_p2",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("🟠 P2 優先監視", False),
+                    use_container_width=True,
+                )
+            with _pc3:
+                st.metric("🟡 P3 通常監視", int(_priority_counts.get("🟡 P3 通常監視", 0)))
+                st.button(
+                    "表示",
+                    key="portfolio_quick_p3",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("🟡 P3 通常監視", False),
+                    use_container_width=True,
+                )
+            with _pc4:
+                st.metric("⚪ P4 待機", int(_priority_counts.get("⚪ P4 待機", 0)))
+                st.button(
+                    "表示",
+                    key="portfolio_quick_p4",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("⚪ P4 待機", False),
+                    use_container_width=True,
+                )
+            with _pc5:
+                st.metric("🔵 P3候補", _p3_candidate_count)
+                st.button(
+                    "表示",
+                    key="portfolio_quick_p3_candidate",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("⚪ P4 待機", True),
+                    use_container_width=True,
+                )
+            with _pc6:
+                st.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
+                st.button(
+                    "表示",
+                    key="portfolio_quick_unassessed",
+                    on_click=_set_portfolio_quick_filter,
+                    args=("⚪ 未評価", False),
+                    use_container_width=True,
+                )
 
             _display_df = display_portfolio_dataframe(
                 _overlay_df.drop(
@@ -3611,7 +3674,8 @@ with tab1:
 - **主な寄与** は、形状・流動性・価格・高値接近・出来高のうち強い要因を優先して表示します。P3候補では主因2つだけ表示します。
 - **🔵 P3候補** はP4内の補助表示で、P3へ昇格した意味ではありません。P1/P2やEntry Gateにも昇格させません。
 - **⚪ 未評価** は、これらの判定データがまだ無い銘柄です。
-- 優先度カードの件数は、検索・ステータス絞り込み後の全件を集計します。
+- 優先度カードの件数は、検索・ステータス絞り込み後の全件を集計します。各カード下の **表示** で、その区分へワンタッチ絞り込みできます。
+- **↩ 全件表示** で優先度/P3候補の絞り込みを解除できます。
 - **📊 詳細表示 OFF** は日々の確認向け、**ON** は財務指標・更新日まで確認する用途です。
                     """
                 )
