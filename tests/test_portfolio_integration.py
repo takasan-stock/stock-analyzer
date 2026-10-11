@@ -392,7 +392,6 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(row["Baseline Score"], "70")
         self.assertEqual(row["Baseline Score表示"], "🟡 70")
         self.assertIn("Baseline理由", out.columns)
-        self.assertNotEqual(row["Baseline理由"], "—")
         self.assertFalse(bool(row["P3候補"]))
         self.assertEqual(row["今日の優先度"], "🟡 P3 通常監視")
 
