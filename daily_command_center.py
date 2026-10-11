@@ -406,7 +406,7 @@ def _deep_fcf_bonus(score: Any, coverage: Any) -> float:
     deep_coverage = _num(coverage)
     if deep_score is None or deep_coverage is None:
         return 0.0
-    if deep_score <= 50.0 or deep_coverage < 0.45:
+    if deep_score <= 50.0 or deep_coverage < 0.60:
         return 0.0
 
     quality_component = min(2.5, max(0.0, (deep_score - 50.0) / 20.0))
@@ -435,7 +435,7 @@ def _apply_deep_fcf_overlay(
     deep = build_deep_fcf_top5(
         me_screener,
         limit=5,
-        min_coverage=0.45,
+        min_coverage=0.60,
     )
     if deep.empty:
         return out
