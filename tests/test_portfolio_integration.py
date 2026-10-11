@@ -4,6 +4,8 @@ import pandas as pd
 
 from portfolio_integration import (
     apply_portfolio_priority,
+    baseline_me_display_label,
+    baseline_score_display_label,
     build_portfolio_signal_overlay,
     portfolio_priority_label,
     split_news_by_age,
@@ -292,6 +294,56 @@ class PortfolioIntegrationTests(unittest.TestCase):
             }
         )
         self.assertEqual((label, rank), ("🟡 P3 通常監視", 3))
+
+    def test_baseline_display_labels_are_japanese_and_colored(self):
+        self.assertEqual(baseline_me_display_label("BASE"), "⚪ 通常")
+        self.assertEqual(
+            baseline_me_display_label("RE-ACCEL WATCH"),
+            "🟡 再加速監視",
+        )
+        self.assertEqual(
+            baseline_me_display_label("RE-READY PROXY"),
+            "🟠 再拡大準備",
+        )
+        self.assertEqual(
+            baseline_me_display_label("EXPANDING PROXY"),
+            "🟢 拡大中",
+        )
+        self.assertEqual(baseline_me_display_label("—"), "—")
+
+        self.assertEqual(baseline_score_display_label("59"), "⚪ 59")
+        self.assertEqual(baseline_score_display_label("65"), "🟡 65")
+        self.assertEqual(baseline_score_display_label("75"), "🟢 75")
+        self.assertEqual(
+            baseline_score_display_label("38 / LOW COVERAGE"),
+            "⚠ 38｜低カバレッジ",
+        )
+
+    def test_overlay_keeps_raw_baseline_for_priority_and_adds_display_columns(self):
+        portfolio = pd.DataFrame([{"ティッカー": "1111", "銘柄名": "Alpha"}])
+        universe = pd.DataFrame(
+            [{
+                "ticker": "1111",
+                "trade_date": "2026-10-09",
+                "prefilter_state": "RE-ACCEL WATCH",
+                "coarse_score": 70.0,
+                "eligible": True,
+            }]
+        )
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            pd.DataFrame(),
+            {},
+            universe,
+        )
+
+        row = out.iloc[0]
+        self.assertEqual(row["Baseline ME"], "RE-ACCEL WATCH")
+        self.assertEqual(row["Baseline ME表示"], "🟡 再加速監視")
+        self.assertEqual(row["Baseline Score"], "70")
+        self.assertEqual(row["Baseline Score表示"], "🟡 70")
+        self.assertEqual(row["今日の優先度"], "🟡 P3 通常監視")
 
     def test_me_ready_is_p2_without_opportunity_score(self):
         label, rank = portfolio_priority_label(
