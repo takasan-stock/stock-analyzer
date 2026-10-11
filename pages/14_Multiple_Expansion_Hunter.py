@@ -6,6 +6,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from mex_backtest import (
+    build_mex_event_study,
+    monotonicity_report,
+    summarize_mex_event_study,
+)
+
 
 st.set_page_config(
     page_title="Multiple Expansion Hunter",
@@ -408,6 +414,44 @@ if not history.empty and "ticker" in history.columns:
                 b=20,
             ),
         )
+        if "ignition_event" in hist.columns:
+            ignition = hist[
+                hist["ignition_event"].fillna(False).astype(bool)
+            ]
+            if not ignition.empty and "mlp_c_core" in ignition.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=ignition["trade_date"],
+                        y=pd.to_numeric(
+                            ignition["mlp_c_core"],
+                            errors="coerce",
+                        ),
+                        mode="markers",
+                        marker=dict(symbol="star", size=14),
+                        name="IGNITION",
+                        yaxis="y2",
+                    )
+                )
+
+        if "exhaustion_event" in hist.columns:
+            exhaustion = hist[
+                hist["exhaustion_event"].fillna(False).astype(bool)
+            ]
+            if not exhaustion.empty and "mlp_c_core" in exhaustion.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=exhaustion["trade_date"],
+                        y=pd.to_numeric(
+                            exhaustion["mlp_c_core"],
+                            errors="coerce",
+                        ),
+                        mode="markers",
+                        marker=dict(symbol="x", size=12),
+                        name="EXHAUSTION",
+                        yaxis="y2",
+                    )
+                )
+
         st.plotly_chart(
             fig,
             use_container_width=True,
@@ -458,4 +502,132 @@ with right:
 st.caption(
     "MEXは買い推奨ではなく『再評価開始を調査する優先順位』です。"
     "実売買はEntry Hunter / Pre-Tradeと組み合わせて確認します。"
+)
+
+
+st.divider()
+st.markdown("## MEX Event Study / Backtest")
+
+if history.empty:
+    st.caption("履歴データが生成されると、IGNITION後の20/60/120/250営業日を検証します。")
+else:
+    bt_history = history.copy()
+    if "trade_date" in bt_history.columns:
+        bt_history["trade_date"] = pd.to_datetime(
+            bt_history["trade_date"],
+            errors="coerce",
+        )
+
+    try:
+        events = build_mex_event_study(
+            bt_history,
+            horizons=(20, 60, 120, 250),
+        )
+    except Exception as exc:
+        events = pd.DataFrame()
+        st.warning(f"バックテストを計算できません: {exc}")
+
+    if events.empty:
+        st.info(
+            "完了済みのIGNITIONイベントがまだありません。"
+            "実データ履歴が蓄積するとここに将来リターン検証が表示されます。"
+        )
+    else:
+        summary = summarize_mex_event_study(
+            events,
+            horizons=(20, 60, 120, 250),
+        )
+
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("IGNITION件数", f"{len(events)}")
+        complete120 = pd.to_numeric(
+            events.get("ret_120d"),
+            errors="coerce",
+        ).dropna()
+        b2.metric("120D完了", f"{len(complete120)}")
+        median120 = complete120.median() if not complete120.empty else None
+        b3.metric(
+            "120D中央値",
+            "—" if median120 is None or pd.isna(median120) else f"{median120 * 100:+.1f}%",
+        )
+
+        mono = monotonicity_report(
+            summary,
+            horizon=120,
+            metric="median_excess",
+        )
+        ratio = mono.get("ratio")
+        b4.metric(
+            "Score順序性",
+            (
+                mono.get("status", "—")
+                if ratio is None
+                else f"{mono.get('status')} / {ratio * 100:.0f}%"
+            ),
+        )
+
+        st.caption(
+            "Score順序性は、MEX高得点帯ほど120日TOPIX超過リターン中央値が"
+            "高い順序になっているかを確認します。"
+        )
+
+        show_summary = summary.copy()
+        pct_cols = [
+            "mean_return",
+            "median_return",
+            "positive_hit_rate",
+            "mean_excess",
+            "median_excess",
+            "topix_hit_rate",
+            "median_mfe",
+            "median_mae",
+            "median_max_dd",
+        ]
+        for col in pct_cols:
+            if col in show_summary.columns:
+                show_summary[col] = show_summary[col].map(
+                    lambda x: "—" if pd.isna(x) else f"{float(x) * 100:+.1f}%"
+                )
+
+        st.dataframe(
+            show_summary.rename(columns={
+                "mex_bucket": "MEX帯",
+                "horizon": "営業日",
+                "signals": "Signal",
+                "completed": "完了",
+                "mean_return": "平均Return",
+                "median_return": "中央値Return",
+                "positive_hit_rate": "プラス率",
+                "mean_excess": "平均TOPIX超過",
+                "median_excess": "中央値TOPIX超過",
+                "topix_hit_rate": "TOPIX勝率",
+                "median_mfe": "中央値MFE",
+                "median_mae": "中央値MAE",
+                "median_max_dd": "中央値MaxDD",
+            }),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        with st.expander("IGNITIONイベント明細"):
+            detail = events.copy()
+            for col in [
+                c for c in detail.columns
+                if c.startswith(("ret_", "excess_", "mfe_", "mae_", "max_dd_"))
+            ]:
+                detail[col] = pd.to_numeric(
+                    detail[col],
+                    errors="coerce",
+                ).map(
+                    lambda x: "—" if pd.isna(x) else f"{float(x) * 100:+.1f}%"
+                )
+            st.dataframe(
+                detail,
+                hide_index=True,
+                use_container_width=True,
+            )
+
+st.caption(
+    "バックテストは将来収益を保証するものではありません。"
+    "MEXの目的は『再評価開始を統計的に検証できる形で発見する』ことです。"
 )
