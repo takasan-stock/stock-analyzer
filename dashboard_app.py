@@ -3510,9 +3510,24 @@ with tab1:
                     _overlay_df["今日の優先度"].isin(priority_filter)
                 ].copy()
             if "_priority_rank" in _overlay_df.columns:
+                # Keep P1-P3 / unassessed ordering stable, but within P4 put
+                # names closest to the P3 baseline threshold at the top.
+                _baseline_sort = pd.to_numeric(
+                    _overlay_df.get(
+                        "Baseline Score",
+                        pd.Series(index=_overlay_df.index, dtype=object),
+                    )
+                    .astype(str)
+                    .str.extract(r"(-?\d+(?:\.\d+)?)", expand=False),
+                    errors="coerce",
+                )
+                _overlay_df["_p4_baseline_sort"] = _baseline_sort.where(
+                    _overlay_df["_priority_rank"].eq(4),
+                    -1.0,
+                )
                 _overlay_df = _overlay_df.sort_values(
-                    ["_priority_rank", "ティッカー"],
-                    ascending=[True, True],
+                    ["_priority_rank", "_p4_baseline_sort", "ティッカー"],
+                    ascending=[True, False, True],
                     na_position="last",
                 )
             _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns(5)
@@ -3523,7 +3538,10 @@ with tab1:
             _pc5.metric("⚪ 未評価", int(_priority_counts.get("⚪ 未評価", 0)))
 
             _display_df = display_portfolio_dataframe(
-                _overlay_df.drop(columns=["_priority_rank"], errors="ignore")
+                _overlay_df.drop(
+                    columns=["_priority_rank", "_p4_baseline_sort"],
+                    errors="ignore",
+                )
             )
             _display_df.insert(
                 0, "📰",
