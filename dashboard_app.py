@@ -3475,6 +3475,17 @@ with tab1:
                     ascending=[True, True],
                     na_position="last",
                 )
+            _priority_counts = (
+                _overlay_df["今日の優先度"].value_counts().to_dict()
+                if "今日の優先度" in _overlay_df.columns
+                else {}
+            )
+            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            _pc1.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
+            _pc2.metric("🟠 P2 優先監視", int(_priority_counts.get("🟠 P2 優先監視", 0)))
+            _pc3.metric("🟡 P3 通常監視", int(_priority_counts.get("🟡 P3 通常監視", 0)))
+            _pc4.metric("⚪ P4 待機", int(_priority_counts.get("⚪ P4 待機", 0)))
+
             _display_df = display_portfolio_dataframe(
                 _overlay_df.drop(columns=["_priority_rank"], errors="ignore")
             )
