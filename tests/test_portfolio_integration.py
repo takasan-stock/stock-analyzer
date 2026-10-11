@@ -230,6 +230,69 @@ class PortfolioIntegrationTests(unittest.TestCase):
         )
         self.assertEqual((label, rank), ("🟡 P3 通常監視", 3))
 
+    def test_baseline_me_reduces_unassessed_without_opening_high_priority(self):
+        portfolio = pd.DataFrame(
+            [
+                {"ティッカー": "1111", "銘柄名": "Alpha"},
+                {"ティッカー": "2222", "銘柄名": "Beta"},
+                {"ティッカー": "3333", "銘柄名": "Gamma"},
+            ]
+        )
+        universe = pd.DataFrame(
+            [
+                {
+                    "ticker": "1111",
+                    "trade_date": "2026-10-09",
+                    "prefilter_state": "RE-READY PROXY",
+                    "coarse_score": 72.0,
+                    "eligible": True,
+                },
+                {
+                    "ticker": "2222",
+                    "trade_date": "2026-10-09",
+                    "prefilter_state": "BASE",
+                    "coarse_score": 58.0,
+                    "eligible": True,
+                },
+            ]
+        )
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            pd.DataFrame(),
+            {},
+            universe,
+        )
+
+        alpha = out[out["ティッカー"] == "1111"].iloc[0]
+        beta = out[out["ティッカー"] == "2222"].iloc[0]
+        gamma = out[out["ティッカー"] == "3333"].iloc[0]
+
+        self.assertEqual(alpha["Baseline ME"], "RE-READY PROXY")
+        self.assertEqual(alpha["今日の優先度"], "🟡 P3 通常監視")
+        self.assertEqual(alpha["_priority_rank"], 3)
+
+        self.assertEqual(beta["Baseline ME"], "BASE")
+        self.assertEqual(beta["今日の優先度"], "⚪ P4 待機")
+        self.assertEqual(beta["_priority_rank"], 4)
+
+        self.assertEqual(gamma["Baseline ME"], "—")
+        self.assertEqual(gamma["今日の優先度"], "⚪ 未評価")
+        self.assertEqual(gamma["_priority_rank"], 5)
+
+    def test_baseline_score_alone_never_creates_p1_or_p2(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "—",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "—",
+                "Baseline ME": "BASE",
+                "Baseline Score": "88",
+            }
+        )
+        self.assertEqual((label, rank), ("🟡 P3 通常監視", 3))
+
     def test_me_ready_is_p2_without_opportunity_score(self):
         label, rank = portfolio_priority_label(
             {
