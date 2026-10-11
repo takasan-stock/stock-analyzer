@@ -3537,7 +3537,7 @@ with tab1:
             _important_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
                 "ME状態", "Deep FCF", "Entry状態", "Opportunity",
-                "Baseline ME", "Baseline Score",
+                "Baseline ME表示", "Baseline Score表示",
                 "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
                 "更新日",
             ]
@@ -3552,7 +3552,10 @@ with tab1:
             st.caption(
                 "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME は"
                 "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
-                " Baseline ME は全東証の軽量スクリーニングで、P1/P2やEntry Gateには昇格させません。"
+                " Baseline ME は全東証の軽量スクリーニングです。"
+                " 表示は ⚪通常 / 🟡再加速監視 / 🟠再拡大準備 / 🟢拡大中。"
+                " Baseline Score は 🟡65以上が注目帯、🟢75以上が強めです。"
+                " P1/P2やEntry Gateには昇格させません。"
                 " ⚪ 未評価は、これらの判定データがまだ無い銘柄です。"
                 " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
             )
