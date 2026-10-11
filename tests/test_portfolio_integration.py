@@ -4,6 +4,7 @@ import pandas as pd
 
 from portfolio_integration import (
     apply_portfolio_priority,
+    baseline_contribution_display,
     baseline_me_display_label,
     baseline_reason_label,
     baseline_score_display_label,
@@ -344,13 +345,27 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         label = baseline_reason_label(row)
 
-        self.assertIn("形状◎", label)
-        self.assertIn("流動性◎", label)
-        self.assertIn("高値接近◎", label)
-        self.assertEqual(len(label.split(" / ")), 3)
+        parts = label.split(" / ")
+        self.assertEqual(len(parts), 3)
+        self.assertTrue(parts[0].endswith("◎"))
+        self.assertTrue(parts[1].endswith("◎"))
 
     def test_baseline_reason_label_handles_missing_data(self):
         self.assertEqual(baseline_reason_label({}), "—")
+
+    def test_p3_candidate_contribution_display_is_compact(self):
+        label = baseline_contribution_display(
+            "63",
+            "流動性◎ / 高値接近○ / 形状△",
+        )
+        self.assertEqual(label, "🔵 あと2｜流動性◎・高値接近○")
+
+    def test_non_candidate_contribution_display_keeps_reasons(self):
+        label = baseline_contribution_display(
+            "59",
+            "流動性◎ / 高値接近○ / 形状△",
+        )
+        self.assertEqual(label, "流動性◎ / 高値接近○ / 形状△")
 
     def test_p3_candidate_flag_matches_reliable_60_to_64_band(self):
         self.assertFalse(is_p3_baseline_candidate("59"))
