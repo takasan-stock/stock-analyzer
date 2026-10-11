@@ -3,7 +3,9 @@ import unittest
 import pandas as pd
 
 from portfolio_integration import (
+    apply_portfolio_priority,
     build_portfolio_signal_overlay,
+    portfolio_priority_label,
     split_news_by_age,
 )
 
@@ -104,3 +106,73 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_priority_labels_do_not_change_trading_scores(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "ティッカー": "1111",
+                    "Entry状態": "🟢 ENTRY READY",
+                    "ME状態": "READY",
+                    "Deep FCF": "80 STRONG",
+                    "Opportunity": "A 82",
+                },
+                {
+                    "ティッカー": "2222",
+                    "Entry状態": "🟡 WAIT",
+                    "ME状態": "WATCH",
+                    "Deep FCF": "—",
+                    "Opportunity": "B 61",
+                },
+                {
+                    "ティッカー": "3333",
+                    "Entry状態": "—",
+                    "ME状態": "—",
+                    "Deep FCF": "72 GOOD",
+                    "Opportunity": "—",
+                },
+                {
+                    "ティッカー": "4444",
+                    "Entry状態": "—",
+                    "ME状態": "—",
+                    "Deep FCF": "—",
+                    "Opportunity": "—",
+                },
+            ]
+        )
+
+        out = apply_portfolio_priority(frame)
+
+        self.assertEqual(
+            list(out["今日の優先度"]),
+            [
+                "🔴 P1 今すぐ確認",
+                "🟠 P2 優先監視",
+                "🟡 P3 通常監視",
+                "⚪ P4 待機",
+            ],
+        )
+        self.assertEqual(list(out["_priority_rank"]), [1, 2, 3, 4])
+        self.assertEqual(list(out["Opportunity"]), ["A 82", "B 61", "—", "—"])
+
+    def test_priority_opportunity_thresholds(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "—",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "A 72",
+            }
+        )
+        self.assertEqual((label, rank), ("🔴 P1 今すぐ確認", 1))
+
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "—",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "B 58",
+            }
+        )
+        self.assertEqual((label, rank), ("🟠 P2 優先監視", 2))
