@@ -2090,6 +2090,54 @@ def load_entries_smart(ticker: str, kind: str, github_config: dict | None) -> li
 
     return merge_report_entries(local_entries, remote_full)
 
+
+def read_entry_raw(ticker_code: str, kind: str, key: str) -> str:
+    """Read the serialized on-disk entry including invisible metadata."""
+    fpath = entry_filepath(ticker_code, kind, key)
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def delete_entry_smart(
+    ticker_code: str,
+    kind: str,
+    entry: dict,
+    github_config: dict | None,
+) -> tuple[bool, str]:
+    """
+    Delete remote first when the entry exists on GitHub.
+
+    If remote deletion fails, keep the local copy so the report does not
+    disappear and then unexpectedly reappear on the next refresh.
+    """
+    key = str(entry.get("key", "") or "")
+    if not key:
+        return False, "エントリキーが不正です。"
+
+    remote_path = str(entry.get("_path", "") or "")
+    remote_sha = str(entry.get("_sha", "") or "")
+
+    if github_config and remote_path and remote_sha:
+        ok, msg = github_delete_file(
+            github_config["token"],
+            github_config["repo"],
+            github_config["branch"],
+            remote_path,
+            remote_sha,
+            f"Delete report: {remote_path}",
+        )
+        if not ok:
+            return False, f"GitHub削除に失敗したためローカルは残しました: {msg}"
+
+        github_fetch_entries.clear()
+        github_fetch_content.clear()
+
+    delete_entry(ticker_code, kind, key)
+    return True, "削除しました。"
+
 # st.session_state に持たせることで、フォーム送信などの再実行時にも
 # 編集中のデータが消えないようにする
 if "df" not in st.session_state:
