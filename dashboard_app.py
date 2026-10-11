@@ -3471,8 +3471,8 @@ with tab1:
                 ].copy()
             if "_priority_rank" in _overlay_df.columns:
                 _overlay_df = _overlay_df.sort_values(
-                    ["_priority_rank", "Opportunity", "ティッカー"],
-                    ascending=[True, False, True],
+                    ["_priority_rank", "ティッカー"],
+                    ascending=[True, True],
                     na_position="last",
                 )
             _display_df = display_portfolio_dataframe(
@@ -3483,7 +3483,7 @@ with tab1:
                 [
                     ("🔴" + str(count_fresh_news(_nb_t.get(str(t), []))))
                     if count_fresh_news(_nb_t.get(str(t), [])) > 0 else ""
-                    for t in view_df["ティッカー"]
+                    for t in _overlay_df["ティッカー"]
                 ]
             )
 
