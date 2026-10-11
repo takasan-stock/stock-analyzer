@@ -21,7 +21,7 @@ from daily_command_center import (
     tradingview_url,
 )
 from operational_health import build_operational_health, health_icon
-from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_strength
+from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_strength, deep_fcf_valuation_label
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -2102,11 +2102,19 @@ if _deep_fcf_frame.empty:
 else:
     _fcf_rows = list(_deep_fcf_frame.iterrows())
     for _row_start in range(0, len(_fcf_rows), 3):
-        _fcf_cols = st.columns(3)
-        for _local_i, (_, _fcf_row) in enumerate(
-            _fcf_rows[_row_start : _row_start + 3]
-        ):
-            with _fcf_cols[_local_i]:
+        _chunk = _fcf_rows[_row_start : _row_start + 3]
+        if len(_chunk) == 1:
+            _fcf_cols = st.columns([1, 2, 1])
+            _column_map = [1]
+        elif len(_chunk) == 2:
+            _fcf_cols = st.columns([1, 1, 1])
+            _column_map = [0, 1]
+        else:
+            _fcf_cols = st.columns(3)
+            _column_map = [0, 1, 2]
+
+        for _local_i, (_, _fcf_row) in enumerate(_chunk):
+            with _fcf_cols[_column_map[_local_i]]:
                 _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
                 _coverage = (
                     float(_fcf_row.get("deep_fcf_coverage", 0.0) or 0.0) * 100.0
@@ -2139,9 +2147,11 @@ else:
                 _p_fcf_text = (
                     "—" if pd.isna(_p_fcf) else f"{float(_p_fcf):.1f}x"
                 )
+                _valuation_label = deep_fcf_valuation_label(_p_fcf)
+                st.caption(f"{_valuation_label}｜P/FCF {_p_fcf_text}")
                 st.caption(
                     f"{_gate}  \n"
-                    f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}｜P/FCF {_p_fcf_text}"
+                    f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
                 )
 
                 st.link_button(
@@ -2177,8 +2187,8 @@ else:
                     )
                     st.session_state["pretrade_opportunity_reason"] = (
                         f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%｜"
-                        f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}｜"
-                        f"P/FCF {_p_fcf_text}"
+                        f"{_valuation_label}｜P/FCF {_p_fcf_text}｜"
+                        f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
                     )
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 

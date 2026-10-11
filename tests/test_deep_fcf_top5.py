@@ -1,6 +1,6 @@
 import pandas as pd
 
-from deep_fcf_top5 import build_deep_fcf_top5
+from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_valuation_label
 
 
 def _row(**kwargs):
@@ -209,3 +209,12 @@ def test_deep_fcf_does_not_pad_to_five_names():
 
     assert len(out) == 1
     assert out.iloc[0]["ticker"] == "9101"
+
+
+
+def test_deep_fcf_valuation_labels():
+    assert deep_fcf_valuation_label(None) == "⚪ VALUATION N/A"
+    assert deep_fcf_valuation_label(15) == "🟢 VALUATION LOW"
+    assert deep_fcf_valuation_label(30) == "🟡 VALUATION MID"
+    assert deep_fcf_valuation_label(50) == "🟠 VALUATION HIGH"
+    assert deep_fcf_valuation_label(99.2) == "🔴 VALUATION VERY HIGH"

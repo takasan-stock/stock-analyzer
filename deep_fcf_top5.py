@@ -46,6 +46,20 @@ def deep_fcf_strength(score: Any) -> str:
     return "BELOW BAR"
 
 
+def deep_fcf_valuation_label(p_fcf: Any) -> str:
+    """Classify P/FCF as a caution label, not a sector-adjusted fair-value call."""
+    value = _num(p_fcf)
+    if value is None or value <= 0:
+        return "⚪ VALUATION N/A"
+    if value <= 20:
+        return "🟢 VALUATION LOW"
+    if value <= 40:
+        return "🟡 VALUATION MID"
+    if value <= 60:
+        return "🟠 VALUATION HIGH"
+    return "🔴 VALUATION VERY HIGH"
+
+
 def _num(value: Any) -> float | None:
     try:
         if value is None or pd.isna(value):
