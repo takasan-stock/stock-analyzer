@@ -101,7 +101,7 @@ def baseline_score_display_label(value: Any) -> str:
 
     score_text = f"{score:.0f}"
     if low_coverage:
-        return f"⚠ {score_text}｜低カバレッジ"
+        return f"⚠ {score_text} 低信頼"
     if score >= 75:
         return f"🟢 {score_text}"
     if score >= 65:
