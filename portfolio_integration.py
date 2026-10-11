@@ -155,8 +155,16 @@ def _baseline_component_scores(row: pd.Series | dict[str, Any]) -> dict[str, flo
     return {k: v for k, v in scores.items() if v is not None}
 
 
+def _baseline_strength_mark(raw_score: float) -> tuple[str, int]:
+    if raw_score >= 75:
+        return "◎", 3
+    if raw_score >= 60:
+        return "○", 2
+    return "△", 1
+
+
 def baseline_reason_label(row: pd.Series | dict[str, Any]) -> str:
-    """Explain the strongest Baseline Score drivers without changing the score."""
+    """Explain strong Baseline drivers first, then weighted contribution."""
     scores = _baseline_component_scores(row)
     if not scores:
         return "—"
@@ -169,16 +177,42 @@ def baseline_reason_label(row: pd.Series | dict[str, Any]) -> str:
         "出来高": scores.get("出来高", 0.0) * 0.10,
     }
     ordered = sorted(
-        ((name, weighted[name], scores[name]) for name in scores),
-        key=lambda x: (x[1], x[2]),
+        (
+            (
+                name,
+                weighted[name],
+                scores[name],
+                _baseline_strength_mark(scores[name]),
+            )
+            for name in scores
+        ),
+        key=lambda x: (x[3][1], x[1], x[2]),
         reverse=True,
     )
 
     labels = []
-    for name, _contrib, raw_score in ordered[:3]:
-        mark = "◎" if raw_score >= 75 else "○" if raw_score >= 60 else "△"
-        labels.append(f"{name}{mark}")
+    for name, _contrib, raw_score, mark_info in ordered[:3]:
+        labels.append(f"{name}{mark_info[0]}")
     return " / ".join(labels)
+
+
+def baseline_contribution_display(
+    baseline_score: Any,
+    reason: Any,
+) -> str:
+    """Compact display: P3 candidates show distance + two strongest drivers."""
+    reason_text = str(reason or "").strip()
+    if not reason_text or reason_text == "—":
+        return "—"
+
+    score_text = str(baseline_score or "").strip()
+    if is_p3_baseline_candidate(score_text):
+        score = _parse_opportunity(score_text)
+        distance = 65 - int(round(score)) if score is not None else 0
+        top_two = "・".join(reason_text.split(" / ")[:2])
+        return f"🔵 あと{max(0, distance)}｜{top_two}"
+
+    return reason_text
 
 def build_portfolio_signal_overlay(
     portfolio: pd.DataFrame | None,
@@ -239,6 +273,7 @@ def build_portfolio_signal_overlay(
     baseline_state_map: dict[str, str] = {}
     baseline_score_map: dict[str, str] = {}
     baseline_reason_map: dict[str, str] = {}
+    baseline_contribution_map: dict[str, str] = {}
     if me_universe is not None and not me_universe.empty and "ticker" in me_universe.columns:
         universe = me_universe.copy()
         universe["ticker"] = universe["ticker"].map(normalize_ticker_code)
@@ -268,7 +303,13 @@ def build_portfolio_signal_overlay(
             if pd.notna(score):
                 suffix = "" if eligible else " / LOW COVERAGE"
                 baseline_score_map[ticker] = f"{float(score):.0f}{suffix}"
-            baseline_reason_map[ticker] = baseline_reason_label(row)
+            reason = baseline_reason_label(row)
+            baseline_reason_map[ticker] = reason
+            score_text = baseline_score_map.get(ticker, "—")
+            baseline_contribution_map[ticker] = baseline_contribution_display(
+                score_text,
+                reason,
+            )
 
     validation = entry_validation or {}
     entry_map: dict[str, str] = {}
@@ -305,6 +346,7 @@ def build_portfolio_signal_overlay(
     out["Baseline ME"] = out["_ticker_norm"].map(baseline_state_map).fillna("—")
     out["Baseline Score"] = out["_ticker_norm"].map(baseline_score_map).fillna("—")
     out["Baseline理由"] = out["_ticker_norm"].map(baseline_reason_map).fillna("—")
+    out["主な寄与"] = out["_ticker_norm"].map(baseline_contribution_map).fillna("—")
     out["Baseline ME表示"] = out["Baseline ME"].map(baseline_me_display_label)
     out["Baseline Score表示"] = out["Baseline Score"].map(baseline_score_display_label)
     out["P3候補"] = out["Baseline Score"].map(is_p3_baseline_candidate)
