@@ -112,3 +112,38 @@ def test_health_alerts_when_live_entry_hunter_has_not_updated_today(tmp_path):
 
     assert out["overall"] == "ALERT"
     assert out["rows"][2]["status"] == "STALE"
+
+
+
+def test_health_normalizes_legacy_non_business_validation_date(tmp_path):
+    me_dir = tmp_path / "multiple_expansion"
+    _write_csv(
+        me_dir / "me_screener_latest.csv",
+        [{"ticker": "2670", "trade_date": "2026-10-09"}],
+    )
+    _write_json(
+        me_dir / "me_screener_freshness_status.json",
+        {"status": "FRESH", "stale": False},
+    )
+    _write_json(
+        tmp_path / "entry_hunter_validation_status.json",
+        {
+            "run_at": "2026-10-09T18:00:00+09:00",
+            "validation_as_of": "2026-10-11T09:00:00",
+            "me_promoted_count": 0,
+            "me_watch_candidates": 1,
+        },
+    )
+    _write_json(
+        tmp_path / "short_cover_entry_status.json",
+        {"run_at": "2026-10-09T10:30:00+09:00"},
+    )
+
+    out = build_operational_health(
+        tmp_path,
+        now="2026-10-10T18:00:00+09:00",
+    )
+
+    assert out["rows"][1]["status"] == "OK"
+    assert "2026-10-13" in out["rows"][1]["detail"]
+    assert "保存値 2026-10-11" in out["rows"][1]["detail"]
