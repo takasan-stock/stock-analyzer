@@ -3476,18 +3476,25 @@ with tab1:
                     default=_portfolio_priority_options,
                     key="portfolio_priority_filter",
                 )
+
+            ctrl_spacer, ctrl_p3, ctrl_detail, ctrl_reset = st.columns([2, 1, 1, 1])
+            with ctrl_spacer:
+                st.caption("表示オプション")
+            with ctrl_p3:
                 p3_candidate_only = st.checkbox(
                     "🔵 P3候補だけ表示",
                     value=False,
                     key="portfolio_p3_candidate_only",
                     help="信頼できるBaseline Score 60〜64の銘柄だけを表示します。P3への昇格ではありません。",
                 )
+            with ctrl_detail:
                 show_portfolio_details = st.toggle(
                     "📊 詳細表示",
                     value=False,
                     key="portfolio_detail_view",
                     help="ONにすると財務指標と更新日まで表示します。通常はコンパクト表示です。",
                 )
+            with ctrl_reset:
                 st.button(
                     "↩ 全件表示",
                     key="portfolio_show_all",
