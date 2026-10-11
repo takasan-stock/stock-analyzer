@@ -3475,6 +3475,12 @@ with tab1:
                     key="portfolio_p3_candidate_only",
                     help="信頼できるBaseline Score 60〜64の銘柄だけを表示します。P3への昇格ではありません。",
                 )
+                show_portfolio_details = st.toggle(
+                    "📊 詳細表示",
+                    value=False,
+                    key="portfolio_detail_view",
+                    help="ONにすると財務指標と更新日まで表示します。通常はコンパクト表示です。",
+                )
 
             view_df = df[df["ステータス"].isin(status_filter)]
             if keyword:
@@ -3572,13 +3578,16 @@ with tab1:
                 ]
             )
 
-            _important_cols = [
+            _compact_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
                 "ME状態", "Deep FCF", "Entry状態", "Opportunity",
                 "Baseline ME表示", "Baseline Score表示", "主な寄与",
+            ]
+            _detail_cols = _compact_cols + [
                 "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
                 "更新日",
             ]
+            _important_cols = _detail_cols if show_portfolio_details else _compact_cols
             _important_cols = [
                 col for col in _important_cols if col in _display_df.columns
             ]
@@ -3593,19 +3602,19 @@ with tab1:
                 width='stretch',
                 hide_index=True,
             )
-            st.caption(
-                "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME は"
-                "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
-                " Baseline ME は全東証の軽量スクリーニングです。"
-                " 表示は ⚪通常 / 🟡再加速監視 / 🟠再拡大準備 / 🟢拡大中。"
-                " Baseline Score は 🔵60〜64がP3候補、🟡65以上がP3基準、🟢75以上が強めです。"
-                " 主な寄与は、形状・流動性・価格・高値接近・出来高のうち、強さを優先して上位3項目を表示します。"
-                " P3候補では主因2つだけを表示し、P3までの距離はBaseline Score側に集約します。"
-                " 🔵P3候補はP4内の補助表示で、P3へ昇格した意味ではありません。"
-                " P1/P2やEntry Gateには昇格させません。"
-                " ⚪ 未評価は、これらの判定データがまだ無い銘柄です。"
-                " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
-            )
+            with st.expander("💡 表の見方", expanded=False):
+                st.markdown(
+                    """
+- **今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME** は画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。
+- **Baseline ME** は全東証の軽量スクリーニングです。⚪ 通常 / 🟡 再加速監視 / 🟠 再拡大準備 / 🟢 拡大中 で表示します。
+- **Baseline Score** は 🔵 60〜64 = P3候補 / 🟡 65以上 = P3基準 / 🟢 75以上 = 強め です。
+- **主な寄与** は、形状・流動性・価格・高値接近・出来高のうち強い要因を優先して表示します。P3候補では主因2つだけ表示します。
+- **🔵 P3候補** はP4内の補助表示で、P3へ昇格した意味ではありません。P1/P2やEntry Gateにも昇格させません。
+- **⚪ 未評価** は、これらの判定データがまだ無い銘柄です。
+- 優先度カードの件数は、検索・ステータス絞り込み後の全件を集計します。
+- **📊 詳細表示 OFF** は日々の確認向け、**ON** は財務指標・更新日まで確認する用途です。
+                    """
+                )
 
             st.divider()
 
