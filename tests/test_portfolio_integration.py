@@ -151,6 +151,20 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(list(out["_priority_rank"]), [1, 2, 3, 4])
         self.assertEqual(list(out["Opportunity"]), ["A 82", "B 61", "—", "—"])
 
+    def test_apply_priority_adds_columns_to_plain_portfolio(self):
+        frame = pd.DataFrame(
+            [
+                {"ティッカー": "4187", "銘柄名": "大阪有機化学工業"},
+                {"ティッカー": "9560", "銘柄名": "プログリット"},
+            ]
+        )
+
+        out = apply_portfolio_priority(frame)
+
+        self.assertIn("今日の優先度", out.columns)
+        self.assertIn("_priority_rank", out.columns)
+        self.assertEqual(list(out["今日の優先度"]), ["⚪ P4 待機", "⚪ P4 待機"])
+
     def test_priority_opportunity_thresholds(self):
         label, rank = portfolio_priority_label(
             {
