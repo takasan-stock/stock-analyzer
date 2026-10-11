@@ -33,6 +33,12 @@ from portfolio_quality import (
     normalize_portfolio_dataframe,
     normalize_ticker_code,
 )
+from portfolio_integration import (
+    build_portfolio_signal_overlay,
+    load_entry_validation,
+    load_me_screener,
+    split_news_by_age,
+)
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
@@ -3217,9 +3223,14 @@ with tab1:
                 )
                 view_df = view_df[mask]
 
-            # 直近24時間のニュース件数を先頭列として追加（閲覧用のみ、CSVには保存しない）
+            # 直近24時間ニュース + ME / Deep FCF / Entry を画面上だけ重ねる
             _nb_t = st.session_state.get("news_batch", {})
-            _display_df = display_portfolio_dataframe(view_df)
+            _overlay_df = build_portfolio_signal_overlay(
+                view_df,
+                load_me_screener(),
+                load_entry_validation(),
+            )
+            _display_df = display_portfolio_dataframe(_overlay_df)
             _display_df.insert(
                 0, "📰",
                 [
@@ -3228,37 +3239,127 @@ with tab1:
                     for t in view_df["ティッカー"]
                 ]
             )
-            st.dataframe(_display_df, width='stretch', hide_index=True)
-            st.caption("💡 📰列は直近24時間のニュース件数です（🔴の数字が件数）。")
+
+            _important_cols = [
+                "📰", "ティッカー", "銘柄名", "ステータス",
+                "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
+                "ME状態", "Deep FCF", "Entry状態", "Opportunity", "更新日",
+            ]
+            _important_cols = [
+                col for col in _important_cols if col in _display_df.columns
+            ]
+            st.dataframe(
+                _display_df[_important_cols],
+                width='stretch',
+                hide_index=True,
+            )
+            st.caption(
+                "💡 ME / Deep FCF / Entry / Opportunity は最新スクリーナー・検証結果を"
+                "画面上で重ねた派生情報です。portfolio_data.csv には保存しません。"
+            )
 
             st.divider()
 
             # --- 編集・削除エリア ---
             st.markdown("##### ✏️ データの編集・削除")
-            st.caption(
-                "セルをダブルクリックすると直接編集できます。行頭にチェックを入れて削除、"
-                "下に空欄の行が出たら新規行として入力もできます。編集後は必ず「変更を保存」を押してください。"
+            edit_mode = st.radio(
+                "編集方法",
+                ["1銘柄を編集", "一括編集"],
+                horizontal=True,
+                key="portfolio_edit_mode",
             )
 
-            edited_df = st.data_editor(
-                df,
-                width='stretch',
-                hide_index=True,
-                num_rows="dynamic",
-                column_config={
-                    "セクター": st.column_config.SelectboxColumn(options=SECTOR_OPTIONS),
-                    "ステータス": st.column_config.SelectboxColumn(options=STATUS_OPTIONS),
-                    "ネットキャッシュ": st.column_config.SelectboxColumn(options=NETCASH_OPTIONS),
-                },
-                key="full_editor"
-            )
+            if edit_mode == "1銘柄を編集":
+                _edit_labels = {
+                    f"{row['ティッカー']} : {row['銘柄名']}": idx
+                    for idx, row in df.iterrows()
+                }
+                _edit_label = st.selectbox(
+                    "編集する銘柄",
+                    list(_edit_labels.keys()),
+                    key="portfolio_single_edit_target",
+                )
+                _edit_idx = _edit_labels[_edit_label]
+                _row = df.loc[_edit_idx]
 
-            col_b1, col_b2, col_b3 = st.columns(3)
-            with col_b1:
-                if st.button("💾 変更を保存", type="primary"):
-                    _save_status, _save_msg, _normalized = save_data(
-                        edited_df.reset_index(drop=True)
+                _e1, _e2 = st.columns(2)
+                with _e1:
+                    _name = st.text_input(
+                        "銘柄名",
+                        value=str(_row.get("銘柄名", "") or ""),
+                        key=f"edit_name_{_edit_idx}",
                     )
+                    _sector = st.selectbox(
+                        "セクター",
+                        SECTOR_OPTIONS,
+                        index=SECTOR_OPTIONS.index(_row.get("セクター"))
+                        if _row.get("セクター") in SECTOR_OPTIONS else 0,
+                        key=f"edit_sector_{_edit_idx}",
+                    )
+                    _status = st.selectbox(
+                        "ステータス",
+                        STATUS_OPTIONS,
+                        index=STATUS_OPTIONS.index(_row.get("ステータス"))
+                        if _row.get("ステータス") in STATUS_OPTIONS else 0,
+                        key=f"edit_status_{_edit_idx}",
+                    )
+                    _cagr = st.text_input(
+                        "売上5y CAGR",
+                        value=str(_row.get("売上5y CAGR", "") or ""),
+                        key=f"edit_cagr_{_edit_idx}",
+                    )
+                    _per = st.text_input(
+                        "PER",
+                        value=str(_row.get("PER", "") or ""),
+                        key=f"edit_per_{_edit_idx}",
+                    )
+                with _e2:
+                    _roic = st.text_input(
+                        "ROIC",
+                        value=str(_row.get("ROIC", "") or ""),
+                        key=f"edit_roic_{_edit_idx}",
+                    )
+                    _dpup = st.text_input(
+                        "DPUP",
+                        value=str(_row.get("DPUP", "") or ""),
+                        key=f"edit_dpup_{_edit_idx}",
+                    )
+                    _netcash = st.selectbox(
+                        "ネットキャッシュ",
+                        NETCASH_OPTIONS,
+                        index=NETCASH_OPTIONS.index(_row.get("ネットキャッシュ"))
+                        if _row.get("ネットキャッシュ") in NETCASH_OPTIONS else 0,
+                        key=f"edit_netcash_{_edit_idx}",
+                    )
+                    _forecast = st.text_input(
+                        "売上予想",
+                        value=str(_row.get("売上予想", "") or ""),
+                        key=f"edit_forecast_{_edit_idx}",
+                    )
+                    _memo = st.text_area(
+                        "投資家メモ",
+                        value=str(_row.get("投資家メモ", "") or ""),
+                        key=f"edit_memo_{_edit_idx}",
+                        height=96,
+                    )
+
+                if st.button("💾 この銘柄を保存", type="primary", key="single_edit_save"):
+                    _candidate = df.copy()
+                    _candidate.at[_edit_idx, "銘柄名"] = _name
+                    _candidate.at[_edit_idx, "セクター"] = _sector
+                    _candidate.at[_edit_idx, "ステータス"] = _status
+                    _candidate.at[_edit_idx, "売上5y CAGR"] = normalize_metric_text(_cagr)
+                    _candidate.at[_edit_idx, "PER"] = normalize_metric_text(_per)
+                    _candidate.at[_edit_idx, "ROIC"] = normalize_metric_text(_roic)
+                    _candidate.at[_edit_idx, "DPUP"] = normalize_metric_text(_dpup)
+                    _candidate.at[_edit_idx, "ネットキャッシュ"] = _netcash
+                    _candidate.at[_edit_idx, "売上予想"] = _forecast
+                    _candidate.at[_edit_idx, "投資家メモ"] = _memo
+                    _candidate.at[_edit_idx, "更新日"] = (
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                    )
+
+                    _save_status, _save_msg, _normalized = save_data(_candidate)
                     if _save_status == "error":
                         st.error(f"⚠️ {_save_msg}")
                     else:
@@ -3268,7 +3369,42 @@ with tab1:
                         else:
                             st.warning(f"⚠️ {_save_msg}")
                         st.rerun()
-            with col_b2:
+
+            else:
+                st.caption(
+                    "複数銘柄を一度に直す場合だけ使用してください。"
+                    "保存時に重複ティッカーもチェックします。"
+                )
+                edited_df = st.data_editor(
+                    df,
+                    width='stretch',
+                    hide_index=True,
+                    num_rows="dynamic",
+                    column_config={
+                        "セクター": st.column_config.SelectboxColumn(options=SECTOR_OPTIONS),
+                        "ステータス": st.column_config.SelectboxColumn(options=STATUS_OPTIONS),
+                        "ネットキャッシュ": st.column_config.SelectboxColumn(options=NETCASH_OPTIONS),
+                    },
+                    key="full_editor"
+                )
+                if st.button("💾 一括変更を保存", type="primary", key="bulk_edit_save"):
+                    _candidate = edited_df.reset_index(drop=True).copy()
+                    _now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                    if "更新日" in _candidate.columns:
+                        _candidate["更新日"] = _now
+                    _save_status, _save_msg, _normalized = save_data(_candidate)
+                    if _save_status == "error":
+                        st.error(f"⚠️ {_save_msg}")
+                    else:
+                        st.session_state.df = _normalized
+                        if _save_status == "github":
+                            st.success(f"✅ {_save_msg}")
+                        else:
+                            st.warning(f"⚠️ {_save_msg}")
+                        st.rerun()
+
+            _b1, _b2 = st.columns(2)
+            with _b1:
                 csv = df.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
                     "⬇️ CSVをダウンロード",
@@ -3276,7 +3412,7 @@ with tab1:
                     file_name=f"portfolio_data_{datetime.date.today()}.csv",
                     mime="text/csv"
                 )
-            with col_b3:
+            with _b2:
                 if st.button("🔄 保存済みデータを再読込"):
                     st.session_state.df = load_data()
                     st.rerun()
@@ -3986,55 +4122,80 @@ with tab5:
 
         news_items = st.session_state.get("news_batch", {}).get(selected_ticker, [])
         if news_items:
-            for _idx, _n in enumerate(news_items):
-                if _n["hours_ago"] is not None:
-                    if _n["hours_ago"] <= 24:
-                        _fresh = f'<span style="color:#ef4444;font-weight:700">🔴 {int(_n["hours_ago"])}時間前</span>'
-                    elif _n["hours_ago"] <= 72:
-                        _fresh = f'<span style="color:#f59e0b;font-weight:600">{int(_n["hours_ago"]/24)}日前</span>'
+            _recent_news, _older_news = split_news_by_age(
+                news_items,
+                recent_days=30,
+            )
+
+            def _render_news_rows(_items, _key_prefix):
+                for _idx, _n in enumerate(_items):
+                    if _n["hours_ago"] is not None:
+                        if _n["hours_ago"] <= 24:
+                            _fresh = f'<span style="color:#ef4444;font-weight:700">🔴 {int(_n["hours_ago"])}時間前</span>'
+                        elif _n["hours_ago"] <= 72:
+                            _fresh = f'<span style="color:#f59e0b;font-weight:600">{int(_n["hours_ago"]/24)}日前</span>'
+                        else:
+                            _fresh = f'<span style="opacity:0.55">{int(_n["hours_ago"]/24)}日前</span>'
                     else:
-                        _fresh = f'<span style="opacity:0.55">{int(_n["hours_ago"]/24)}日前</span>'
-                else:
-                    _fresh = ""
+                        _fresh = ""
 
-                _col_item, _col_clip = st.columns([6, 1])
-                with _col_item:
-                    st.markdown(
-                        f'<div style="padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.15)">'
-                        f'<a href="{_n["link"]}" target="_blank" style="text-decoration:none;'
-                        f'font-weight:600;font-size:0.92em">{_n["title"]}</a><br>'
-                        f'<span style="font-size:0.78em;opacity:0.7">{_n["source"]}</span>'
-                        f'　{_fresh}</div>',
-                        unsafe_allow_html=True
-                    )
-                with _col_clip:
-                    if st.button("📌 保存", key=f"clip_save_{selected_ticker}_{_idx}",
-                                 help="この記事をニュース・クリップに保存"):
-                        # クリップの日付キー：記事の実際の日付（分からなければ今日の日付）
-                        _date_key = _n.get("date_str") or datetime.date.today().strftime("%Y-%m-%d")
-                        _existing = load_entries_smart(selected_ticker, "news", github_config)
-                        _existing_keys = {e["key"] for e in _existing}
-                        if _date_key in _existing_keys:
-                            _date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
-                        _body = (
-                            f"# {_n['title']}\n\n"
-                            f"**ソース:** {_n['source']}\n\n"
-                            f"**URL:** {_n['link']}\n"
+                    _col_item, _col_clip = st.columns([6, 1])
+                    with _col_item:
+                        st.markdown(
+                            f'<div style="padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.15)">'
+                            f'<a href="{_n["link"]}" target="_blank" style="text-decoration:none;'
+                            f'font-weight:600;font-size:0.92em">{_n["title"]}</a><br>'
+                            f'<span style="font-size:0.78em;opacity:0.7">{_n["source"]}</span>'
+                            f'　{_fresh}</div>',
+                            unsafe_allow_html=True
                         )
-                        _content = f"<!-- source: {_n['source']} -->\n\n{_body}"
+                    with _col_clip:
+                        if st.button(
+                            "📌 保存",
+                            key=f"clip_save_{selected_ticker}_{_key_prefix}_{_idx}",
+                            help="この記事をニュース・クリップに保存",
+                        ):
+                            _date_key = _n.get("date_str") or datetime.date.today().strftime("%Y-%m-%d")
+                            _existing = load_entries_smart(selected_ticker, "news", github_config)
+                            _existing_keys = {e["key"] for e in _existing}
+                            if _date_key in _existing_keys:
+                                _date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
-                        save_entry(selected_ticker, "news", _date_key, _content)
+                            _body = (
+                                f"# {_n['title']}\n\n"
+                                f"**ソース:** {_n['source']}\n\n"
+                                f"**URL:** {_n['link']}\n"
+                            )
+                            _content = f"<!-- source: {_n['source']} -->\n\n{_body}"
 
-                        if github_config:
-                            _file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{_date_key}"
-                            _gh_ok, _gh_msg = github_upload_report(_file_stem, _content, company_name)
-                            if _gh_ok:
-                                github_fetch_entries.clear()
-                                github_fetch_content.clear()
+                            save_entry(selected_ticker, "news", _date_key, _content)
 
-                        st.toast(f"✅ ニュース・クリップに保存しました（{_date_key}）", icon="📌")
-                        st.rerun()
+                            if github_config:
+                                _file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{_date_key}"
+                                _gh_ok, _gh_msg = github_upload_report(
+                                    _file_stem,
+                                    _content,
+                                    company_name,
+                                )
+                                if _gh_ok:
+                                    github_fetch_entries.clear()
+                                    github_fetch_content.clear()
+
+                            st.toast(
+                                f"✅ ニュース・クリップに保存しました（{_date_key}）",
+                                icon="📌",
+                            )
+                            st.rerun()
+
+            if _recent_news:
+                st.caption(f"直近30日：{len(_recent_news)}件")
+                _render_news_rows(_recent_news, "recent")
+            else:
+                st.caption("直近30日のニュースはありません。")
+
+            if _older_news:
+                with st.expander(f"🗄️ 過去ニュース（31日以上前・{len(_older_news)}件）"):
+                    _render_news_rows(_older_news, "older")
         else:
             st.caption(
                 "ニュースが見つかりませんでした。会社名でGoogle Newsを検索していますが、"
