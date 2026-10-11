@@ -15,6 +15,8 @@ on:
       - "pages/13_Walk_Forward_Calibration.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "dashboard_app.py"
+      - "portfolio_quality.py"
+      - "tests/test_portfolio_quality.py"
       - "tests/test_pretrade.py"
       - "tests/test_trade_journal.py"
       - "tests/test_score_calibration.py"
@@ -40,6 +42,8 @@ on:
       - "pages/13_Walk_Forward_Calibration.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "dashboard_app.py"
+      - "portfolio_quality.py"
+      - "tests/test_portfolio_quality.py"
       - "tests/test_pretrade.py"
       - "tests/test_trade_journal.py"
       - "tests/test_score_calibration.py"
@@ -78,9 +82,12 @@ jobs:
           python -m py_compile pages/13_Walk_Forward_Calibration.py
           python -m py_compile pages/8_Short_Cover_Hunter.py
           python -m py_compile dashboard_app.py
+          python -m py_compile portfolio_quality.py
+          python -m py_compile tests/test_portfolio_quality.py
 
       - name: Run Pre-Trade and Trade Journal unit tests
         run: |
+          python -m unittest tests.test_portfolio_quality -v
           python -m unittest tests.test_pretrade -v
           python -m unittest tests.test_trade_journal -v
           python -m unittest tests.test_score_calibration -v
