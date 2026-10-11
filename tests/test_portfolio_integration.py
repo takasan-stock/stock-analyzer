@@ -103,11 +103,6 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual([x["title"] for x in recent], ["A", "B"])
         self.assertEqual([x["title"] for x in older], ["C", "D"])
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_priority_labels_do_not_change_trading_scores(self):
         frame = pd.DataFrame(
             [
@@ -176,3 +171,7 @@ if __name__ == "__main__":
             }
         )
         self.assertEqual((label, rank), ("🟠 P2 優先監視", 2))
+
+
+if __name__ == "__main__":
+    unittest.main()
