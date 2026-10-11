@@ -121,6 +121,65 @@ def baseline_score_display_label(value: Any) -> str:
         return f"🔵 {score_text}｜P3まであと{distance}"
     return f"⚪ {score_text}"
 
+
+def _baseline_component_scores(row: pd.Series | dict[str, Any]) -> dict[str, float]:
+    def _num(name: str) -> float | None:
+        value = pd.to_numeric(pd.Series([row.get(name)]), errors="coerce").iloc[0]
+        return None if pd.isna(value) else float(value)
+
+    shape = _num("coarse_shape_score")
+    liquidity = _num("liquidity_score")
+    ret20 = _num("ret20")
+    high_dist = _num("distance_120d_high")
+    volume_ratio = _num("volume_ratio20")
+
+    price = None
+    if ret20 is not None:
+        price = (max(-0.15, min(0.20, ret20)) + 0.15) / 0.35 * 100.0
+
+    high = None
+    if high_dist is not None:
+        high = (max(-0.40, min(0.0, high_dist)) + 0.40) / 0.40 * 100.0
+
+    volume = None
+    if volume_ratio is not None:
+        volume = (max(0.5, min(2.0, volume_ratio)) - 0.5) / 1.5 * 100.0
+
+    scores = {
+        "形状": shape,
+        "流動性": liquidity,
+        "価格": price,
+        "高値接近": high,
+        "出来高": volume,
+    }
+    return {k: v for k, v in scores.items() if v is not None}
+
+
+def baseline_reason_label(row: pd.Series | dict[str, Any]) -> str:
+    """Explain the strongest Baseline Score drivers without changing the score."""
+    scores = _baseline_component_scores(row)
+    if not scores:
+        return "—"
+
+    weighted = {
+        "形状": scores.get("形状", 0.0) * 0.45,
+        "流動性": scores.get("流動性", 0.0) * 0.20,
+        "価格": scores.get("価格", 0.0) * 0.12,
+        "高値接近": scores.get("高値接近", 0.0) * 0.13,
+        "出来高": scores.get("出来高", 0.0) * 0.10,
+    }
+    ordered = sorted(
+        ((name, weighted[name], scores[name]) for name in scores),
+        key=lambda x: (x[1], x[2]),
+        reverse=True,
+    )
+
+    labels = []
+    for name, _contrib, raw_score in ordered[:3]:
+        mark = "◎" if raw_score >= 75 else "○" if raw_score >= 60 else "△"
+        labels.append(f"{name}{mark}")
+    return " / ".join(labels)
+
 def build_portfolio_signal_overlay(
     portfolio: pd.DataFrame | None,
     me_screener: pd.DataFrame | None,
@@ -179,6 +238,7 @@ def build_portfolio_signal_overlay(
 
     baseline_state_map: dict[str, str] = {}
     baseline_score_map: dict[str, str] = {}
+    baseline_reason_map: dict[str, str] = {}
     if me_universe is not None and not me_universe.empty and "ticker" in me_universe.columns:
         universe = me_universe.copy()
         universe["ticker"] = universe["ticker"].map(normalize_ticker_code)
@@ -208,6 +268,7 @@ def build_portfolio_signal_overlay(
             if pd.notna(score):
                 suffix = "" if eligible else " / LOW COVERAGE"
                 baseline_score_map[ticker] = f"{float(score):.0f}{suffix}"
+            baseline_reason_map[ticker] = baseline_reason_label(row)
 
     validation = entry_validation or {}
     entry_map: dict[str, str] = {}
@@ -243,6 +304,7 @@ def build_portfolio_signal_overlay(
     out["Opportunity"] = out["_ticker_norm"].map(opp_map).fillna("—")
     out["Baseline ME"] = out["_ticker_norm"].map(baseline_state_map).fillna("—")
     out["Baseline Score"] = out["_ticker_norm"].map(baseline_score_map).fillna("—")
+    out["Baseline理由"] = out["_ticker_norm"].map(baseline_reason_map).fillna("—")
     out["Baseline ME表示"] = out["Baseline ME"].map(baseline_me_display_label)
     out["Baseline Score表示"] = out["Baseline Score"].map(baseline_score_display_label)
     out["P3候補"] = out["Baseline Score"].map(is_p3_baseline_candidate)
