@@ -3544,8 +3544,14 @@ with tab1:
             _important_cols = [
                 col for col in _important_cols if col in _display_df.columns
             ]
+            _portfolio_table_df = _display_df[_important_cols].rename(
+                columns={
+                    "Baseline ME表示": "Baseline ME",
+                    "Baseline Score表示": "Baseline Score",
+                }
+            )
             st.dataframe(
-                _display_df[_important_cols],
+                _portfolio_table_df,
                 width='stretch',
                 hide_index=True,
             )
