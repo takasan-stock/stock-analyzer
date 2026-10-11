@@ -85,7 +85,7 @@ SCORE_BREAKDOWN_SPECS = [
 def build_score_breakdown_rows(
     row: pd.Series | dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Build compact normalized bars for the four adaptive contributions."""
+    """Build compact normalized bars for adaptive and Deep FCF contributions."""
     items: list[dict[str, Any]] = []
     for label, key, cap in SCORE_BREAKDOWN_SPECS:
         value = _num(row.get(key)) or 0.0
