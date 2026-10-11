@@ -97,7 +97,7 @@ def baseline_score_display_label(value: Any) -> str:
     low_coverage = "LOW COVERAGE" in text.upper()
     score = _parse_opportunity(text)
     if score is None:
-        return "⚠ 低カバレッジ" if low_coverage else text
+        return "⚠ 低信頼" if low_coverage else text
 
     score_text = f"{score:.0f}"
     if low_coverage:
@@ -106,6 +106,9 @@ def baseline_score_display_label(value: Any) -> str:
         return f"🟢 {score_text}"
     if score >= 65:
         return f"🟡 {score_text}"
+    if score >= 60:
+        distance = max(0, 65 - int(round(score)))
+        return f"🔵 {score_text}｜P3まであと{distance}"
     return f"⚪ {score_text}"
 
 def build_portfolio_signal_overlay(
