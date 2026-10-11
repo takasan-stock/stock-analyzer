@@ -9,6 +9,8 @@ on:
       - "pages/14_Multiple_Expansion_Hunter.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
+      - "tests/test_mex_backtest.py"
+      - "mex_backtest.py"
       - ".github/workflows/mex_tests.yml"
   push:
     branches:
@@ -20,6 +22,8 @@ on:
       - "pages/14_Multiple_Expansion_Hunter.py"
       - "tests/test_multiple_expansion.py"
       - "tests/test_jquants_mex_adapter.py"
+      - "tests/test_mex_backtest.py"
+      - "mex_backtest.py"
       - ".github/workflows/mex_tests.yml"
   workflow_dispatch:
 
