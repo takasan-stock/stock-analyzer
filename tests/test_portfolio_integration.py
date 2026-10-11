@@ -178,10 +178,53 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         label, rank = portfolio_priority_label(
             {
-                "Entry状態": "—",
+                "Entry状態": "🟡 WAIT",
                 "ME状態": "—",
                 "Deep FCF": "—",
                 "Opportunity": "B 58",
+            }
+        )
+        self.assertEqual((label, rank), ("🟠 P2 優先監視", 2))
+
+    def test_wait_with_low_opportunity_stays_p4(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "🟡 WAIT",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "C 29",
+            }
+        )
+        self.assertEqual((label, rank), ("⚪ P4 待機", 4))
+
+    def test_me_watch_and_mid_opportunity_promote_to_p3(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "🟡 ME WATCH",
+                "ME状態": "WATCH",
+                "Deep FCF": "—",
+                "Opportunity": "—",
+            }
+        )
+        self.assertEqual((label, rank), ("🟡 P3 通常監視", 3))
+
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "—",
+                "ME状態": "—",
+                "Deep FCF": "—",
+                "Opportunity": "C 45",
+            }
+        )
+        self.assertEqual((label, rank), ("🟡 P3 通常監視", 3))
+
+    def test_me_ready_is_p2_without_opportunity_score(self):
+        label, rank = portfolio_priority_label(
+            {
+                "Entry状態": "—",
+                "ME状態": "READY",
+                "Deep FCF": "—",
+                "Opportunity": "—",
             }
         )
         self.assertEqual((label, rank), ("🟠 P2 優先監視", 2))
