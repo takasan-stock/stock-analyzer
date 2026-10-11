@@ -38,6 +38,7 @@ from portfolio_integration import (
     build_portfolio_signal_overlay,
     load_entry_validation,
     load_me_screener,
+    load_me_universe_snapshot,
     split_news_by_age,
 )
 from report_storage_v2 import (
@@ -3467,6 +3468,7 @@ with tab1:
                 view_df,
                 load_me_screener(),
                 load_entry_validation(),
+                load_me_universe_snapshot(),
             )
 
             # Defensive fallback:
@@ -3519,6 +3521,7 @@ with tab1:
             _important_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
                 "ME状態", "Deep FCF", "Entry状態", "Opportunity",
+                "Baseline ME", "Baseline Score",
                 "売上5y CAGR", "PER", "ROIC", "DPUP", "ネットキャッシュ",
                 "更新日",
             ]
@@ -3531,9 +3534,10 @@ with tab1:
                 hide_index=True,
             )
             st.caption(
-                "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity は"
+                "💡 今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME は"
                 "画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。"
-                " ⚪ 未評価は、ME / Deep FCF / Entry / Opportunity の判定データがまだ無い銘柄です。"
+                " Baseline ME は全東証の軽量スクリーニングで、P1/P2やEntry Gateには昇格させません。"
+                " ⚪ 未評価は、これらの判定データがまだ無い銘柄です。"
                 " 優先度カードの件数は検索・ステータス絞り込み後の全件を集計します。"
             )
 
