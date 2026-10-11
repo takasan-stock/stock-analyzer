@@ -18,6 +18,34 @@ DEEP_FCF_WEIGHTS = {
 }
 
 
+def _quality_rank(value: Any) -> int:
+    text = str(value or "").strip().upper()
+    if text.startswith("A"):
+        return 4
+    if text.startswith("B"):
+        return 3
+    if text.startswith("C"):
+        return 2
+    if text.startswith("D"):
+        return 1
+    return 0
+
+
+def deep_fcf_strength(score: Any) -> str:
+    value = _num(score)
+    if value is None:
+        return "NO DATA"
+    if value >= 80:
+        return "STRONG"
+    if value >= 70:
+        return "GOOD"
+    if value >= 60:
+        return "SOLID"
+    if value >= 55:
+        return "PASS"
+    return "BELOW BAR"
+
+
 def _num(value: Any) -> float | None:
     try:
         if value is None or pd.isna(value):
@@ -74,6 +102,8 @@ def build_deep_fcf_top5(
     *,
     limit: int = 5,
     min_coverage: float = 0.60,
+    min_score: float = 55.0,
+    min_quality_grade: str = "C",
 ) -> pd.DataFrame:
     """Rank latest ME names by cash-generation quality without bypassing entry gates.
 
@@ -161,6 +191,25 @@ def build_deep_fcf_top5(
     out["deep_fcf_confidence"] = confidences
     out["_valuation_score"] = valuation_scores
     out = out.dropna(subset=["deep_fcf_score"]).copy()
+    if out.empty:
+        return pd.DataFrame(columns=columns)
+
+    out = out[
+        pd.to_numeric(out["deep_fcf_score"], errors="coerce")
+        >= float(min_score)
+    ].copy()
+    if out.empty:
+        return pd.DataFrame(columns=columns)
+
+    quality_floor = _quality_rank(min_quality_grade)
+    if quality_floor > 0:
+        quality = out.get(
+            "fcf_quality_grade",
+            pd.Series("", index=out.index),
+        )
+        out = out[
+            quality.map(_quality_rank) >= quality_floor
+        ].copy()
     if out.empty:
         return pd.DataFrame(columns=columns)
 

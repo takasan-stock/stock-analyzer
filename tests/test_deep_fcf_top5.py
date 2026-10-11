@@ -134,3 +134,78 @@ def test_deep_fcf_accepts_60pct_coverage_and_reports_confidence():
     assert len(out) == 1
     assert out.iloc[0]["deep_fcf_coverage"] >= 0.60
     assert out.iloc[0]["deep_fcf_confidence"] in {"MEDIUM", "HIGH"}
+
+
+
+def test_deep_fcf_filters_below_score_floor():
+    frame = pd.DataFrame(
+        [
+            _row(
+                ticker="9001",
+                fcf_per_share_3y_cagr_score=40.0,
+                fcf_per_share_yoy_score=40.0,
+                cfo_yoy_score=40.0,
+                roic_score=40.0,
+                fcf_margin_score=40.0,
+                cash_conversion_score=40.0,
+                net_cash_ratio_score=40.0,
+                dilution_score=40.0,
+                p_fcf=40.0,
+                fcf_quality_grade="B",
+            )
+        ]
+    )
+
+    out = build_deep_fcf_top5(frame)
+
+    assert out.empty
+
+
+def test_deep_fcf_filters_quality_d_even_when_score_is_high():
+    frame = pd.DataFrame(
+        [
+            _row(
+                ticker="9002",
+                fcf_per_share_3y_cagr_score=95.0,
+                fcf_per_share_yoy_score=95.0,
+                cfo_yoy_score=95.0,
+                roic_score=95.0,
+                fcf_margin_score=95.0,
+                cash_conversion_score=95.0,
+                net_cash_ratio_score=95.0,
+                dilution_score=95.0,
+                p_fcf=8.0,
+                fcf_quality_grade="D",
+            )
+        ]
+    )
+
+    out = build_deep_fcf_top5(frame)
+
+    assert out.empty
+
+
+def test_deep_fcf_does_not_pad_to_five_names():
+    frame = pd.DataFrame(
+        [
+            _row(ticker="9101", fcf_quality_grade="B"),
+            _row(
+                ticker="9102",
+                fcf_quality_grade="D",
+                fcf_per_share_3y_cagr_score=99.0,
+                fcf_per_share_yoy_score=99.0,
+                cfo_yoy_score=99.0,
+                roic_score=99.0,
+                fcf_margin_score=99.0,
+                cash_conversion_score=99.0,
+                net_cash_ratio_score=99.0,
+                dilution_score=99.0,
+                p_fcf=8.0,
+            ),
+        ]
+    )
+
+    out = build_deep_fcf_top5(frame, limit=5)
+
+    assert len(out) == 1
+    assert out.iloc[0]["ticker"] == "9101"
