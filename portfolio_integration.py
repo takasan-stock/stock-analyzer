@@ -216,6 +216,7 @@ def build_portfolio_signal_overlay(
     me_screener: pd.DataFrame | None,
     entry_validation: dict[str, Any] | None,
     me_universe: pd.DataFrame | None = None,
+    me_candidates: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Add read-only derived columns to portfolio rows.
@@ -227,13 +228,14 @@ def build_portfolio_signal_overlay(
       - Opportunity
       - Baseline ME
       - Baseline Score
+      - ME昇格
     """
     if portfolio is None:
         return pd.DataFrame()
 
     out = portfolio.copy()
     if out.empty:
-        for col in ["ME状態", "Deep FCF", "Entry状態", "Opportunity"]:
+        for col in ["ME状態", "ME昇格", "Deep FCF", "Entry状態", "Opportunity"]:
             out[col] = []
         return out
 
@@ -243,6 +245,28 @@ def build_portfolio_signal_overlay(
     out["_ticker_norm"] = out["ティッカー"].map(normalize_ticker_code)
 
     latest_me = _latest_me_rows(me_screener)
+    formal_me_tickers = {
+        normalize_ticker_code(x)
+        for x in (
+            latest_me.get("ticker", pd.Series(dtype=object)).tolist()
+            if not latest_me.empty
+            else []
+        )
+        if normalize_ticker_code(x)
+    }
+
+    candidate_tickers: set[str] = set()
+    if (
+        me_candidates is not None
+        and not me_candidates.empty
+        and "ticker" in me_candidates.columns
+    ):
+        candidate_tickers = {
+            normalize_ticker_code(x)
+            for x in me_candidates["ticker"].tolist()
+            if normalize_ticker_code(x)
+        }
+
     me_map: dict[str, str] = {}
     if not latest_me.empty:
         me_map = {
@@ -347,6 +371,27 @@ def build_portfolio_signal_overlay(
     out["Baseline ME表示"] = out["Baseline ME"].map(baseline_me_display_label)
     out["Baseline Score表示"] = out["Baseline Score"].map(baseline_score_display_label)
     out["P3候補"] = out["Baseline Score"].map(is_p3_baseline_candidate)
+
+    def _promotion_label(row: pd.Series) -> str:
+        ticker = normalize_ticker_code(row.get("_ticker_norm"))
+        if ticker in formal_me_tickers:
+            return "✅ 正式ME済"
+        if ticker in candidate_tickers:
+            return "🟠 正式ME対象"
+
+        score_text = str(row.get("Baseline Score", "") or "").strip()
+        state = str(row.get("Baseline ME", "") or "").strip().upper()
+        if "LOW COVERAGE" in score_text.upper():
+            return "—"
+
+        baseline_score = _parse_opportunity(score_text)
+        baseline_promotable = (
+            (baseline_score is not None and baseline_score >= 60)
+            or state in {"RE-ACCEL WATCH", "RE-READY PROXY", "EXPANDING PROXY"}
+        )
+        return "🔵 昇格待ち" if baseline_promotable else "—"
+
+    out["ME昇格"] = out.apply(_promotion_label, axis=1)
 
     me_watch_mask = (
         out["_ticker_norm"].isin(watch_tickers)
