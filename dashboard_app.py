@@ -63,6 +63,7 @@ DATA_FILE = "portfolio_data.csv"
 # Streamlit Cloudのホットリロード時に補助モジュールの新旧がずれても
 # dashboardの起動を止めないため、portfolio_integrationからはimportしない。
 ME_UNIVERSE_SNAPSHOT_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
+ME_UNIVERSE_CANDIDATES_FILE = "data/multiple_expansion/me_universe_candidates.csv"
 
 
 def load_me_universe_snapshot() -> pd.DataFrame:
@@ -70,6 +71,18 @@ def load_me_universe_snapshot() -> pd.DataFrame:
         if os.path.exists(ME_UNIVERSE_SNAPSHOT_FILE):
             return pd.read_csv(
                 ME_UNIVERSE_SNAPSHOT_FILE,
+                dtype={"ticker": str},
+            )
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def load_me_universe_candidates() -> pd.DataFrame:
+    try:
+        if os.path.exists(ME_UNIVERSE_CANDIDATES_FILE):
+            return pd.read_csv(
+                ME_UNIVERSE_CANDIDATES_FILE,
                 dtype={"ticker": str},
             )
     except Exception:
@@ -3519,6 +3532,7 @@ with tab1:
                 load_me_screener(),
                 load_entry_validation(),
                 load_me_universe_snapshot(),
+                load_me_universe_candidates(),
             )
 
             # Defensive fallback:
@@ -3650,7 +3664,7 @@ with tab1:
 
             _compact_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
-                "ME状態", "Deep FCF", "Entry状態", "Opportunity",
+                "ME状態", "ME昇格", "Deep FCF", "Entry状態", "Opportunity",
                 "Baseline ME表示", "Baseline Score表示", "主な寄与",
             ]
             _detail_cols = _compact_cols + [
@@ -3677,6 +3691,7 @@ with tab1:
                     """
 - **今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME** は画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。
 - **Baseline ME** は全東証の軽量スクリーニングです。⚪ 通常 / 🟡 再加速監視 / 🟠 再拡大準備 / 🟢 拡大中 で表示します。
+- **ME昇格** は 🔵 昇格待ち = Baselineで正式ME候補だが未選抜 / 🟠 正式ME対象 = 重いME候補30枠に選抜 / ✅ 正式ME済 = ME Screenerまで完了、を示します。これは表示用でEntry Gateは開きません。
 - **Baseline Score** は 🔵 60〜64 = P3候補 / 🟡 65以上 = P3基準 / 🟢 75以上 = 強め です。
 - **主な寄与** は、形状・流動性・価格・高値接近・出来高のうち強い要因を優先して表示します。P3候補では主因2つだけ表示します。
 - **🔵 P3候補** はP4内の補助表示で、P3へ昇格した意味ではありません。P1/P2やEntry Gateにも昇格させません。
