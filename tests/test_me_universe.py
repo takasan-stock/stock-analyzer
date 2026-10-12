@@ -58,6 +58,130 @@ def test_universe_snapshot_builds_liquidity_and_coarse_score():
     assert out.loc[out["ticker"] == "1111", "liquidity_ok"].iloc[0]
 
 
+def test_candidate_selector_adds_promotion_sleeve_without_displacing_core():
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "1001",
+                "eligible": True,
+                "coarse_score": 90.0,
+                "avg_turnover20": 500_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+            {
+                "ticker": "1002",
+                "eligible": True,
+                "coarse_score": 80.0,
+                "avg_turnover20": 400_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+            {
+                "ticker": "1003",
+                "eligible": True,
+                "coarse_score": 63.0,
+                "avg_turnover20": 300_000_000,
+                "market_name": "Standard",
+                "prefilter_state": "BASE",
+            },
+            {
+                "ticker": "1004",
+                "eligible": True,
+                "coarse_score": 59.0,
+                "avg_turnover20": 900_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "RE-ACCEL WATCH",
+            },
+            {
+                "ticker": "1005",
+                "eligible": True,
+                "coarse_score": 58.0,
+                "avg_turnover20": 800_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+        ]
+    )
+
+    out = _select_candidates(
+        universe,
+        max_candidates=2,
+        pinned_codes=set(),
+        promotion_sleeve=1,
+    )
+
+    assert out["ticker"].tolist() == ["1001", "1002", "1003"]
+    assert out["selection_sleeve"].tolist() == ["CORE", "CORE", "PROMOTION"]
+    assert out["prefilter_rank"].tolist() == [1, 2, 3]
+
+
+def test_candidate_selector_promotion_accepts_structural_state_below_60():
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "1001",
+                "eligible": True,
+                "coarse_score": 90.0,
+                "avg_turnover20": 500_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+            {
+                "ticker": "1002",
+                "eligible": True,
+                "coarse_score": 59.0,
+                "avg_turnover20": 400_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "RE-ACCEL WATCH",
+            },
+        ]
+    )
+
+    out = _select_candidates(
+        universe,
+        max_candidates=1,
+        pinned_codes=set(),
+        promotion_sleeve=1,
+    )
+
+    assert out["ticker"].tolist() == ["1001", "1002"]
+    assert out["selection_sleeve"].tolist() == ["CORE", "PROMOTION"]
+
+
+def test_candidate_selector_promotion_sleeve_zero_preserves_core_size():
+    universe = pd.DataFrame(
+        [
+            {
+                "ticker": "1001",
+                "eligible": True,
+                "coarse_score": 90.0,
+                "avg_turnover20": 500_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+            {
+                "ticker": "1002",
+                "eligible": True,
+                "coarse_score": 63.0,
+                "avg_turnover20": 400_000_000,
+                "market_name": "Prime",
+                "prefilter_state": "BASE",
+            },
+        ]
+    )
+
+    out = _select_candidates(
+        universe,
+        max_candidates=1,
+        pinned_codes=set(),
+        promotion_sleeve=0,
+    )
+
+    assert out["ticker"].tolist() == ["1001"]
+    assert out["selection_sleeve"].tolist() == ["CORE"]
+
+
 def test_candidate_selector_pins_portfolio_and_reserves_growth():
     universe = _build_universe_snapshot(
         _market(),
@@ -69,6 +193,7 @@ def test_candidate_selector_pins_portfolio_and_reserves_growth():
         universe,
         max_candidates=2,
         pinned_codes={"3333"},
+        promotion_sleeve=0,
     )
 
     assert "3333" in set(out["ticker"])
