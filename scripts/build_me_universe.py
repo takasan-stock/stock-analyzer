@@ -753,6 +753,7 @@ def _select_candidates(
     *,
     max_candidates: int,
     pinned_codes: set[str],
+    promotion_sleeve: int = 5,
 ) -> pd.DataFrame:
     if universe.empty:
         return universe.copy()
@@ -791,14 +792,45 @@ def _select_candidates(
     growth_quota = max(5, int(max_candidates * 0.20))
     add_codes(eligible.loc[growth_mask, "ticker"].head(growth_quota).tolist())
 
-    # 3) Fill the rest by coarse MEX score.
+    # 3) Fill the core sleeve by coarse MEX score.
     add_codes(eligible["ticker"].tolist())
 
-    chosen = chosen[:max_candidates]
+    core_chosen = chosen[:max_candidates]
+
+    # 4) Add a small promotion sleeve without displacing the established
+    #    core candidates. This is designed to let near-P3 Baseline names and
+    #    structural re-acceleration names receive formal PIT/FCF evaluation.
+    #    The promotion sleeve is public-universe based only; it never depends
+    #    on private portfolio membership.
+    promotion_mask = (
+        eligible["coarse_score"].ge(60.0)
+        | eligible["prefilter_state"].isin(
+            ["RE-ACCEL WATCH", "RE-READY PROXY", "EXPANDING PROXY"]
+        )
+    )
+    promotion_pool = eligible.loc[promotion_mask].copy()
+    promotion_pool = promotion_pool[
+        ~promotion_pool["ticker"].isin(core_chosen)
+    ].sort_values(
+        ["coarse_score", "avg_turnover20", "ticker"],
+        ascending=[False, False, True],
+        na_position="last",
+    )
+
+    promotion_codes = (
+        promotion_pool["ticker"]
+        .head(max(0, int(promotion_sleeve)))
+        .tolist()
+    )
+    chosen = core_chosen + promotion_codes
+
     out = universe[universe["ticker"].isin(chosen)].copy()
     rank_map = {code: i + 1 for i, code in enumerate(chosen)}
     out["prefilter_rank"] = out["ticker"].map(rank_map)
     out["pinned"] = out["ticker"].isin(pinned_codes)
+    out["selection_sleeve"] = out["ticker"].map(
+        lambda code: "PROMOTION" if code in set(promotion_codes) else "CORE"
+    )
     return out.sort_values("prefilter_rank").reset_index(drop=True)
 
 
@@ -824,6 +856,16 @@ def main() -> int:
         type=int,
         default=60,
         help="Maximum names passed to the heavy MEX/FCF stage.",
+    )
+    parser.add_argument(
+        "--promotion-sleeve",
+        type=int,
+        default=5,
+        help=(
+            "Extra formal-ME slots reserved for Baseline score >=60 or "
+            "RE-ACCEL/RE-READY/EXPANDING names. These slots do not displace "
+            "the core max-candidates set."
+        ),
     )
     parser.add_argument(
         "--min-turnover-yen",
@@ -929,6 +971,7 @@ def main() -> int:
         universe,
         max_candidates=max(1, args.max_candidates),
         pinned_codes=pinned_codes,
+        promotion_sleeve=max(0, args.promotion_sleeve),
     )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -940,7 +983,9 @@ def main() -> int:
     print(
         f"[ME-PREFILTER] master={len(master)} "
         f"snapshot={len(universe)} eligible={int(universe['eligible'].sum())} "
-        f"heavy_candidates={len(candidates)}"
+        f"heavy_candidates={len(candidates)} "
+        f"core={int((candidates.get('selection_sleeve') == 'CORE').sum()) if 'selection_sleeve' in candidates.columns else len(candidates)} "
+        f"promotion={int((candidates.get('selection_sleeve') == 'PROMOTION').sum()) if 'selection_sleeve' in candidates.columns else 0}"
     )
     print(f"[ME-PREFILTER] wrote {universe_path}")
     print(f"[ME-PREFILTER] wrote {candidate_path}")
@@ -959,6 +1004,7 @@ def main() -> int:
             "coarse_acceleration_pct",
             "avg_turnover20",
             "pinned",
+            "selection_sleeve",
         ]
         if c in candidates.columns
     ]
