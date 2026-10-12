@@ -410,6 +410,86 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertFalse(bool(row["P3候補"]))
         self.assertEqual(row["今日の優先度"], "🟡 P3 通常監視")
 
+    def test_me_promotion_state_distinguishes_waiting_candidate_and_completed(self):
+        portfolio = pd.DataFrame(
+            [
+                {"ティッカー": "1111", "銘柄名": "Waiting"},
+                {"ティッカー": "2222", "銘柄名": "Selected"},
+                {"ティッカー": "3333", "銘柄名": "Completed"},
+            ]
+        )
+        universe = pd.DataFrame(
+            [
+                {
+                    "ticker": "1111",
+                    "trade_date": "2026-10-09",
+                    "prefilter_state": "BASE",
+                    "coarse_score": 63.0,
+                    "eligible": True,
+                },
+                {
+                    "ticker": "2222",
+                    "trade_date": "2026-10-09",
+                    "prefilter_state": "BASE",
+                    "coarse_score": 61.0,
+                    "eligible": True,
+                },
+                {
+                    "ticker": "3333",
+                    "trade_date": "2026-10-09",
+                    "prefilter_state": "BASE",
+                    "coarse_score": 62.0,
+                    "eligible": True,
+                },
+            ]
+        )
+        candidates = pd.DataFrame([{"ticker": "2222"}])
+        me = pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-10-09",
+                    "ticker": "3333",
+                    "sw_decision": "WATCH",
+                    "second_wave_state": "UNAVAILABLE",
+                }
+            ]
+        )
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            me,
+            {},
+            universe,
+            candidates,
+        )
+
+        states = dict(zip(out["ティッカー"], out["ME昇格"]))
+        self.assertEqual(states["1111"], "🔵 昇格待ち")
+        self.assertEqual(states["2222"], "🟠 正式ME対象")
+        self.assertEqual(states["3333"], "✅ 正式ME済")
+
+    def test_low_coverage_baseline_is_not_promotion_waiting(self):
+        portfolio = pd.DataFrame([{"ティッカー": "1111", "銘柄名": "Low"}])
+        universe = pd.DataFrame(
+            [{
+                "ticker": "1111",
+                "trade_date": "2026-10-09",
+                "prefilter_state": "BASE",
+                "coarse_score": 63.0,
+                "eligible": False,
+            }]
+        )
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            pd.DataFrame(),
+            {},
+            universe,
+            pd.DataFrame(),
+        )
+
+        self.assertEqual(out.iloc[0]["ME昇格"], "—")
+
     def test_me_ready_is_p2_without_opportunity_score(self):
         label, rank = portfolio_priority_label(
             {
