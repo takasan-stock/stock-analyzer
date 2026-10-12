@@ -193,6 +193,7 @@ def test_candidate_selector_pins_portfolio_and_reserves_growth():
         universe,
         max_candidates=2,
         pinned_codes={"3333"},
+        promotion_sleeve=0,
     )
 
     assert "3333" in set(out["ticker"])
