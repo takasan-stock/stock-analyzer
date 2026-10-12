@@ -3477,9 +3477,9 @@ with tab1:
                     key="portfolio_priority_filter",
                 )
 
-            ctrl_spacer, ctrl_p3, ctrl_detail, ctrl_reset = st.columns([2, 1, 1, 1])
-            with ctrl_spacer:
-                st.caption("表示オプション")
+            ctrl_left, ctrl_p3, ctrl_detail, ctrl_reset = st.columns([3, 1, 1, 1])
+            with ctrl_left:
+                st.empty()
             with ctrl_p3:
                 p3_candidate_only = st.checkbox(
                     "🔵 P3候補だけ表示",
