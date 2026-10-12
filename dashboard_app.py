@@ -89,6 +89,74 @@ def load_me_universe_candidates() -> pd.DataFrame:
         pass
     return pd.DataFrame()
 
+
+def _ensure_me_promotion_overlay(
+    frame: pd.DataFrame,
+    me_screener: pd.DataFrame,
+    me_candidates: pd.DataFrame,
+) -> pd.DataFrame:
+    """Dashboard-side fallback for Streamlit hot-reload helper skew."""
+    out = frame.copy()
+    if "ME昇格" in out.columns:
+        return out
+
+    completed: set[str] = set()
+    if (
+        me_screener is not None
+        and not me_screener.empty
+        and "ticker" in me_screener.columns
+    ):
+        latest = me_screener.copy()
+        if "trade_date" in latest.columns:
+            latest["trade_date"] = pd.to_datetime(
+                latest["trade_date"],
+                errors="coerce",
+            )
+            latest_date = latest["trade_date"].max()
+            if pd.notna(latest_date):
+                latest = latest[latest["trade_date"] == latest_date].copy()
+        completed = {
+            normalize_ticker_code(x)
+            for x in latest["ticker"].tolist()
+            if normalize_ticker_code(x)
+        }
+
+    selected: set[str] = set()
+    if (
+        me_candidates is not None
+        and not me_candidates.empty
+        and "ticker" in me_candidates.columns
+    ):
+        selected = {
+            normalize_ticker_code(x)
+            for x in me_candidates["ticker"].tolist()
+            if normalize_ticker_code(x)
+        }
+
+    def _label(row: pd.Series) -> str:
+        ticker = normalize_ticker_code(row.get("ティッカー"))
+        if ticker in completed:
+            return "✅ 正式ME済"
+        if ticker in selected:
+            return "🟠 正式ME対象"
+
+        score_text = str(row.get("Baseline Score", "") or "").strip()
+        if "LOW COVERAGE" in score_text.upper() or "低信頼" in score_text:
+            return "—"
+
+        match = re.search(r"(-?\d+(?:\.\d+)?)", score_text)
+        score = float(match.group(1)) if match else None
+        state = str(row.get("Baseline ME", "") or "").strip().upper()
+        if (
+            (score is not None and score >= 60)
+            or state in {"RE-ACCEL WATCH", "RE-READY PROXY", "EXPANDING PROXY"}
+        ):
+            return "🔵 昇格待ち"
+        return "—"
+
+    out["ME昇格"] = out.apply(_label, axis=1)
+    return out
+
 # 個別銘柄レポート（Markdown）の保存先
 REPORT_DIR = "reports"
 REPORT_BACKUP_DIR = os.path.join(REPORT_DIR, "_backup")
@@ -3527,12 +3595,32 @@ with tab1:
 
             # 直近24時間ニュース + ME / Deep FCF / Entry を画面上だけ重ねる
             _nb_t = st.session_state.get("news_batch", {})
-            _overlay_df = build_portfolio_signal_overlay(
-                view_df,
-                load_me_screener(),
-                load_entry_validation(),
-                load_me_universe_snapshot(),
-                load_me_universe_candidates(),
+            _me_screener = load_me_screener()
+            _entry_validation = load_entry_validation()
+            _me_universe = load_me_universe_snapshot()
+            _me_candidates = load_me_universe_candidates()
+            try:
+                _overlay_df = build_portfolio_signal_overlay(
+                    view_df,
+                    _me_screener,
+                    _entry_validation,
+                    _me_universe,
+                    _me_candidates,
+                )
+            except TypeError:
+                # Streamlit Cloud can briefly retain the previous helper
+                # signature during a hot reload. Fall back to the legacy call
+                # and restore new display-only columns locally.
+                _overlay_df = build_portfolio_signal_overlay(
+                    view_df,
+                    _me_screener,
+                    _entry_validation,
+                    _me_universe,
+                )
+            _overlay_df = _ensure_me_promotion_overlay(
+                _overlay_df,
+                _me_screener,
+                _me_candidates,
             )
 
             # Defensive fallback:
