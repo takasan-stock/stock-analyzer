@@ -1,14 +1,71 @@
 {
-  "run_at": "2026-10-13T03:09:37.666974+09:00",
-  "validation_as_of": "2026-10-14T09:00:00",
+  "run_at": "2026-10-14T01:15:34.397808+09:00",
+  "validation_as_of": "2026-10-15T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 0,
-  "short_cover_candidates": 0,
+  "candidate_count": 4,
+  "short_cover_candidates": 4,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": []
+  "rows": [
+    {
+      "ticker": "5133",
+      "name": "テリロジーホールディングス",
+      "source": "SHORT COVER",
+      "signal_key": "SC|EARLY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-13 00:00:00",
+      "opportunity_score": 49.9,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|EARLY / 候補品質GOOD / ENTRY条件待ち"
+    },
+    {
+      "ticker": "9104",
+      "name": "商船三井",
+      "source": "SHORT COVER",
+      "signal_key": "SC|CONFIRMED",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-13 00:00:00",
+      "opportunity_score": 43.3,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / ENTRY条件待ち"
+    },
+    {
+      "ticker": "4884",
+      "name": "クリングルファーマ",
+      "source": "SHORT COVER",
+      "signal_key": "SC|SQUEEZE",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-13 00:00:00",
+      "opportunity_score": 40.2,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|SQUEEZE / ENTRY条件待ち"
+    },
+    {
+      "ticker": "9107",
+      "name": "川崎汽船",
+      "source": "SHORT COVER",
+      "signal_key": "SC|EARLY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-13 00:00:00",
+      "opportunity_score": 33.5,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
+    }
+  ]
 }
