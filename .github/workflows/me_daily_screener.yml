@@ -20,6 +20,7 @@ on:
         type: string
   schedule:
     - cron: "30 8 * * 1-5"
+    - cron: "30 10 * * 1-5"
 
 permissions:
   contents: write
@@ -38,18 +39,56 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Check whether today's scheduled ME run already completed
+        id: fresh
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          git fetch origin main
+          STATUS_JSON="$(git show origin/main:data/multiple_expansion/me_daily_run_status.json 2>/dev/null || true)"
+          export STATUS_JSON
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
+          completed = False
+          raw = os.environ.get("STATUS_JSON", "").strip()
+          if raw:
+              try:
+                  payload = json.loads(raw)
+                  completed = payload.get("completed_date_jst") == today
+              except Exception:
+                  completed = False
+
+          print(f"today_jst={today}")
+          print(f"already_completed={completed}")
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as fh:
+              fh.write(f"skip={'true' if completed else 'false'}\n")
+          PY
+
+      - name: Stop duplicate scheduled run
+        if: github.event_name == 'schedule' && steps.fresh.outputs.skip == 'true'
+        run: |
+          echo "ME Daily Screener already completed today (JST). Skipping duplicate scheduled run."
 
       - name: Set up Python
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Check J-Quants API key
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
@@ -59,6 +98,7 @@ jobs:
           fi
 
       - name: Resolve workflow inputs
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         id: cfg
         shell: bash
         run: |
@@ -73,6 +113,7 @@ jobs:
           echo "promotion_sleeve=$PROMOTION_SLEEVE" >> "$GITHUB_OUTPUT"
 
       - name: STEP 1 - All TSE lightweight ME prefilter
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         timeout-minutes: 25
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
@@ -80,6 +121,7 @@ jobs:
           python scripts/build_me_universe.py             --max-candidates "${{ steps.cfg.outputs.max_candidates }}"             --promotion-sleeve "${{ steps.cfg.outputs.promotion_sleeve }}"             --min-turnover-yen "${{ steps.cfg.outputs.min_turnover }}"
 
       - name: Persist STEP 1 cache
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -104,16 +146,19 @@ jobs:
           fi
 
       - name: STEP 2 - Heavy PIT/FCF MEX calculation
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: |
           python scripts/build_mex_jquants.py             --portfolio data/multiple_expansion/me_universe_candidates.csv             --allow-summary-proxy             --max-runtime-minutes 40
 
       - name: STEP 3 - Build ME ranking and detect changes
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           python scripts/build_me_screener.py
 
       - name: STEP 4 - Send state-change digest
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         env:
           ME_EMAIL_TO: ${{ secrets.ME_EMAIL_TO }}
           ME_EMAIL_USER: ${{ secrets.ME_EMAIL_USER }}
@@ -129,14 +174,42 @@ jobs:
           python scripts/send_me_screener_alert.py
 
       - name: STEP 5 - Build after-close review
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           python scripts/build_after_close_review.py
 
       - name: STEP 6 - Validate next-session Entry Hunter handoff
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           python scripts/short_cover_entry_alert.py --validate-only
 
+      - name: Write daily completion marker
+        if: success() && (github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          now = datetime.now(ZoneInfo("Asia/Tokyo"))
+          path = Path("data/multiple_expansion/me_daily_run_status.json")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          payload = {
+              "completed_date_jst": now.date().isoformat(),
+              "completed_at_jst": now.isoformat(),
+              "event": os.environ.get("GITHUB_EVENT_NAME", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+          }
+          path.write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Commit latest screener output
+        if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -161,6 +234,7 @@ jobs:
           data/after_close_review_history.csv
           data/after_close_feedback_summary.csv
           data/entry_hunter_validation_status.json
+          data/multiple_expansion/me_daily_run_status.json
           "
 
           for path in $PATHS
