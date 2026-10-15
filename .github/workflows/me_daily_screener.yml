@@ -44,19 +44,21 @@ jobs:
         if: github.event_name == 'schedule'
         shell: bash
         run: |
+          git fetch origin main
+          STATUS_JSON="$(git show origin/main:data/multiple_expansion/me_daily_run_status.json 2>/dev/null || true)"
+          export STATUS_JSON
           python - <<'PY'
           import json
           import os
           from datetime import datetime
-          from pathlib import Path
           from zoneinfo import ZoneInfo
 
-          path = Path("data/multiple_expansion/me_daily_run_status.json")
           today = datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
           completed = False
-          if path.exists():
+          raw = os.environ.get("STATUS_JSON", "").strip()
+          if raw:
               try:
-                  payload = json.loads(path.read_text(encoding="utf-8"))
+                  payload = json.loads(raw)
                   completed = payload.get("completed_date_jst") == today
               except Exception:
                   completed = False
