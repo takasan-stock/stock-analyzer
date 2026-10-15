@@ -1,6 +1,10 @@
 import pandas as pd
 
-from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_valuation_label
+from deep_fcf_top5 import (
+    build_deep_fcf_top5,
+    deep_fcf_valuation_label,
+    evaluate_deep_fcf_rows,
+)
 
 
 def _row(**kwargs):
@@ -218,3 +222,46 @@ def test_deep_fcf_valuation_labels():
     assert deep_fcf_valuation_label(30) == "🟡 VALUATION MID"
     assert deep_fcf_valuation_label(50) == "🟠 VALUATION HIGH"
     assert deep_fcf_valuation_label(99.2) == "🔴 VALUATION VERY HIGH"
+
+
+
+def test_deep_fcf_evaluator_keeps_data_wait_rows():
+    frame = pd.DataFrame(
+        [{
+            "trade_date": "2026-10-15",
+            "ticker": "6701",
+            "company_name": "NEC",
+            "fcf_ttm": None,
+            "fcf_ttm_complete": False,
+            "cfo_yoy_score": 87.0,
+            "dilution_score": 85.0,
+            "fcf_quality_grade": "C",
+            "fcf_engine_status": "INSUFFICIENT",
+            "fcf_basis": "UNAVAILABLE",
+            "second_wave_state": "UNAVAILABLE",
+            "sw_decision": "PASS",
+        }]
+    )
+
+    out = evaluate_deep_fcf_rows(frame)
+
+    assert len(out) == 1
+    assert out.iloc[0]["ticker"] == "6701"
+    assert out.iloc[0]["deep_fcf_status"] == "DATA WAIT"
+    assert float(out.iloc[0]["deep_fcf_coverage"]) < 0.60
+
+
+def test_deep_fcf_evaluator_reports_passing_score_without_opening_gate():
+    frame = pd.DataFrame(
+        [_row(
+            ticker="7777",
+            second_wave_state="EXP. DECELERATING",
+            sw_decision="WATCH",
+        )]
+    )
+
+    out = evaluate_deep_fcf_rows(frame)
+
+    assert len(out) == 1
+    assert out.iloc[0]["deep_fcf_status"] in {"PASS", "SOLID", "GOOD", "STRONG"}
+    assert bool(out.iloc[0]["execution_ready"]) is False
