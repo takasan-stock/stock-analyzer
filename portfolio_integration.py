@@ -7,7 +7,11 @@ from typing import Any
 
 import pandas as pd
 
-from deep_fcf_top5 import build_deep_fcf_top5, deep_fcf_strength
+from deep_fcf_top5 import (
+    build_deep_fcf_top5,
+    deep_fcf_strength,
+    evaluate_deep_fcf_rows,
+)
 from portfolio_quality import normalize_ticker_code
 
 
@@ -281,14 +285,37 @@ def build_portfolio_signal_overlay(
         min_score=55.0,
         min_quality_grade="C",
     )
+    deep_eval = evaluate_deep_fcf_rows(
+        me_screener,
+        min_coverage=0.60,
+        min_score=55.0,
+        min_quality_grade="C",
+    )
     deep_map: dict[str, str] = {}
-    if not deep.empty:
-        for _, row in deep.iterrows():
+    if not deep_eval.empty:
+        for _, row in deep_eval.iterrows():
             ticker = normalize_ticker_code(row.get("ticker"))
-            try:
-                score = float(row.get("deep_fcf_score"))
-                deep_map[ticker] = f"{score:.0f} {deep_fcf_strength(score)}"
-            except (TypeError, ValueError):
+            status = str(row.get("deep_fcf_status", "") or "").strip().upper()
+            score = pd.to_numeric(
+                pd.Series([row.get("deep_fcf_score")]),
+                errors="coerce",
+            ).iloc[0]
+            coverage = pd.to_numeric(
+                pd.Series([row.get("deep_fcf_coverage")]),
+                errors="coerce",
+            ).iloc[0]
+
+            if status in {"STRONG", "GOOD", "SOLID", "PASS"} and pd.notna(score):
+                deep_map[ticker] = f"{float(score):.0f} {status}"
+            elif status == "DATA WAIT":
+                cov = float(coverage) * 100.0 if pd.notna(coverage) else 0.0
+                deep_map[ticker] = f"⚪ DATA WAIT {cov:.0f}%"
+            elif status == "QUALITY WAIT":
+                grade = str(row.get("fcf_quality_grade", "") or "").strip().upper()
+                deep_map[ticker] = f"⚠ QUALITY {grade or 'WAIT'}"
+            elif status == "BELOW BAR" and pd.notna(score):
+                deep_map[ticker] = f"🟡 BELOW BAR {float(score):.0f}"
+            else:
                 deep_map[ticker] = "—"
 
     baseline_state_map: dict[str, str] = {}

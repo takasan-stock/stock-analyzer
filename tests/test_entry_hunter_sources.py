@@ -418,3 +418,79 @@ def test_detect_me_entry_promotions_ignores_watch_only():
         as_of="2026-10-09",
     )
     assert out == []
+
+
+
+def test_select_me_entry_candidates_uses_deep_fcf_for_ranking_support():
+    base = {
+        "trade_date": "2026-10-05",
+        "second_wave_state": "RE-WATCH READY",
+        "sw_decision": "READY",
+        "sw_score": 70,
+        "hist_edge_score": 60,
+        "fcf_engine_score": 50,
+        "fcf_ttm": 100.0,
+        "fcf_ttm_complete": True,
+        "fcf_quality_grade": "B",
+        "fcf_basis": "CFO_MINUS_CAPEX",
+        "fcf_engine_status": "OK",
+        "p_fcf": 15.0,
+        "fcf_margin": 0.15,
+        "cash_conversion": 0.9,
+    }
+    high = dict(
+        base,
+        ticker="1111",
+        company_name="High Deep FCF",
+        screen_rank=10,
+        fcf_per_share_3y_cagr_score=90.0,
+        fcf_per_share_yoy_score=90.0,
+        cfo_yoy_score=90.0,
+        roic_score=90.0,
+        fcf_margin_score=90.0,
+        cash_conversion_score=90.0,
+        net_cash_ratio_score=90.0,
+        dilution_score=90.0,
+    )
+    low = dict(
+        base,
+        ticker="2222",
+        company_name="Low Deep FCF",
+        screen_rank=10,
+        fcf_per_share_3y_cagr_score=60.0,
+        fcf_per_share_yoy_score=60.0,
+        cfo_yoy_score=60.0,
+        roic_score=60.0,
+        fcf_margin_score=60.0,
+        cash_conversion_score=60.0,
+        net_cash_ratio_score=60.0,
+        dilution_score=60.0,
+    )
+
+    out = select_me_entry_candidates(
+        pd.DataFrame([low, high]),
+        as_of="2026-10-06",
+        limit=5,
+    )
+
+    assert list(out["ticker"]) == ["1111", "2222"]
+    assert "Deep FCF" in out.iloc[0]["source_detail"]
+
+
+def test_select_me_entry_candidates_falls_back_to_fcf_engine_score():
+    frame = pd.DataFrame(
+        [
+            _me_row(ticker="1111", score=70, rank=1),
+            _me_row(ticker="2222", score=70, rank=1),
+        ]
+    )
+    frame.loc[frame["ticker"] == "1111", "fcf_engine_score"] = 80
+    frame.loc[frame["ticker"] == "2222", "fcf_engine_score"] = 20
+
+    out = select_me_entry_candidates(
+        frame,
+        as_of="2026-10-06",
+        limit=5,
+    )
+
+    assert list(out["ticker"]) == ["1111", "2222"]

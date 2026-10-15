@@ -111,6 +111,109 @@ def _confidence(coverage: float) -> str:
     return "LOW"
 
 
+def evaluate_deep_fcf_rows(
+    screener: pd.DataFrame | None,
+    *,
+    min_coverage: float = 0.60,
+    min_score: float = 55.0,
+    min_quality_grade: str = "C",
+) -> pd.DataFrame:
+    """Evaluate every latest formal-ME row, including non-passing outcomes."""
+    columns = [
+        "ticker",
+        "company_name",
+        "deep_fcf_status",
+        "deep_fcf_score",
+        "deep_fcf_coverage",
+        "deep_fcf_confidence",
+        "fcf_quality_grade",
+        "fcf_engine_status",
+        "fcf_basis",
+        "p_fcf",
+        "execution_ready",
+        "reason",
+    ]
+    if screener is None or screener.empty or "ticker" not in screener.columns:
+        return pd.DataFrame(columns=columns)
+
+    out = screener.copy()
+    if "trade_date" in out.columns:
+        out["trade_date"] = pd.to_datetime(out["trade_date"], errors="coerce")
+        out = out.dropna(subset=["trade_date"])
+        if out.empty:
+            return pd.DataFrame(columns=columns)
+        latest = out["trade_date"].max()
+        out = out[out["trade_date"] == latest].copy()
+
+    out["ticker"] = (
+        out["ticker"].astype(str).str.replace(".0", "", regex=False).str.zfill(4)
+    )
+    total_weight = sum(DEEP_FCF_WEIGHTS.values())
+    rows = []
+    quality_floor = _quality_rank(min_quality_grade)
+
+    for _, row in out.iterrows():
+        used = 0.0
+        weighted = 0.0
+        for col, weight in DEEP_FCF_WEIGHTS.items():
+            value = _num(row.get(col))
+            if value is None:
+                continue
+            used += weight
+            weighted += max(0.0, min(100.0, value)) * weight
+
+        coverage = used / total_weight if total_weight else 0.0
+        confidence = _confidence(coverage)
+        core = weighted / used if used > 0 else None
+        valuation = _valuation_score(row.get("p_fcf"))
+        score = None
+        if core is not None:
+            score = core if valuation is None else core * 0.85 + valuation * 0.15
+
+        fcf_ttm = _num(row.get("fcf_ttm"))
+        fcf_complete = bool(row.get("fcf_ttm_complete", False))
+        quality = str(row.get("fcf_quality_grade") or "").strip().upper()
+        engine_status = str(row.get("fcf_engine_status") or "").strip().upper()
+        basis = str(row.get("fcf_basis") or "").strip().upper()
+
+        if not fcf_complete or fcf_ttm is None or fcf_ttm <= 0:
+            status = "DATA WAIT"
+        elif coverage < float(min_coverage):
+            status = "DATA WAIT"
+        elif quality_floor > 0 and _quality_rank(quality) < quality_floor:
+            status = "QUALITY WAIT"
+        elif score is None or score < float(min_score):
+            status = "BELOW BAR"
+        else:
+            status = deep_fcf_strength(score)
+
+        reason_bits = []
+        if engine_status:
+            reason_bits.append(engine_status)
+        if basis:
+            reason_bits.append(basis)
+        reason_bits.append(f"Coverage {coverage * 100:.0f}%")
+        if quality:
+            reason_bits.append(f"Quality {quality}")
+
+        rows.append({
+            "ticker": row.get("ticker"),
+            "company_name": row.get("company_name"),
+            "deep_fcf_status": status,
+            "deep_fcf_score": score,
+            "deep_fcf_coverage": coverage,
+            "deep_fcf_confidence": confidence,
+            "fcf_quality_grade": quality,
+            "fcf_engine_status": engine_status,
+            "fcf_basis": basis,
+            "p_fcf": _num(row.get("p_fcf")),
+            "execution_ready": _execution_ready(row),
+            "reason": " / ".join(reason_bits),
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
 def build_deep_fcf_top5(
     screener: pd.DataFrame | None,
     *,
