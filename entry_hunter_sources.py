@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from deep_fcf_top5 import evaluate_deep_fcf_rows
+
 
 ENTRY_COLUMNS = [
     "ticker",
@@ -562,10 +564,25 @@ def select_me_entry_candidates(
         s.get("hist_edge_score", pd.Series(0, index=s.index)),
         errors="coerce",
     ).fillna(0.0)
-    fcf = pd.to_numeric(
+    fcf_engine = pd.to_numeric(
         s.get("fcf_engine_score", pd.Series(0, index=s.index)),
         errors="coerce",
     ).fillna(0.0)
+
+    deep_eval = evaluate_deep_fcf_rows(
+        s,
+        min_coverage=0.60,
+        min_score=55.0,
+        min_quality_grade="C",
+    )
+    deep_map = {}
+    if not deep_eval.empty:
+        deep_map = {
+            str(row.get("ticker")): _num(row.get("deep_fcf_score"))
+            for _, row in deep_eval.iterrows()
+        }
+    deep_fcf = s["ticker"].map(deep_map)
+    fcf = pd.to_numeric(deep_fcf, errors="coerce").fillna(fcf_engine)
     rank = pd.to_numeric(
         s.get("screen_rank", pd.Series(pd.NA, index=s.index)),
         errors="coerce",
@@ -595,12 +612,15 @@ def select_me_entry_candidates(
         row_decision = str(row.get("sw_decision", "") or "")
         row_score = _num(row.get("sw_score"))
         row_hist = _num(row.get("hist_edge_score"))
+        row_deep = _num(deep_map.get(str(row.get("ticker"))))
 
         detail = f"{row_state} / {row_decision}"
         if row_score is not None:
             detail += f" / SW {row_score:.0f}"
         if row_hist is not None:
             detail += f" / Edge {row_hist:.0f}"
+        if row_deep is not None:
+            detail += f" / Deep FCF {row_deep:.0f}"
         details.append(detail)
 
         if row_state == "RE-EXP":
