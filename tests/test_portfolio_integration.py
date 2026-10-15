@@ -490,6 +490,40 @@ class PortfolioIntegrationTests(unittest.TestCase):
 
         self.assertEqual(out.iloc[0]["ME昇格"], "—")
 
+    def test_formal_me_with_incomplete_fcf_shows_data_wait(self):
+        portfolio = pd.DataFrame(
+            [{"ティッカー": "6701", "銘柄名": "NEC"}]
+        )
+        me = pd.DataFrame(
+            [{
+                "trade_date": "2026-10-15",
+                "ticker": "6701",
+                "company_name": "日本電気",
+                "sw_decision": "PASS",
+                "second_wave_state": "UNAVAILABLE",
+                "fcf_ttm": None,
+                "fcf_ttm_complete": False,
+                "cfo_yoy_score": 87.0,
+                "dilution_score": 85.0,
+                "fcf_quality_grade": "C",
+                "fcf_engine_status": "INSUFFICIENT",
+                "fcf_basis": "UNAVAILABLE",
+            }]
+        )
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            me,
+            {},
+            pd.DataFrame(),
+            pd.DataFrame([{"ticker": "6701"}]),
+        )
+
+        row = out.iloc[0]
+        self.assertEqual(row["ME昇格"], "✅ 正式ME済")
+        self.assertTrue(str(row["Deep FCF"]).startswith("⚪ DATA WAIT"))
+        self.assertEqual(row["Entry状態"], "—")
+
     def test_me_ready_is_p2_without_opportunity_score(self):
         label, rank = portfolio_priority_label(
             {
