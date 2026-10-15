@@ -92,7 +92,7 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertEqual(ii["Opportunity"], "B 62")
 
         self.assertEqual(abc["ME状態"], "WATCH")
-        self.assertEqual(abc["Deep FCF"], "—")
+        self.assertEqual(abc["Deep FCF"], "⚠ QUALITY D")
         self.assertEqual(abc["Entry状態"], "🟡 ME WATCH")
 
     def test_split_news_by_age_uses_30_day_boundary(self):
