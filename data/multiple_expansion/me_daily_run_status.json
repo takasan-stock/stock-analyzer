@@ -1,6 +1,6 @@
 {
-  "completed_date_jst": "2026-10-15",
-  "completed_at_jst": "2026-10-15T21:05:02.856600+09:00",
-  "event": "workflow_dispatch",
-  "run_id": "38731290636"
+  "completed_date_jst": "2026-10-16",
+  "completed_at_jst": "2026-10-16T22:27:11.541694+09:00",
+  "event": "schedule",
+  "run_id": "38907270549"
 }

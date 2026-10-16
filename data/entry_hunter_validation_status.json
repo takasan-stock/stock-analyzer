@@ -1,19 +1,34 @@
 {
-  "run_at": "2026-10-15T21:05:00.837504+09:00",
-  "validation_as_of": "2026-10-16T09:00:00",
+  "run_at": "2026-10-16T22:27:09.810546+09:00",
+  "validation_as_of": "2026-10-19T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
   "candidate_count": 6,
   "short_cover_candidates": 4,
   "me_entry_candidates": 2,
-  "me_watch_candidates": 2,
+  "me_watch_candidates": 1,
   "me_watch_tickers": [
-    "4502",
-    "7085"
+    "7453"
   ],
-  "me_promoted_count": 0,
-  "me_promoted_tickers": [],
+  "me_promoted_count": 1,
+  "me_promoted_tickers": [
+    "4403"
+  ],
   "rows": [
+    {
+      "ticker": "8022",
+      "name": "美津濃",
+      "source": "ME HUNTER",
+      "signal_key": "ME|PRIORITY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 48.8,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "ME HUNTER / ME|PRIORITY / 候補品質GOOD / ENTRY条件待ち"
+    },
     {
       "ticker": "2379",
       "name": "ディップ",
@@ -21,26 +36,12 @@
       "signal_key": "SC|EARLY",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 50.3,
-      "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
+      "entry_score": 55.0,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 72.3,
+      "opportunity_rating": "B+",
+      "opportunity_action": "WATCH",
       "opportunity_reason": "SHORT COVER / SC|EARLY / 候補品質GOOD / ENTRY条件待ち"
-    },
-    {
-      "ticker": "7752",
-      "name": "リコー",
-      "source": "ME HUNTER",
-      "signal_key": "ME|PRIORITY",
-      "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 46.6,
-      "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "ME HUNTER / ME|PRIORITY / 候補品質GOOD / ENTRY条件待ち"
     },
     {
       "ticker": "3697",
@@ -49,26 +50,26 @@
       "signal_key": "SC|EARLY",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 46.9,
-      "opportunity_rating": "C",
+      "entry_score": 45.0,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 64.9,
+      "opportunity_rating": "B",
       "opportunity_action": "WAIT",
       "opportunity_reason": "SHORT COVER / SC|EARLY / 候補品質GOOD / ENTRY条件待ち"
     },
     {
-      "ticker": "6323",
-      "name": "ローツェ",
+      "ticker": "4403",
+      "name": "日油",
       "source": "ME HUNTER",
-      "signal_key": "ME|PRIORITY",
-      "me_promotion": false,
+      "signal_key": "ME|R-READY",
+      "me_promotion": true,
       "entry_status": "🟡 WAIT",
       "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 41.6,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 39.9,
       "opportunity_rating": "C",
       "opportunity_action": "WAIT",
-      "opportunity_reason": "ME HUNTER / ME|PRIORITY / ENTRY条件待ち"
+      "opportunity_reason": "ME HUNTER / ME|R-READY / ENTRY条件待ち"
     },
     {
       "ticker": "5246",
@@ -77,10 +78,10 @@
       "signal_key": "SC|EARLY",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 37.6,
-      "opportunity_rating": "C",
+      "entry_score": 63.0,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 62.8,
+      "opportunity_rating": "B",
       "opportunity_action": "WAIT",
       "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
     },
@@ -90,13 +91,13 @@
       "source": "SHORT COVER",
       "signal_key": "SC|EARLY",
       "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-10-15 00:00:00",
-      "opportunity_score": 36.2,
-      "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
+      "entry_status": "🟢 ENTRY READY",
+      "entry_score": 100.0,
+      "market_date": "2026-10-16 00:00:00",
+      "opportunity_score": 83.2,
+      "opportunity_rating": "A",
+      "opportunity_action": "ENTRY READY",
+      "opportunity_reason": "SHORT COVER / SC|EARLY / 寄り後READY"
     }
   ]
 }
