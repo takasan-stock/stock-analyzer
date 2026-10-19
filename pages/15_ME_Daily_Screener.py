@@ -344,8 +344,10 @@ j1.info(f"**優先度：{decision}**")
 j2.info(f"**状態：{state}**")
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("SWスコア", f"{float(row.get('sw_score', 0)):.0f}/100")
-m2.metric("MLP-C", f"{float(row.get('mlp_c_core', 0)):.3f}")
+sw_score = _safe_num(row.get("sw_score"))
+mlp_core = _safe_num(row.get("mlp_c_core"))
+m1.metric("SWスコア", "—" if sw_score is None else f"{sw_score:.0f}/100")
+m2.metric("MLP-C", "—" if mlp_core is None else f"{mlp_core:.3f}")
 m3.metric("速度", _pct_raw(row.get("me_velocity_pct"), 2))
 m4.metric("加速度", _pct_raw(row.get("me_acceleration_pct"), 2))
 
