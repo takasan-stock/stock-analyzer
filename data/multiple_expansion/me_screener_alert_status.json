@@ -1,8 +1,8 @@
 {
-  "run_at": "2026-10-16T22:27:06.307923+09:00",
+  "run_at": "2026-10-20T00:51:23.626444+09:00",
   "email_configured": true,
-  "change_count": 6,
-  "email_sent": true,
+  "change_count": 0,
+  "email_sent": false,
   "email_error": "",
-  "result": "SENT"
+  "result": "NO_CHANGES"
 }
