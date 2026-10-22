@@ -1,10 +1,10 @@
 {
-  "run_at": "2026-10-22T00:36:25.589801+09:00",
-  "validation_as_of": "2026-10-23T09:00:00",
+  "run_at": "2026-10-23T00:36:29.057302+09:00",
+  "validation_as_of": "2026-10-26T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 2,
-  "short_cover_candidates": 2,
+  "candidate_count": 3,
+  "short_cover_candidates": 3,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
@@ -12,32 +12,46 @@
   "me_promoted_tickers": [],
   "rows": [
     {
-      "ticker": "4565",
-      "name": "ネクセラファーマ",
+      "ticker": "3697",
+      "name": "ＳＨＩＦＴ",
       "source": "SHORT COVER",
       "signal_key": "SC|CONFIRMED",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
       "entry_score": 0.0,
-      "market_date": "2026-10-21 00:00:00",
-      "opportunity_score": 54.0,
+      "market_date": "2026-10-22 00:00:00",
+      "opportunity_score": 52.7,
       "opportunity_rating": "C",
       "opportunity_action": "WAIT",
       "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質STRONG / ENTRY条件待ち"
     },
     {
-      "ticker": "5133",
-      "name": "テリロジーホールディングス",
+      "ticker": "3747",
+      "name": "インタートレード",
       "source": "SHORT COVER",
-      "signal_key": "SC|EARLY",
+      "signal_key": "SC|SQUEEZE",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
       "entry_score": 0.0,
-      "market_date": "2026-10-21 00:00:00",
-      "opportunity_score": 36.9,
+      "market_date": "2026-10-22 00:00:00",
+      "opportunity_score": 52.1,
       "opportunity_rating": "C",
       "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
+      "opportunity_reason": "SHORT COVER / SC|SQUEEZE / 候補品質STRONG / ENTRY条件待ち"
+    },
+    {
+      "ticker": "5133",
+      "name": "テリロジーホールディングス",
+      "source": "SHORT COVER",
+      "signal_key": "SC|CONFIRMED",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-10-22 00:00:00",
+      "opportunity_score": 39.0,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / ENTRY条件待ち"
     }
   ]
 }
