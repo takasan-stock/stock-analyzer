@@ -68,26 +68,19 @@ ME_UNIVERSE_CANDIDATES_FILE = "data/multiple_expansion/me_universe_candidates.cs
 
 
 def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
-    """Render a compact action card that copies the prompt and opens the selected AI."""
+    """Render compact AI launch controls with clipboard support."""
     prompt_b64 = base64.b64encode(prompt.encode("utf-8")).decode("ascii")
     safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", str(key_suffix))
     html = f"""
     <style>
       #ai-launcher-{safe_key} {{
         font-family: Arial, sans-serif;
-        border: 1px solid #e4e7ec;
-        border-radius: 14px;
-        padding: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        padding: 4px 0 0 0;
       }}
-      #ai-launcher-{safe_key} .steps {{
+      #ai-launcher-{safe_key} .hint {{
         font-size: 12px;
         color: #667085;
-        margin-bottom: 10px;
-      }}
-      #ai-launcher-{safe_key} .steps span {{
-        padding: 0 5px;
-        color: #98a2b3;
+        margin-bottom: 9px;
       }}
       #ai-launcher-{safe_key} .actions {{
         display: grid;
@@ -96,38 +89,40 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
       }}
       #ai-launcher-{safe_key} button {{
         border-radius: 10px;
-        padding: 11px 12px;
+        padding: 12px 14px;
         cursor: pointer;
         font-size: 14px;
         font-weight: 700;
-        transition: transform .08s ease, box-shadow .08s ease;
+        transition: transform .08s ease, box-shadow .08s ease, filter .08s ease;
       }}
       #ai-launcher-{safe_key} button:hover {{
         transform: translateY(-1px);
         box-shadow: 0 3px 8px rgba(16,24,40,.10);
+        filter: brightness(.99);
       }}
       #chatgpt-{safe_key} {{
-        border: 1px solid #b7e4d6;
+        border: 1px solid #a6e4d0;
         background: #ecfdf3;
         color: #065f46;
       }}
       #gemini-{safe_key} {{
-        border: 1px solid #c7d7fe;
+        border: 1px solid #b9cdfc;
         background: #eef4ff;
         color: #1849a9;
       }}
       #copy-{safe_key} {{
         width: 100%;
-        margin-top: 9px;
-        border: 1px solid #d0d5dd;
+        margin-top: 8px;
+        padding: 9px 12px;
+        border: 1px solid #e4e7ec;
         background: #ffffff;
-        color: #344054;
+        color: #667085;
         font-weight: 600;
       }}
       #status-{safe_key} {{
         display: block;
-        margin-top: 9px;
-        min-height: 18px;
+        margin-top: 8px;
+        min-height: 17px;
         font-size: 12px;
         color: #667085;
       }}
@@ -139,15 +134,13 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
     </style>
 
     <div id="ai-launcher-{safe_key}">
-      <div class="steps">
-        ① AIを選ぶ <span>→</span> ② プロンプトを自動コピー <span>→</span> ③ AI側で Ctrl+V
-      </div>
+      <div class="hint">ボタンを押すとプロンプトをコピーしてAIを新しいタブで開きます。</div>
       <div class="actions">
         <button id="chatgpt-{safe_key}">🟢 ChatGPTで分析する</button>
         <button id="gemini-{safe_key}">🔵 Geminiで分析する</button>
       </div>
-      <button id="copy-{safe_key}">📋 プロンプトだけコピー</button>
-      <span id="status-{safe_key}">AIを選ぶと、新しいタブを開いてプロンプトをコピーします。</span>
+      <button id="copy-{safe_key}">📋 AIを開かず、プロンプトだけコピー</button>
+      <span id="status-{safe_key}"></span>
     </div>
 
     <script>
@@ -182,7 +175,6 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
       }}
 
       async function launch(url, label) {{
-        // Open first while the click gesture is still active; this reduces popup-blocking.
         const opened = window.open(url, "_blank", "noopener,noreferrer");
         const copied = await copyPrompt();
 
@@ -190,7 +182,7 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
           status.textContent = "✅ コピー済み。開いた" + label + "で Ctrl+V → Enter";
           status.style.color = "#067647";
         }} else {{
-          status.textContent = "⚠️ 自動コピーできませんでした。下のプロンプト確認欄からコピーしてください。";
+          status.textContent = "⚠️ 自動コピーできませんでした。下の確認欄から手動コピーしてください。";
           status.style.color = "#b54708";
         }}
 
@@ -205,7 +197,7 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
           status.textContent = "✅ プロンプトをコピーしました。";
           status.style.color = "#067647";
         }} else {{
-          status.textContent = "⚠️ 自動コピーできませんでした。下のプロンプト確認欄からコピーしてください。";
+          status.textContent = "⚠️ 自動コピーできませんでした。下の確認欄から手動コピーしてください。";
           status.style.color = "#b54708";
         }}
       }}
@@ -218,7 +210,7 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
     }})();
     </script>
     """
-    components.html(html, height=176, scrolling=False)
+    components.html(html, height=140, scrolling=False)
 
 def load_me_universe_snapshot() -> pd.DataFrame:
     try:
@@ -5007,10 +4999,10 @@ with tab5:
         st.divider()
 
         # --- AI分析アクションセンター ---
-        st.markdown("##### 🤖 AI分析アクション")
+        st.markdown("##### 🤖 AIで分析")
         st.caption(
-            "総合分析と決算分析をここに集約しました。"
-            "「設定 → AIを選ぶ → 必要ならプロンプト確認」の順で使えます。"
+            "通常の銘柄分析と決算チェックをここから実行できます。"
+            "必要な設定だけ確認して、使うAIを選んでください。"
         )
 
         with st.container(border=True):
@@ -5055,13 +5047,13 @@ with tab5:
                 else:
                     full_prompt = base_prompt
 
-                st.markdown("**② AIを選んで分析**")
+                st.markdown("**② 使用するAIを選ぶ**")
                 render_ai_prompt_launcher(
                     full_prompt,
                     key_suffix=f"analysis_{selected_ticker}",
                 )
 
-                with st.expander("③ 生成されたプロンプトを確認 / 手動コピー", expanded=False):
+                with st.expander("③ プロンプトを確認・手動コピー", expanded=False):
                     st.caption(
                         "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
                     )
@@ -5102,13 +5094,13 @@ with tab5:
                     memo=memo_input or "（特になし）",
                 )
 
-                st.markdown("**② AIを選んで分析**")
+                st.markdown("**② 使用するAIを選ぶ**")
                 render_ai_prompt_launcher(
                     earnings_prompt,
                     key_suffix=f"earnings_{selected_ticker}",
                 )
 
-                with st.expander("③ 生成されたプロンプトを確認 / 手動コピー", expanded=False):
+                with st.expander("③ プロンプトを確認・手動コピー", expanded=False):
                     st.caption(
                         "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
                     )
