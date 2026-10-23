@@ -2486,6 +2486,55 @@ def read_entry_raw(ticker_code: str, kind: str, key: str) -> str:
         return ""
 
 
+def save_research_entry_smart(
+    ticker_code: str,
+    kind: str,
+    base_key: str,
+    content: str,
+    company_name: str,
+    github_config: dict | None,
+) -> tuple[bool, str, str]:
+    """
+    Save one research entry locally and mirror it to GitHub when configured.
+
+    Returns:
+        (saved_ok, entry_key, message)
+    """
+    clean_key = str(base_key or "").strip()
+    clean_content = str(content or "").strip()
+    if not clean_key:
+        return False, "", "保存キーが空です。"
+    if not clean_content:
+        return False, "", "レポート本文が空です。"
+
+    existing_entries = load_entries_smart(ticker_code, kind, github_config)
+    existing_keys = {str(e.get("key", "") or "") for e in existing_entries}
+    entry_key = make_unique_entry_key(clean_key, existing_keys)
+
+    save_entry(
+        ticker_code,
+        kind,
+        entry_key,
+        clean_content,
+    )
+
+    if not github_config:
+        return True, entry_key, "ローカル保存しました。"
+
+    file_stem = f"{safe_ticker_filename(ticker_code)}_{kind}_{entry_key}"
+    gh_ok, gh_message = github_upload_report(
+        file_stem,
+        read_entry_raw(ticker_code, kind, entry_key),
+        company_name,
+    )
+    if gh_ok:
+        github_fetch_entries.clear()
+        github_fetch_content.clear()
+        return True, entry_key, "GitHub同期済み。"
+
+    return True, entry_key, f"ローカル保存済み。GitHub同期は失敗しました: {gh_message}"
+
+
 def delete_entry_smart(
     ticker_code: str,
     kind: str,
@@ -5053,11 +5102,53 @@ with tab5:
                     key_suffix=f"analysis_{selected_ticker}",
                 )
 
-                with st.expander("③ プロンプトを確認・手動コピー", expanded=False):
+                with st.expander("生成プロンプトを確認・手動コピー", expanded=False):
                     st.caption(
                         "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
                     )
                     st.code(full_prompt, language=None)
+
+                st.markdown("**③ AIの回答を保存**")
+                st.caption("ChatGPT / Gemini の回答を貼り付けると、下の「銘柄リサーチ記録 ＞ 銘柄レポート」に保存されます。")
+                analysis_result_date = st.date_input(
+                    "記録日",
+                    value=datetime.date.today(),
+                    key=f"analysis_result_date_{selected_ticker}",
+                )
+                analysis_ai_result = st.text_area(
+                    "AIの回答",
+                    height=260,
+                    placeholder="ChatGPT / Gemini の分析結果をここに貼り付けます...",
+                    key=f"analysis_ai_result_{selected_ticker}",
+                )
+                if st.button(
+                    "💾 銘柄レポートに保存",
+                    type="primary",
+                    key=f"analysis_ai_result_save_{selected_ticker}",
+                ):
+                    if not analysis_ai_result.strip():
+                        st.error("⚠️ AIの回答を貼り付けてください。")
+                    else:
+                        _saved, _entry_key, _message = save_research_entry_smart(
+                            selected_ticker,
+                            "analysis",
+                            analysis_result_date.strftime("%Y-%m-%d"),
+                            analysis_ai_result,
+                            company_name,
+                            github_config,
+                        )
+                        if _saved:
+                            if "GitHub同期は失敗" in _message:
+                                st.warning(
+                                    f"⚠️ {display_entry_key(_entry_key, 'analysis')} を保存しました。{_message}"
+                                )
+                            else:
+                                st.success(
+                                    f"✅ {display_entry_key(_entry_key, 'analysis')} を銘柄レポートに保存しました。"
+                                    + (" GitHub同期済み。" if github_config else "")
+                                )
+                        else:
+                            st.error(f"⚠️ {_message}")
 
             with earnings_tab:
                 st.markdown("**① 決算情報を入力**")
@@ -5100,11 +5191,50 @@ with tab5:
                     key_suffix=f"earnings_{selected_ticker}",
                 )
 
-                with st.expander("③ プロンプトを確認・手動コピー", expanded=False):
+                with st.expander("生成プロンプトを確認・手動コピー", expanded=False):
                     st.caption(
                         "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
                     )
                     st.code(earnings_prompt, language=None)
+
+                st.markdown("**③ AIの回答を保存**")
+                st.caption("ChatGPT / Gemini の回答を貼り付けると、下の「銘柄リサーチ記録 ＞ 決算分析」に保存されます。")
+                earnings_ai_result = st.text_area(
+                    "AIの決算分析回答",
+                    height=260,
+                    placeholder="ChatGPT / Gemini の決算分析結果をここに貼り付けます...",
+                    key=f"earnings_ai_result_{selected_ticker}",
+                )
+                if st.button(
+                    "💾 決算分析レポートに保存",
+                    type="primary",
+                    key=f"earnings_ai_result_save_{selected_ticker}",
+                ):
+                    if not quarter_input.strip():
+                        st.error("⚠️ 先に対象四半期を入力してください（例: 2026-4Q）。")
+                    elif not earnings_ai_result.strip():
+                        st.error("⚠️ AIの回答を貼り付けてください。")
+                    else:
+                        _saved, _entry_key, _message = save_research_entry_smart(
+                            selected_ticker,
+                            "earnings",
+                            quarter_input.strip(),
+                            earnings_ai_result,
+                            company_name,
+                            github_config,
+                        )
+                        if _saved:
+                            if "GitHub同期は失敗" in _message:
+                                st.warning(
+                                    f"⚠️ {display_entry_key(_entry_key, 'earnings')} を保存しました。{_message}"
+                                )
+                            else:
+                                st.success(
+                                    f"✅ {display_entry_key(_entry_key, 'earnings')} を決算分析レポートに保存しました。"
+                                    + (" GitHub同期済み。" if github_config else "")
+                                )
+                        else:
+                            st.error(f"⚠️ {_message}")
 
         st.divider()
 
@@ -5162,7 +5292,7 @@ with tab5:
                 "AI分析・SWOT・投資判断メモを日付ごとに保存します。"
                 "新しい記録は上から追加し、過去記録は新しい順に確認できます。"
             )
-            with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
+            with st.expander("➕ 手動で銘柄レポートを追加", expanded=False):
                 new_analysis_date = st.date_input(
                     "記録する日付",
                     value=datetime.date.today(),
@@ -5263,7 +5393,7 @@ with tab5:
                 "決算分析プロンプトの結果を四半期ごとに保存します。"
                 "進捗率・上方修正余地・株価反応の振り返りに使えます。"
             )
-            with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
+            with st.expander("➕ 手動で決算分析レポートを追加", expanded=False):
                 new_earnings_quarter = st.text_input(
                     "対象四半期（例: 2026-4Q）",
                     value=quarter_input,
