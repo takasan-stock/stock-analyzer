@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from sidebar_nav import render_sidebar_navigation
 import pandas as pd
 import plotly.express as px
@@ -64,6 +65,96 @@ DATA_FILE = "portfolio_data.csv"
 # dashboardの起動を止めないため、portfolio_integrationからはimportしない。
 ME_UNIVERSE_SNAPSHOT_FILE = "data/multiple_expansion/me_universe_snapshot.csv"
 ME_UNIVERSE_CANDIDATES_FILE = "data/multiple_expansion/me_universe_candidates.csv"
+
+
+def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
+    """Copy a prompt, then open the selected AI in a new browser tab."""
+    prompt_b64 = base64.b64encode(prompt.encode("utf-8")).decode("ascii")
+    safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", str(key_suffix))
+    html = f"""
+    <div id="ai-launcher-{safe_key}" style="
+        display:flex;
+        gap:10px;
+        align-items:center;
+        flex-wrap:wrap;
+        margin:2px 0 8px 0;
+        font-family:Arial, sans-serif;
+    ">
+      <button id="chatgpt-{safe_key}" style="
+          border:1px solid #d0d5dd;
+          border-radius:8px;
+          padding:9px 16px;
+          background:white;
+          cursor:pointer;
+          font-size:14px;
+      ">🟢 ChatGPTで開く</button>
+      <button id="gemini-{safe_key}" style="
+          border:1px solid #d0d5dd;
+          border-radius:8px;
+          padding:9px 16px;
+          background:white;
+          cursor:pointer;
+          font-size:14px;
+      ">🔵 Geminiで開く</button>
+      <span id="status-{safe_key}" style="
+          font-size:12px;
+          color:#667085;
+      ">クリックするとプロンプトをコピーしてAIを開きます</span>
+    </div>
+    <script>
+    (() => {{
+      const b64 = "{prompt_b64}";
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const prompt = new TextDecoder("utf-8").decode(bytes);
+      const status = document.getElementById("status-{safe_key}");
+
+      async function copyPrompt() {{
+        try {{
+          if (navigator.clipboard && navigator.clipboard.writeText) {{
+            await navigator.clipboard.writeText(prompt);
+            return true;
+          }}
+        }} catch (e) {{}}
+
+        try {{
+          const ta = document.createElement("textarea");
+          ta.value = prompt;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+          return ok;
+        }} catch (e) {{
+          return false;
+        }}
+      }}
+
+      async function launch(url, label) {{
+        const copied = await copyPrompt();
+        const opened = window.open(url, "_blank", "noopener,noreferrer");
+        if (copied) {{
+          status.textContent = "✅ コピー済み。開いた" + label + "で Ctrl+V → Enter";
+          status.style.color = "#067647";
+        }} else {{
+          status.textContent = "⚠️ 自動コピーできませんでした。下のコード欄のコピーをご利用ください。";
+          status.style.color = "#b54708";
+        }}
+        if (!opened) {{
+          status.textContent += "（ポップアップがブロックされた可能性があります）";
+        }}
+      }}
+
+      document.getElementById("chatgpt-{safe_key}").onclick =
+        () => launch("https://chatgpt.com/", "ChatGPT");
+      document.getElementById("gemini-{safe_key}").onclick =
+        () => launch("https://gemini.google.com/app", "Gemini");
+    }})();
+    </script>
+    """
+    components.html(html, height=58, scrolling=False)
 
 
 def load_me_universe_snapshot() -> pd.DataFrame:
@@ -4855,8 +4946,8 @@ with tab5:
         # --- AI分析用プロンプト（折りたたみ） ---
         with st.expander("🤖 AI分析用プロンプト（ヘッジファンド級・爆弾チェック付き）"):
             st.caption(
-                "証券コードを埋め込んだ詳細分析プロンプトです。コピーしてChatGPT・Gemini・Claudeなど"
-                "（Web検索機能つき推奨）に貼り付けてください。"
+                "証券コードを埋め込んだ詳細分析プロンプトです。下のボタンからChatGPTまたはGeminiを開けます。"
+                "プロンプトは自動コピーされるので、開いたAIで Ctrl+V → Enter してください。"
             )
 
             include_context = st.checkbox(
@@ -4885,6 +4976,10 @@ with tab5:
             else:
                 full_prompt = base_prompt
 
+            render_ai_prompt_launcher(
+                full_prompt,
+                key_suffix=f"analysis_{selected_ticker}",
+            )
             st.code(full_prompt, language=None)
 
         st.divider()
@@ -4893,7 +4988,8 @@ with tab5:
         with st.expander("📈 決算分析用プロンプト（決算発表時に使用）"):
             st.caption(
                 "決算発表のたびに使うプロンプトです。対象四半期・第一印象・メモを入力すると、"
-                "決算データを埋め込んだプロンプトが生成されます。発表されたIR資料（PDFや画像）と一緒にAIへ渡してください。"
+                "決算データを埋め込んだプロンプトが生成されます。下のボタンでAIを開き、"
+                "自動コピーされたプロンプトを Ctrl+V → Enter してください。IR資料（PDFや画像）も必要に応じて添付してください。"
             )
 
             col_q1, col_q2 = st.columns(2)
@@ -4924,6 +5020,10 @@ with tab5:
                 memo=memo_input or "（特になし）"
             )
 
+            render_ai_prompt_launcher(
+                earnings_prompt,
+                key_suffix=f"earnings_{selected_ticker}",
+            )
             st.code(earnings_prompt, language=None)
 
         st.divider()
