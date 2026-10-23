@@ -68,39 +68,88 @@ ME_UNIVERSE_CANDIDATES_FILE = "data/multiple_expansion/me_universe_candidates.cs
 
 
 def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
-    """Copy a prompt, then open the selected AI in a new browser tab."""
+    """Render a compact action card that copies the prompt and opens the selected AI."""
     prompt_b64 = base64.b64encode(prompt.encode("utf-8")).decode("ascii")
     safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", str(key_suffix))
     html = f"""
-    <div id="ai-launcher-{safe_key}" style="
-        display:flex;
-        gap:10px;
-        align-items:center;
-        flex-wrap:wrap;
-        margin:2px 0 8px 0;
-        font-family:Arial, sans-serif;
-    ">
-      <button id="chatgpt-{safe_key}" style="
-          border:1px solid #d0d5dd;
-          border-radius:8px;
-          padding:9px 16px;
-          background:white;
-          cursor:pointer;
-          font-size:14px;
-      ">🟢 ChatGPTで開く</button>
-      <button id="gemini-{safe_key}" style="
-          border:1px solid #d0d5dd;
-          border-radius:8px;
-          padding:9px 16px;
-          background:white;
-          cursor:pointer;
-          font-size:14px;
-      ">🔵 Geminiで開く</button>
-      <span id="status-{safe_key}" style="
-          font-size:12px;
-          color:#667085;
-      ">クリックするとプロンプトをコピーしてAIを開きます</span>
+    <style>
+      #ai-launcher-{safe_key} {{
+        font-family: Arial, sans-serif;
+        border: 1px solid #e4e7ec;
+        border-radius: 14px;
+        padding: 14px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      }}
+      #ai-launcher-{safe_key} .steps {{
+        font-size: 12px;
+        color: #667085;
+        margin-bottom: 10px;
+      }}
+      #ai-launcher-{safe_key} .steps span {{
+        padding: 0 5px;
+        color: #98a2b3;
+      }}
+      #ai-launcher-{safe_key} .actions {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }}
+      #ai-launcher-{safe_key} button {{
+        border-radius: 10px;
+        padding: 11px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 700;
+        transition: transform .08s ease, box-shadow .08s ease;
+      }}
+      #ai-launcher-{safe_key} button:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 3px 8px rgba(16,24,40,.10);
+      }}
+      #chatgpt-{safe_key} {{
+        border: 1px solid #b7e4d6;
+        background: #ecfdf3;
+        color: #065f46;
+      }}
+      #gemini-{safe_key} {{
+        border: 1px solid #c7d7fe;
+        background: #eef4ff;
+        color: #1849a9;
+      }}
+      #copy-{safe_key} {{
+        width: 100%;
+        margin-top: 9px;
+        border: 1px solid #d0d5dd;
+        background: #ffffff;
+        color: #344054;
+        font-weight: 600;
+      }}
+      #status-{safe_key} {{
+        display: block;
+        margin-top: 9px;
+        min-height: 18px;
+        font-size: 12px;
+        color: #667085;
+      }}
+      @media (max-width: 520px) {{
+        #ai-launcher-{safe_key} .actions {{
+          grid-template-columns: 1fr;
+        }}
+      }}
+    </style>
+
+    <div id="ai-launcher-{safe_key}">
+      <div class="steps">
+        ① AIを選ぶ <span>→</span> ② プロンプトを自動コピー <span>→</span> ③ AI側で Ctrl+V
+      </div>
+      <div class="actions">
+        <button id="chatgpt-{safe_key}">🟢 ChatGPTで分析する</button>
+        <button id="gemini-{safe_key}">🔵 Geminiで分析する</button>
+      </div>
+      <button id="copy-{safe_key}">📋 プロンプトだけコピー</button>
+      <span id="status-{safe_key}">AIを選ぶと、新しいタブを開いてプロンプトをコピーします。</span>
     </div>
+
     <script>
     (() => {{
       const b64 = "{prompt_b64}";
@@ -133,17 +182,31 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
       }}
 
       async function launch(url, label) {{
-        const copied = await copyPrompt();
+        // Open first while the click gesture is still active; this reduces popup-blocking.
         const opened = window.open(url, "_blank", "noopener,noreferrer");
+        const copied = await copyPrompt();
+
         if (copied) {{
           status.textContent = "✅ コピー済み。開いた" + label + "で Ctrl+V → Enter";
           status.style.color = "#067647";
         }} else {{
-          status.textContent = "⚠️ 自動コピーできませんでした。下のコード欄のコピーをご利用ください。";
+          status.textContent = "⚠️ 自動コピーできませんでした。下のプロンプト確認欄からコピーしてください。";
           status.style.color = "#b54708";
         }}
+
         if (!opened) {{
           status.textContent += "（ポップアップがブロックされた可能性があります）";
+        }}
+      }}
+
+      async function copyOnly() {{
+        const copied = await copyPrompt();
+        if (copied) {{
+          status.textContent = "✅ プロンプトをコピーしました。";
+          status.style.color = "#067647";
+        }} else {{
+          status.textContent = "⚠️ 自動コピーできませんでした。下のプロンプト確認欄からコピーしてください。";
+          status.style.color = "#b54708";
         }}
       }}
 
@@ -151,11 +214,11 @@ def render_ai_prompt_launcher(prompt: str, *, key_suffix: str) -> None:
         () => launch("https://chatgpt.com/", "ChatGPT");
       document.getElementById("gemini-{safe_key}").onclick =
         () => launch("https://gemini.google.com/app", "Gemini");
+      document.getElementById("copy-{safe_key}").onclick = copyOnly;
     }})();
     </script>
     """
-    components.html(html, height=58, scrolling=False)
-
+    components.html(html, height=176, scrolling=False)
 
 def load_me_universe_snapshot() -> pd.DataFrame:
     try:
@@ -4943,88 +5006,113 @@ with tab5:
 
         st.divider()
 
-        # --- AI分析用プロンプト（折りたたみ） ---
-        with st.expander("🤖 AI分析用プロンプト（ヘッジファンド級・爆弾チェック付き）"):
-            st.caption(
-                "証券コードを埋め込んだ詳細分析プロンプトです。下のボタンからChatGPTまたはGeminiを開けます。"
-                "プロンプトは自動コピーされるので、開いたAIで Ctrl+V → Enter してください。"
-            )
+        # --- AI分析アクションセンター ---
+        st.markdown("##### 🤖 AI分析アクション")
+        st.caption(
+            "総合分析と決算分析をここに集約しました。"
+            "「設定 → AIを選ぶ → 必要ならプロンプト確認」の順で使えます。"
+        )
 
-            include_context = st.checkbox(
-                "ダッシュボードの登録データ（セクター・PER・売上5y CAGRなど）をプロンプトに含める",
-                value=True,
-                key=f"include_context_{selected_ticker}"
-            )
+        with st.container(border=True):
+            analysis_tab, earnings_tab = st.tabs([
+                "🧠 総合分析",
+                "📈 決算分析",
+            ])
 
-            # 新プロンプトの【証券コード】欄に選択中の銘柄コードを埋め込む
-            base_prompt = ANALYST_PROMPT_TEMPLATE.replace("{ticker}", f"{selected_ticker}（{company_name}）")
-
-            if include_context and selected_row is not None:
-                context_lines = "\n".join(
-                    f"- {col}: {selected_row[col]}"
-                    for col in ["ティッカー", "銘柄名", "セクター", "ステータス",
-                                "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ",
-                                "ROIC", "DPUP", "投資家メモ"]
-                    if col in selected_row.index
+            with analysis_tab:
+                st.markdown("**① 分析内容を設定**")
+                include_context = st.checkbox(
+                    "ダッシュボードの登録データもAIに渡す",
+                    value=True,
+                    key=f"include_context_{selected_ticker}",
+                    help="セクター・PER・売上5y CAGR・ネットキャッシュ・ROIC・DPUP・投資家メモなどを参考情報として追加します。",
                 )
-                full_prompt = (
-                    f"{base_prompt}\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"【ダッシュボード登録データ（参考）】\n{context_lines}\n"
-                    f"※上記は現時点の記録値です。必ず最新のIR・TDnet・有報・決算資料を根拠に分析してください。"
-                )
-            else:
-                full_prompt = base_prompt
-
-            render_ai_prompt_launcher(
-                full_prompt,
-                key_suffix=f"analysis_{selected_ticker}",
-            )
-            st.code(full_prompt, language=None)
-
-        st.divider()
-
-        # --- 決算分析用プロンプト（折りたたみ） ---
-        with st.expander("📈 決算分析用プロンプト（決算発表時に使用）"):
-            st.caption(
-                "決算発表のたびに使うプロンプトです。対象四半期・第一印象・メモを入力すると、"
-                "決算データを埋め込んだプロンプトが生成されます。下のボタンでAIを開き、"
-                "自動コピーされたプロンプトを Ctrl+V → Enter してください。IR資料（PDFや画像）も必要に応じて添付してください。"
-            )
-
-            col_q1, col_q2 = st.columns(2)
-            with col_q1:
-                quarter_input = st.text_input(
-                    "対象四半期 (例: 2026-4Q)",
-                    key=f"earnings_quarter_{selected_ticker}"
-                )
-            with col_q2:
-                impression_input = st.selectbox(
-                    "投資家の第一印象",
-                    ["ポジティブ", "中立", "ネガティブ"],
-                    index=1,
-                    key=f"earnings_impression_{selected_ticker}"
+                st.caption(
+                    "通常はON推奨です。AI側では、登録値だけに依存せず最新のIR・TDnet・有報・決算資料を確認する前提です。"
                 )
 
-            memo_input = st.text_area(
-                "メモ（決算を見た直後の所感、印象的だった発言など）",
-                key=f"earnings_memo_{selected_ticker}",
-                height=80
-            )
+                base_prompt = ANALYST_PROMPT_TEMPLATE.replace(
+                    "{ticker}",
+                    f"{selected_ticker}（{company_name}）",
+                )
 
-            earnings_prompt = EARNINGS_PROMPT_TEMPLATE.format(
-                company_name=company_name or "（銘柄名未登録）",
-                quarter=quarter_input or "（対象四半期を入力してください）",
-                ticker=selected_ticker,
-                impression=impression_input,
-                memo=memo_input or "（特になし）"
-            )
+                if include_context and selected_row is not None:
+                    context_lines = "\n".join(
+                        f"- {col}: {selected_row[col]}"
+                        for col in [
+                            "ティッカー", "銘柄名", "セクター", "ステータス",
+                            "売上5y CAGR", "売上予想", "PER", "ネットキャッシュ",
+                            "ROIC", "DPUP", "投資家メモ",
+                        ]
+                        if col in selected_row.index
+                    )
+                    full_prompt = (
+                        f"{base_prompt}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"【ダッシュボード登録データ（参考）】\n{context_lines}\n"
+                        f"※上記は現時点の記録値です。必ず最新のIR・TDnet・有報・決算資料を根拠に分析してください。"
+                    )
+                else:
+                    full_prompt = base_prompt
 
-            render_ai_prompt_launcher(
-                earnings_prompt,
-                key_suffix=f"earnings_{selected_ticker}",
-            )
-            st.code(earnings_prompt, language=None)
+                st.markdown("**② AIを選んで分析**")
+                render_ai_prompt_launcher(
+                    full_prompt,
+                    key_suffix=f"analysis_{selected_ticker}",
+                )
+
+                with st.expander("③ 生成されたプロンプトを確認 / 手動コピー", expanded=False):
+                    st.caption(
+                        "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
+                    )
+                    st.code(full_prompt, language=None)
+
+            with earnings_tab:
+                st.markdown("**① 決算情報を入力**")
+                col_q1, col_q2 = st.columns(2)
+                with col_q1:
+                    quarter_input = st.text_input(
+                        "対象四半期",
+                        placeholder="例: 2026-4Q",
+                        key=f"earnings_quarter_{selected_ticker}",
+                    )
+                with col_q2:
+                    impression_input = st.selectbox(
+                        "投資家の第一印象",
+                        ["ポジティブ", "中立", "ネガティブ"],
+                        index=1,
+                        key=f"earnings_impression_{selected_ticker}",
+                    )
+
+                memo_input = st.text_area(
+                    "決算メモ",
+                    placeholder="例: 通期上方修正、営業利益率改善、来期ガイダンスは保守的…",
+                    key=f"earnings_memo_{selected_ticker}",
+                    height=90,
+                )
+                st.caption(
+                    "決算PDF・説明資料・画像は、AIを開いたあとに必要に応じて添付してください。"
+                )
+
+                earnings_prompt = EARNINGS_PROMPT_TEMPLATE.format(
+                    company_name=company_name or "（銘柄名未登録）",
+                    quarter=quarter_input or "（対象四半期を入力してください）",
+                    ticker=selected_ticker,
+                    impression=impression_input,
+                    memo=memo_input or "（特になし）",
+                )
+
+                st.markdown("**② AIを選んで分析**")
+                render_ai_prompt_launcher(
+                    earnings_prompt,
+                    key_suffix=f"earnings_{selected_ticker}",
+                )
+
+                with st.expander("③ 生成されたプロンプトを確認 / 手動コピー", expanded=False):
+                    st.caption(
+                        "通常は開かなくてOKです。自動コピーできない場合や、内容を確認したい場合に使います。"
+                    )
+                    st.code(earnings_prompt, language=None)
 
         st.divider()
 
