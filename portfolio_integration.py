@@ -239,7 +239,7 @@ def build_portfolio_signal_overlay(
 
     out = portfolio.copy()
     if out.empty:
-        for col in ["ME状態", "ME昇格", "Deep FCF", "Entry状態", "Opportunity"]:
+        for col in ["ME状態", "ME昇格", "Deep FCF", "Entry状態", "Opportunity", "進捗段階"]:
             out[col] = []
         return out
 
@@ -425,6 +425,26 @@ def build_portfolio_signal_overlay(
         & out["Entry状態"].eq("—")
     )
     out.loc[me_watch_mask, "Entry状態"] = "🟡 ME WATCH"
+
+    def _progress_stage(row: pd.Series) -> str:
+        entry = str(row.get("Entry状態", "") or "").upper()
+        deep = str(row.get("Deep FCF", "") or "").upper()
+        promotion = str(row.get("ME昇格", "") or "").strip()
+        p3_candidate = bool(row.get("P3候補", False))
+
+        if entry not in {"", "—", "UNAVAILABLE", "NONE", "NAN"}:
+            return "🎯 Entry監視"
+        if any(tag in deep for tag in ("STRONG", "GOOD", "SOLID", "PASS")):
+            return "💰 Deep FCF通過"
+        if promotion == "✅ 正式ME済":
+            return "✅ 正式ME済"
+        if promotion == "🟠 正式ME対象":
+            return "🟠 正式ME対象"
+        if p3_candidate or promotion == "🔵 昇格待ち":
+            return "🔵 P3候補"
+        return "—"
+
+    out["進捗段階"] = out.apply(_progress_stage, axis=1)
 
     out = out.drop(columns=["_ticker_norm"])
     return apply_portfolio_priority(out)
