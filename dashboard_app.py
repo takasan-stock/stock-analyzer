@@ -3679,6 +3679,52 @@ with tab1:
                     ascending=[True, False, True],
                     na_position="last",
                 )
+            _progress_order = [
+                "🔵 P3候補",
+                "🟠 正式ME対象",
+                "✅ 正式ME済",
+                "💰 Deep FCF通過",
+                "🎯 Entry監視",
+            ]
+            _progress_counts = (
+                _overlay_df.get(
+                    "進捗段階",
+                    pd.Series("—", index=_overlay_df.index),
+                ).value_counts().to_dict()
+            )
+            _progress_names: dict[str, list[str]] = {}
+            if "進捗段階" in _overlay_df.columns:
+                for _stage in _progress_order:
+                    _stage_rows = _overlay_df[
+                        _overlay_df["進捗段階"].eq(_stage)
+                    ]
+                    _progress_names[_stage] = [
+                        str(x)
+                        for x in _stage_rows.get(
+                            "ティッカー",
+                            pd.Series(dtype=object),
+                        ).head(4).tolist()
+                    ]
+
+            st.markdown("#### 🚦 今日の進捗レーン")
+            _lane_cols = st.columns(5)
+            _lane_labels = {
+                "🔵 P3候補": "P3候補",
+                "🟠 正式ME対象": "正式ME対象",
+                "✅ 正式ME済": "正式ME済",
+                "💰 Deep FCF通過": "Deep FCF通過",
+                "🎯 Entry監視": "Entry監視",
+            }
+            for _col, _stage in zip(_lane_cols, _progress_order):
+                with _col:
+                    _count = int(_progress_counts.get(_stage, 0))
+                    st.metric(_lane_labels[_stage], _count)
+                    _tickers = _progress_names.get(_stage, [])
+                    if _tickers:
+                        st.caption(" / ".join(_tickers))
+                    else:
+                        st.caption("—")
+
             _pc1, _pc2, _pc3, _pc4, _pc5, _pc6 = st.columns(6)
             with _pc1:
                 st.metric("🔴 P1 今すぐ確認", int(_priority_counts.get("🔴 P1 今すぐ確認", 0)))
@@ -3753,6 +3799,7 @@ with tab1:
             _compact_cols = [
                 "📰", "今日の優先度", "ティッカー", "銘柄名", "ステータス",
                 "ME状態", "ME昇格", "Deep FCF", "Entry状態", "Opportunity",
+                "進捗段階",
                 "Baseline ME表示", "Baseline Score表示", "主な寄与",
             ]
             _detail_cols = _compact_cols + [
@@ -3780,6 +3827,7 @@ with tab1:
 - **今日の優先度 / ME / Deep FCF / Entry / Opportunity / Baseline ME** は画面上だけのナビゲーション情報です。売買ゲートや保存データは変更しません。
 - **Baseline ME** は全東証の軽量スクリーニングです。⚪ 通常 / 🟡 再加速監視 / 🟠 再拡大準備 / 🟢 拡大中 で表示します。
 - **ME昇格** は 🔵 昇格待ち = Baselineで正式ME候補だが未選抜 / 🟠 正式ME対象 = 重いME候補30枠に選抜 / ✅ 正式ME済 = ME Screenerまで完了、を示します。これは表示用でEntry Gateは開きません。
+- **🚦 今日の進捗レーン** は、各銘柄を「P3候補 → 正式ME対象 → 正式ME済 → Deep FCF通過 → Entry監視」のうち最も先まで進んだ1段階だけに集計します。重複カウントはしません。
 - **Baseline Score** は 🔵 60〜64 = P3候補 / 🟡 65以上 = P3基準 / 🟢 75以上 = 強め です。
 - **主な寄与** は、形状・流動性・価格・高値接近・出来高のうち強い要因を優先して表示します。P3候補では主因2つだけ表示します。
 - **🔵 P3候補** はP4内の補助表示で、P3へ昇格した意味ではありません。P1/P2やEntry Gateにも昇格させません。
