@@ -524,6 +524,97 @@ class PortfolioIntegrationTests(unittest.TestCase):
         self.assertTrue(str(row["Deep FCF"]).startswith("⚪ DATA WAIT"))
         self.assertEqual(row["Entry状態"], "—")
 
+    def test_progress_stage_uses_furthest_single_stage(self):
+        portfolio = pd.DataFrame(
+            [
+                {"ティッカー": "1111", "銘柄名": "P3"},
+                {"ティッカー": "2222", "銘柄名": "Selected"},
+                {"ティッカー": "3333", "銘柄名": "Formal"},
+                {"ティッカー": "4444", "銘柄名": "Deep"},
+                {"ティッカー": "5555", "銘柄名": "Entry"},
+            ]
+        )
+        universe = pd.DataFrame(
+            [
+                {"ticker": "1111", "trade_date": "2026-10-23", "prefilter_state": "BASE", "coarse_score": 63.0, "eligible": True},
+                {"ticker": "2222", "trade_date": "2026-10-23", "prefilter_state": "BASE", "coarse_score": 63.0, "eligible": True},
+                {"ticker": "3333", "trade_date": "2026-10-23", "prefilter_state": "BASE", "coarse_score": 63.0, "eligible": True},
+                {"ticker": "4444", "trade_date": "2026-10-23", "prefilter_state": "BASE", "coarse_score": 63.0, "eligible": True},
+                {"ticker": "5555", "trade_date": "2026-10-23", "prefilter_state": "BASE", "coarse_score": 63.0, "eligible": True},
+            ]
+        )
+        candidates = pd.DataFrame([{"ticker": "2222"}])
+        me = pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-10-23",
+                    "ticker": "3333",
+                    "sw_decision": "PASS",
+                    "second_wave_state": "UNAVAILABLE",
+                    "fcf_ttm": None,
+                    "fcf_ttm_complete": False,
+                },
+                {
+                    "trade_date": "2026-10-23",
+                    "ticker": "4444",
+                    "sw_decision": "PASS",
+                    "second_wave_state": "UNAVAILABLE",
+                    "fcf_ttm": 100.0,
+                    "fcf_ttm_complete": True,
+                    "fcf_per_share_3y_cagr_score": 80.0,
+                    "fcf_per_share_yoy_score": 80.0,
+                    "cfo_yoy_score": 80.0,
+                    "roic_score": 80.0,
+                    "fcf_margin_score": 80.0,
+                    "cash_conversion_score": 80.0,
+                    "net_cash_ratio_score": 80.0,
+                    "dilution_score": 80.0,
+                    "p_fcf": 15.0,
+                    "fcf_quality_grade": "B",
+                    "fcf_basis": "CFO_MINUS_CAPEX",
+                },
+                {
+                    "trade_date": "2026-10-23",
+                    "ticker": "5555",
+                    "sw_decision": "READY",
+                    "second_wave_state": "RE-WATCH READY",
+                    "fcf_ttm": 100.0,
+                    "fcf_ttm_complete": True,
+                    "fcf_per_share_3y_cagr_score": 80.0,
+                    "fcf_per_share_yoy_score": 80.0,
+                    "cfo_yoy_score": 80.0,
+                    "roic_score": 80.0,
+                    "fcf_margin_score": 80.0,
+                    "cash_conversion_score": 80.0,
+                    "net_cash_ratio_score": 80.0,
+                    "dilution_score": 80.0,
+                    "p_fcf": 15.0,
+                    "fcf_quality_grade": "B",
+                    "fcf_basis": "CFO_MINUS_CAPEX",
+                },
+            ]
+        )
+        validation = {
+            "rows": [
+                {"ticker": "5555", "entry_status": "🟡 WAIT"}
+            ]
+        }
+
+        out = build_portfolio_signal_overlay(
+            portfolio,
+            me,
+            validation,
+            universe,
+            candidates,
+        )
+
+        stages = dict(zip(out["ティッカー"], out["進捗段階"]))
+        self.assertEqual(stages["1111"], "🔵 P3候補")
+        self.assertEqual(stages["2222"], "🟠 正式ME対象")
+        self.assertEqual(stages["3333"], "✅ 正式ME済")
+        self.assertEqual(stages["4444"], "💰 Deep FCF通過")
+        self.assertEqual(stages["5555"], "🎯 Entry監視")
+
     def test_me_ready_is_p2_without_opportunity_score(self):
         label, rank = portfolio_priority_label(
             {
