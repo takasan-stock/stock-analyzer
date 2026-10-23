@@ -5039,347 +5039,365 @@ with tab5:
         migrate_legacy_report_if_needed(selected_ticker)
 
         # ------------------------------------------
-        # 銘柄分析レポート（日付ごと・複数エントリ・折りたたみ）
+        # 銘柄リサーチ記録ハブ
         # ------------------------------------------
-        st.markdown("##### 📝 銘柄レポート（日付ごとに記録）")
+        st.markdown("##### 📚 銘柄リサーチ記録")
         st.caption(
-            "SWOT分析などのAIレポートを、日付ごとに複数貼り付けて記録できます。"
-            "後から見返して『あの時はこう思っていたが…』を振り返るのに使ってください。"
+            "AI分析・決算分析・ニュースを1か所で管理します。"
+            "見たい種類だけタブで切り替えられるので、過去記録の確認と新規追加を素早く行えます。"
         )
 
         analysis_entries = load_entries_smart(selected_ticker, "analysis", github_config)
-
-        with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
-            new_analysis_date = st.date_input(
-                "記録する日付",
-                value=datetime.date.today(),
-                key=f"analysis_new_date_{selected_ticker}"
-            )
-            new_analysis_content = st.text_area(
-                "Markdown形式のレポート本文",
-                height=400,
-                placeholder="# 銘柄分析レポート\n\nここに分析結果やSWOT分析を貼り付けます...",
-                key=f"analysis_new_content_{selected_ticker}"
-            )
-
-            if github_config:
-                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
-
-            if st.button("💾 このレポートを保存する", type="primary", key=f"analysis_save_{selected_ticker}"):
-                if not new_analysis_content.strip():
-                    st.error("⚠️ レポート本文が空です。")
-                else:
-                    _base_key = new_analysis_date.strftime("%Y-%m-%d")
-                    _existing_keys = {e["key"] for e in analysis_entries}
-                    date_key = make_unique_entry_key(_base_key, _existing_keys)
-
-                    save_entry(
-                        selected_ticker,
-                        "analysis",
-                        date_key,
-                        new_analysis_content,
-                    )
-                    _sync_ok = not bool(github_config)
-                    _sync_msg = "ローカル保存しました。"
-
-                    if github_config:
-                        with st.spinner("GitHubにも保存中..."):
-                            file_stem = f"{safe_ticker_filename(selected_ticker)}_analysis_{date_key}"
-                            gh_ok, gh_message = github_upload_report(
-                                file_stem,
-                                read_entry_raw(selected_ticker, "analysis", date_key),
-                                company_name,
-                            )
-                        _sync_ok = gh_ok
-                        _sync_msg = gh_message
-                        if gh_ok:
-                            github_fetch_entries.clear()
-                            github_fetch_content.clear()
-
-                    if _sync_ok:
-                        st.success(
-                            f"✅ {display_entry_key(date_key, 'analysis')} のレポートを保存しました。"
-                            + (" GitHub同期済み。" if github_config else "")
-                        )
-                    else:
-                        st.warning(
-                            "⚠️ レポートはローカルに保持しています。"
-                            f" GitHub同期は失敗しました: {_sync_msg}"
-                        )
-
-                    st.rerun()
-
-        if analysis_entries:
-            st.caption(f"📚 記録済み: {len(analysis_entries)} 件（新しい順）")
-            for entry in analysis_entries:
-                _label = display_entry_key(entry["key"], "analysis")
-                _updated = str(entry.get("updated_at", "") or "不明")
-                _sync = str(entry.get("_sync_status", "") or "")
-                _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
-                with st.expander(f"📅 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
-                    st.markdown(entry["content"])
-                    col_ae1, col_ae2 = st.columns([1, 1])
-                    with col_ae1:
-                        st.download_button(
-                            "⬇️ ダウンロード",
-                            data=entry["content"].encode("utf-8"),
-                            file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
-                            mime="text/markdown",
-                            key=f"analysis_dl_{selected_ticker}_{entry['key']}"
-                        )
-                    with col_ae2:
-                        if st.button("🗑️ このエントリを削除", key=f"analysis_del_{selected_ticker}_{entry['key']}"):
-                            with st.spinner("削除中..."):
-                                _ok, _msg = delete_entry_smart(
-                                    selected_ticker,
-                                    "analysis",
-                                    entry,
-                                    github_config,
-                                )
-                            if _ok:
-                                st.success(f"✅ {_label} のレポートを削除しました。")
-                                st.rerun()
-                            else:
-                                st.error(f"⚠️ {_msg}")
-        else:
-            st.info("まだこの銘柄の銘柄レポートは登録されていません。上の「➕ 新しい銘柄レポートを追加」から登録してください。")
-
-        back_to_top()
-        st.divider()
-
-        # ------------------------------------------
-        # 決算分析レポート（四半期ごと・複数エントリ・折りたたみ）
-        # ------------------------------------------
-        st.markdown("##### 📈 決算分析レポート（四半期ごとに記録）")
-        st.caption(
-            "決算分析プロンプトの結果（進捗率分析・上方修正予測など）を、四半期ごとに分けて記録できます。"
-        )
-
         earnings_entries = load_entries_smart(selected_ticker, "earnings", github_config)
-
-        with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
-            new_earnings_quarter = st.text_input(
-                "対象四半期（例: 2026-4Q）",
-                value=quarter_input,
-                key=f"earnings_new_quarter_{selected_ticker}"
-            )
-            new_earnings_content = st.text_area(
-                "Markdown形式の決算分析レポート本文",
-                height=400,
-                placeholder="# 決算分析レポート\n\n進捗率分析、ポジティブ/ネガティブ要因などを貼り付けます...",
-                key=f"earnings_new_content_{selected_ticker}"
-            )
-
-            if github_config:
-                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
-
-            if st.button("💾 この決算分析レポートを保存する", type="primary", key=f"earnings_save_{selected_ticker}"):
-                if not new_earnings_quarter.strip():
-                    st.error("⚠️ 対象四半期を入力してください（例: 2026-4Q）。")
-                elif not new_earnings_content.strip():
-                    st.error("⚠️ レポート本文が空です。")
-                else:
-                    _quarter_base = new_earnings_quarter.strip()
-                    _existing_keys = {e["key"] for e in earnings_entries}
-                    quarter_key = make_unique_entry_key(_quarter_base, _existing_keys)
-
-                    save_entry(
-                        selected_ticker,
-                        "earnings",
-                        quarter_key,
-                        new_earnings_content,
-                    )
-                    _sync_ok = not bool(github_config)
-                    _sync_msg = "ローカル保存しました。"
-
-                    if github_config:
-                        with st.spinner("GitHubにも保存中..."):
-                            file_stem = f"{safe_ticker_filename(selected_ticker)}_earnings_{quarter_key}"
-                            gh_ok, gh_message = github_upload_report(
-                                file_stem,
-                                read_entry_raw(selected_ticker, "earnings", quarter_key),
-                                company_name,
-                            )
-                        _sync_ok = gh_ok
-                        _sync_msg = gh_message
-                        if gh_ok:
-                            github_fetch_entries.clear()
-                            github_fetch_content.clear()
-
-                    if _sync_ok:
-                        st.success(
-                            f"✅ {display_entry_key(quarter_key, 'earnings')} の決算分析レポートを保存しました。"
-                            + (" GitHub同期済み。" if github_config else "")
-                        )
-                    else:
-                        st.warning(
-                            "⚠️ 決算分析レポートはローカルに保持しています。"
-                            f" GitHub同期は失敗しました: {_sync_msg}"
-                        )
-
-                    st.rerun()
-
-        if earnings_entries:
-            st.caption(f"📚 記録済み: {len(earnings_entries)} 件（新しい順）")
-            for entry in earnings_entries:
-                _label = display_entry_key(entry["key"], "earnings")
-                _updated = str(entry.get("updated_at", "") or "不明")
-                _sync = str(entry.get("_sync_status", "") or "")
-                _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
-                with st.expander(f"📊 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
-                    st.markdown(entry["content"])
-                    col_ee1, col_ee2 = st.columns([1, 1])
-                    with col_ee1:
-                        st.download_button(
-                            "⬇️ ダウンロード",
-                            data=entry["content"].encode("utf-8"),
-                            file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
-                            mime="text/markdown",
-                            key=f"earnings_dl_{selected_ticker}_{entry['key']}"
-                        )
-                    with col_ee2:
-                        if st.button("🗑️ このエントリを削除", key=f"earnings_del_{selected_ticker}_{entry['key']}"):
-                            with st.spinner("削除中..."):
-                                _ok, _msg = delete_entry_smart(
-                                    selected_ticker,
-                                    "earnings",
-                                    entry,
-                                    github_config,
-                                )
-                            if _ok:
-                                st.success(f"✅ {_label} の決算分析レポートを削除しました。")
-                                st.rerun()
-                            else:
-                                st.error(f"⚠️ {_msg}")
-        else:
-            st.info("まだこの銘柄の決算分析レポートは登録されていません。上の「➕ 新しい決算分析レポートを追加」から登録してください。")
-
-        back_to_top()
-        st.divider()
-
-        # ------------------------------------------
-        # ニュース・クリップ（Obsidian Web Clipper貼り付け・日付ごと）
-        # ------------------------------------------
-        st.markdown("##### 📰 ニュース・クリップ（1記事=1エントリ）")
-        st.caption(
-            "株探などのニュース記事をObsidian Web Clipperでクリップした.mdをそのまま貼り付けて保存できます。"
-            "1記事=1エントリとして日付ごとに蓄積されます。"
-        )
-
         news_entries = load_entries_smart(selected_ticker, "news", github_config)
 
-        with st.expander("➕ 新しいニュースを追加", expanded=(len(news_entries) == 0)):
-            col_n1, col_n2 = st.columns([1, 1])
-            with col_n1:
-                new_news_date = st.date_input(
-                    "記事の日付",
-                    value=datetime.date.today(),
-                    key=f"news_new_date_{selected_ticker}"
-                )
-            with col_n2:
-                new_news_source = st.text_input(
-                    "ソース（例: 株探、日経、IR）",
-                    key=f"news_new_source_{selected_ticker}"
-                )
+        def _research_latest(entries, entry_type):
+            if not entries:
+                return "未登録"
+            latest_entry = entries[0]
+            if entry_type == "analysis":
+                return display_entry_key(latest_entry.get("key", ""), "analysis")
+            if entry_type == "earnings":
+                return display_entry_key(latest_entry.get("key", ""), "earnings")
+            return str(latest_entry.get("key", "") or "—")
 
-            new_news_content = st.text_area(
-                "Obsidian Web Clipperでクリップした内容をここに貼り付け",
-                height=350,
-                placeholder=(
-                    "# 記事タイトル\n\n"
-                    "source:: https://kabutan.jp/...\n\n"
-                    "## 本文\n\nここにクリップした内容が入ります..."
-                ),
-                key=f"news_new_content_{selected_ticker}"
+        _rc1, _rc2, _rc3 = st.columns(3)
+        with _rc1:
+            st.metric("📝 銘柄レポート", len(analysis_entries))
+            st.caption(f"最新: {_research_latest(analysis_entries, 'analysis')}")
+        with _rc2:
+            st.metric("📈 決算分析", len(earnings_entries))
+            st.caption(f"最新: {_research_latest(earnings_entries, 'earnings')}")
+        with _rc3:
+            st.metric("📰 ニュース", len(news_entries))
+            st.caption(f"最新: {_research_latest(news_entries, 'news')}")
+
+        _tab_analysis, _tab_earnings, _tab_news = st.tabs(
+            ["📝 銘柄レポート", "📈 決算分析", "📰 ニュース・クリップ"]
+        )
+
+        with _tab_analysis:
+            st.markdown("###### 📝 銘柄レポート")
+            st.caption(
+                "AI分析・SWOT・投資判断メモを日付ごとに保存します。"
+                "新しい記録は上から追加し、過去記録は新しい順に確認できます。"
             )
-
-            if github_config:
-                st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
-
-            if st.button("💾 このニュースを保存する", type="primary", key=f"news_save_{selected_ticker}"):
-                if not new_news_content.strip():
-                    st.error("⚠️ 本文が空です。クリップした内容を貼り付けてください。")
-                else:
-                    date_key = new_news_date.strftime("%Y-%m-%d")
-                    # 同じ日付に複数記事がある場合、時刻をサフィックスとして付与して区別する
-                    existing_keys = {e["key"] for e in news_entries}
-                    if date_key in existing_keys:
-                        date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
-                    # ソースをメタデータとして先頭行に追加
-                    source_str = new_news_source.strip()
-                    content_to_save = (
-                        f"<!-- source: {source_str} -->\n\n{new_news_content}"
-                        if source_str else new_news_content
-                    )
-
-                    save_entry(selected_ticker, "news", date_key, content_to_save)
-                    st.success(f"✅ {date_key} のニュースを保存しました！")
-
-                    if github_config:
-                        with st.spinner("GitHubにも保存中..."):
-                            file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{date_key}"
-                            gh_ok, gh_message = github_upload_report(
-                                file_stem, content_to_save, company_name
-                            )
-                        if gh_ok:
-                            st.success(f"✅ {gh_message}")
-                            github_fetch_entries.clear()
-                            github_fetch_content.clear()
-                        else:
-                            st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
-
-                    st.rerun()
-
-        if news_entries:
-            st.caption(f"📚 記録済み: {len(news_entries)} 件（新しい順）")
-            for entry in news_entries:
-                # ソース名をコメントから抽出して表示名に使う
-                source_display = ""
-                first_line = entry["content"].split("\n")[0]
-                if first_line.startswith("<!-- source:") and first_line.endswith("-->"):
-                    source_display = first_line[len("<!-- source:"):][:-len("-->")].strip()
-
-                label = f"📰 {entry['key']}"
-                if source_display:
-                    label += f"　{source_display}"
-                label += f"（{entry.get('updated_at', '')}）"
-
-                with st.expander(label):
-                    # ソースコメント行は表示せず本文だけ表示
-                    display_content = entry["content"]
-                    if display_content.startswith("<!-- source:"):
-                        display_content = "\n".join(display_content.split("\n")[2:])
-                    st.markdown(display_content)
-
-                    col_ne1, col_ne2 = st.columns([1, 1])
-                    with col_ne1:
-                        st.download_button(
-                            "⬇️ ダウンロード",
-                            data=entry["content"].encode("utf-8"),
-                            file_name=f"{safe_ticker_filename(selected_ticker)}_news_{entry['key']}.md",
-                            mime="text/markdown",
-                            key=f"news_dl_{selected_ticker}_{entry['key']}"
+            with st.expander("➕ 新しい銘柄レポートを追加", expanded=(len(analysis_entries) == 0)):
+                new_analysis_date = st.date_input(
+                    "記録する日付",
+                    value=datetime.date.today(),
+                    key=f"analysis_new_date_{selected_ticker}"
+                )
+                new_analysis_content = st.text_area(
+                    "Markdown形式のレポート本文",
+                    height=400,
+                    placeholder="# 銘柄分析レポート\n\nここに分析結果やSWOT分析を貼り付けます...",
+                    key=f"analysis_new_content_{selected_ticker}"
+                )
+    
+                if github_config:
+                    st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
+    
+                if st.button("💾 このレポートを保存する", type="primary", key=f"analysis_save_{selected_ticker}"):
+                    if not new_analysis_content.strip():
+                        st.error("⚠️ レポート本文が空です。")
+                    else:
+                        _base_key = new_analysis_date.strftime("%Y-%m-%d")
+                        _existing_keys = {e["key"] for e in analysis_entries}
+                        date_key = make_unique_entry_key(_base_key, _existing_keys)
+    
+                        save_entry(
+                            selected_ticker,
+                            "analysis",
+                            date_key,
+                            new_analysis_content,
                         )
-                    with col_ne2:
-                        if st.button("🗑️ このエントリを削除", key=f"news_del_{selected_ticker}_{entry['key']}"):
-                            delete_entry(selected_ticker, "news", entry["key"])
-                            if github_config and entry.get("_sha") and entry.get("_path"):
-                                with st.spinner("GitHubからも削除中..."):
-                                    gh_ok, gh_msg = github_delete_file(
-                                        github_config["token"], github_config["repo"],
-                                        github_config["branch"], entry["_path"], entry["_sha"],
-                                        f"Delete news: {entry['_path']}"
+                        _sync_ok = not bool(github_config)
+                        _sync_msg = "ローカル保存しました。"
+    
+                        if github_config:
+                            with st.spinner("GitHubにも保存中..."):
+                                file_stem = f"{safe_ticker_filename(selected_ticker)}_analysis_{date_key}"
+                                gh_ok, gh_message = github_upload_report(
+                                    file_stem,
+                                    read_entry_raw(selected_ticker, "analysis", date_key),
+                                    company_name,
+                                )
+                            _sync_ok = gh_ok
+                            _sync_msg = gh_message
+                            if gh_ok:
+                                github_fetch_entries.clear()
+                                github_fetch_content.clear()
+    
+                        if _sync_ok:
+                            st.success(
+                                f"✅ {display_entry_key(date_key, 'analysis')} のレポートを保存しました。"
+                                + (" GitHub同期済み。" if github_config else "")
+                            )
+                        else:
+                            st.warning(
+                                "⚠️ レポートはローカルに保持しています。"
+                                f" GitHub同期は失敗しました: {_sync_msg}"
+                            )
+    
+                        st.rerun()
+    
+            if analysis_entries:
+                st.caption(f"📚 記録済み: {len(analysis_entries)} 件（新しい順）")
+                for entry in analysis_entries:
+                    _label = display_entry_key(entry["key"], "analysis")
+                    _updated = str(entry.get("updated_at", "") or "不明")
+                    _sync = str(entry.get("_sync_status", "") or "")
+                    _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
+                    with st.expander(f"📅 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
+                        st.markdown(entry["content"])
+                        col_ae1, col_ae2 = st.columns([1, 1])
+                        with col_ae1:
+                            st.download_button(
+                                "⬇️ ダウンロード",
+                                data=entry["content"].encode("utf-8"),
+                                file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
+                                mime="text/markdown",
+                                key=f"analysis_dl_{selected_ticker}_{entry['key']}"
+                            )
+                        with col_ae2:
+                            if st.button("🗑️ このエントリを削除", key=f"analysis_del_{selected_ticker}_{entry['key']}"):
+                                with st.spinner("削除中..."):
+                                    _ok, _msg = delete_entry_smart(
+                                        selected_ticker,
+                                        "analysis",
+                                        entry,
+                                        github_config,
                                     )
-                                if gh_ok:
-                                    github_fetch_entries.clear()
-                                    github_fetch_content.clear()
+                                if _ok:
+                                    st.success(f"✅ {_label} のレポートを削除しました。")
+                                    st.rerun()
                                 else:
-                                    st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
-                            st.success(f"{entry['key']} のニュースを削除しました。")
-                            st.rerun()
-        else:
-            st.info("まだこの銘柄のニュースは登録されていません。上の「➕ 新しいニュースを追加」から登録してください。")
+                                    st.error(f"⚠️ {_msg}")
+            else:
+                st.caption("📝 まだ銘柄レポートはありません。上の「➕ 新しい銘柄レポートを追加」から登録できます。")
+
+        with _tab_earnings:
+            st.markdown("###### 📈 決算分析レポート")
+            st.caption(
+                "決算分析プロンプトの結果を四半期ごとに保存します。"
+                "進捗率・上方修正余地・株価反応の振り返りに使えます。"
+            )
+            with st.expander("➕ 新しい決算分析レポートを追加", expanded=(len(earnings_entries) == 0)):
+                new_earnings_quarter = st.text_input(
+                    "対象四半期（例: 2026-4Q）",
+                    value=quarter_input,
+                    key=f"earnings_new_quarter_{selected_ticker}"
+                )
+                new_earnings_content = st.text_area(
+                    "Markdown形式の決算分析レポート本文",
+                    height=400,
+                    placeholder="# 決算分析レポート\n\n進捗率分析、ポジティブ/ネガティブ要因などを貼り付けます...",
+                    key=f"earnings_new_content_{selected_ticker}"
+                )
+    
+                if github_config:
+                    st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
+    
+                if st.button("💾 この決算分析レポートを保存する", type="primary", key=f"earnings_save_{selected_ticker}"):
+                    if not new_earnings_quarter.strip():
+                        st.error("⚠️ 対象四半期を入力してください（例: 2026-4Q）。")
+                    elif not new_earnings_content.strip():
+                        st.error("⚠️ レポート本文が空です。")
+                    else:
+                        _quarter_base = new_earnings_quarter.strip()
+                        _existing_keys = {e["key"] for e in earnings_entries}
+                        quarter_key = make_unique_entry_key(_quarter_base, _existing_keys)
+    
+                        save_entry(
+                            selected_ticker,
+                            "earnings",
+                            quarter_key,
+                            new_earnings_content,
+                        )
+                        _sync_ok = not bool(github_config)
+                        _sync_msg = "ローカル保存しました。"
+    
+                        if github_config:
+                            with st.spinner("GitHubにも保存中..."):
+                                file_stem = f"{safe_ticker_filename(selected_ticker)}_earnings_{quarter_key}"
+                                gh_ok, gh_message = github_upload_report(
+                                    file_stem,
+                                    read_entry_raw(selected_ticker, "earnings", quarter_key),
+                                    company_name,
+                                )
+                            _sync_ok = gh_ok
+                            _sync_msg = gh_message
+                            if gh_ok:
+                                github_fetch_entries.clear()
+                                github_fetch_content.clear()
+    
+                        if _sync_ok:
+                            st.success(
+                                f"✅ {display_entry_key(quarter_key, 'earnings')} の決算分析レポートを保存しました。"
+                                + (" GitHub同期済み。" if github_config else "")
+                            )
+                        else:
+                            st.warning(
+                                "⚠️ 決算分析レポートはローカルに保持しています。"
+                                f" GitHub同期は失敗しました: {_sync_msg}"
+                            )
+    
+                        st.rerun()
+    
+            if earnings_entries:
+                st.caption(f"📚 記録済み: {len(earnings_entries)} 件（新しい順）")
+                for entry in earnings_entries:
+                    _label = display_entry_key(entry["key"], "earnings")
+                    _updated = str(entry.get("updated_at", "") or "不明")
+                    _sync = str(entry.get("_sync_status", "") or "")
+                    _sync_badge = "☁️ GitHub" if _sync == "GITHUB" else "💾 ローカルのみ"
+                    with st.expander(f"📊 {_label}｜{_sync_badge}｜最終更新 {_updated}"):
+                        st.markdown(entry["content"])
+                        col_ee1, col_ee2 = st.columns([1, 1])
+                        with col_ee1:
+                            st.download_button(
+                                "⬇️ ダウンロード",
+                                data=entry["content"].encode("utf-8"),
+                                file_name=f"{safe_ticker_filename(selected_ticker)}_{entry['key']}.md",
+                                mime="text/markdown",
+                                key=f"earnings_dl_{selected_ticker}_{entry['key']}"
+                            )
+                        with col_ee2:
+                            if st.button("🗑️ このエントリを削除", key=f"earnings_del_{selected_ticker}_{entry['key']}"):
+                                with st.spinner("削除中..."):
+                                    _ok, _msg = delete_entry_smart(
+                                        selected_ticker,
+                                        "earnings",
+                                        entry,
+                                        github_config,
+                                    )
+                                if _ok:
+                                    st.success(f"✅ {_label} の決算分析レポートを削除しました。")
+                                    st.rerun()
+                                else:
+                                    st.error(f"⚠️ {_msg}")
+            else:
+                st.caption("📈 まだ決算分析レポートはありません。上の「➕ 新しい決算分析レポートを追加」から登録できます。")
+
+        with _tab_news:
+            st.markdown("###### 📰 ニュース・クリップ")
+            st.caption(
+                "株探・日経・IRなどの記事を1記事1エントリで保存します。"
+                "Obsidian Web ClipperのMarkdownもそのまま貼り付けられます。"
+            )
+            with st.expander("➕ 新しいニュースを追加", expanded=(len(news_entries) == 0)):
+                col_n1, col_n2 = st.columns([1, 1])
+                with col_n1:
+                    new_news_date = st.date_input(
+                        "記事の日付",
+                        value=datetime.date.today(),
+                        key=f"news_new_date_{selected_ticker}"
+                    )
+                with col_n2:
+                    new_news_source = st.text_input(
+                        "ソース（例: 株探、日経、IR）",
+                        key=f"news_new_source_{selected_ticker}"
+                    )
+    
+                new_news_content = st.text_area(
+                    "Obsidian Web Clipperでクリップした内容をここに貼り付け",
+                    height=350,
+                    placeholder=(
+                        "# 記事タイトル\n\n"
+                        "source:: https://kabutan.jp/...\n\n"
+                        "## 本文\n\nここにクリップした内容が入ります..."
+                    ),
+                    key=f"news_new_content_{selected_ticker}"
+                )
+    
+                if github_config:
+                    st.caption(f"保存時にGitHub（`{github_config['repo']}`）にも自動コミットされます。")
+    
+                if st.button("💾 このニュースを保存する", type="primary", key=f"news_save_{selected_ticker}"):
+                    if not new_news_content.strip():
+                        st.error("⚠️ 本文が空です。クリップした内容を貼り付けてください。")
+                    else:
+                        date_key = new_news_date.strftime("%Y-%m-%d")
+                        # 同じ日付に複数記事がある場合、時刻をサフィックスとして付与して区別する
+                        existing_keys = {e["key"] for e in news_entries}
+                        if date_key in existing_keys:
+                            date_key = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    
+                        # ソースをメタデータとして先頭行に追加
+                        source_str = new_news_source.strip()
+                        content_to_save = (
+                            f"<!-- source: {source_str} -->\n\n{new_news_content}"
+                            if source_str else new_news_content
+                        )
+    
+                        save_entry(selected_ticker, "news", date_key, content_to_save)
+                        st.success(f"✅ {date_key} のニュースを保存しました！")
+    
+                        if github_config:
+                            with st.spinner("GitHubにも保存中..."):
+                                file_stem = f"{safe_ticker_filename(selected_ticker)}_news_{date_key}"
+                                gh_ok, gh_message = github_upload_report(
+                                    file_stem, content_to_save, company_name
+                                )
+                            if gh_ok:
+                                st.success(f"✅ {gh_message}")
+                                github_fetch_entries.clear()
+                                github_fetch_content.clear()
+                            else:
+                                st.warning(f"⚠️ ローカル保存は成功しましたが、GitHubへの保存に失敗しました：{gh_message}")
+    
+                        st.rerun()
+    
+            if news_entries:
+                st.caption(f"📚 記録済み: {len(news_entries)} 件（新しい順）")
+                for entry in news_entries:
+                    # ソース名をコメントから抽出して表示名に使う
+                    source_display = ""
+                    first_line = entry["content"].split("\n")[0]
+                    if first_line.startswith("<!-- source:") and first_line.endswith("-->"):
+                        source_display = first_line[len("<!-- source:"):][:-len("-->")].strip()
+    
+                    label = f"📰 {entry['key']}"
+                    if source_display:
+                        label += f"　{source_display}"
+                    label += f"（{entry.get('updated_at', '')}）"
+    
+                    with st.expander(label):
+                        # ソースコメント行は表示せず本文だけ表示
+                        display_content = entry["content"]
+                        if display_content.startswith("<!-- source:"):
+                            display_content = "\n".join(display_content.split("\n")[2:])
+                        st.markdown(display_content)
+    
+                        col_ne1, col_ne2 = st.columns([1, 1])
+                        with col_ne1:
+                            st.download_button(
+                                "⬇️ ダウンロード",
+                                data=entry["content"].encode("utf-8"),
+                                file_name=f"{safe_ticker_filename(selected_ticker)}_news_{entry['key']}.md",
+                                mime="text/markdown",
+                                key=f"news_dl_{selected_ticker}_{entry['key']}"
+                            )
+                        with col_ne2:
+                            if st.button("🗑️ このエントリを削除", key=f"news_del_{selected_ticker}_{entry['key']}"):
+                                delete_entry(selected_ticker, "news", entry["key"])
+                                if github_config and entry.get("_sha") and entry.get("_path"):
+                                    with st.spinner("GitHubからも削除中..."):
+                                        gh_ok, gh_msg = github_delete_file(
+                                            github_config["token"], github_config["repo"],
+                                            github_config["branch"], entry["_path"], entry["_sha"],
+                                            f"Delete news: {entry['_path']}"
+                                        )
+                                    if gh_ok:
+                                        github_fetch_entries.clear()
+                                        github_fetch_content.clear()
+                                    else:
+                                        st.warning(f"⚠️ ローカルからは削除しましたが、GitHubからの削除に失敗しました：{gh_msg}")
+                                st.success(f"{entry['key']} のニュースを削除しました。")
+                                st.rerun()
+            else:
+                st.caption("📰 まだニュース・クリップはありません。上の「➕ 新しいニュースを追加」から登録できます。")
 
         st.divider()
 
