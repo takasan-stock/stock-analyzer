@@ -246,7 +246,7 @@ def evaluate_stock_action_status(
         next_page = "pages/9_Pre_Trade_Check.py"
         next_label = "購入前チェックを開く"
         next_icon = "🛡️"
-    elif me_ready and score >= 50:
+    elif me_ready and score >= 45:
         stage = "ENTRY_MONITOR"
         label = "ENTRY監視"
         icon = "🎯"
