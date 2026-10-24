@@ -8,7 +8,7 @@ class TestStockPriorityBoard(unittest.TestCase):
     def test_orders_by_stage_then_readiness(self):
         rows = build_daily_priority_board(
             portfolio_rows=[
-                {"ティッカー": "1001", "銘柄名": "A", "ステータス": "監視中", "売上5y CAGR": "12%"},
+                {"ティッカー": "1001", "銘柄名": "A", "ステータス": "監視中", "売上5y CAGR": "16%"},
                 {"ティッカー": "1002", "銘柄名": "B", "ステータス": "監視中", "売上5y CAGR": "18%"},
                 {"ティッカー": "1003", "銘柄名": "C", "ステータス": "監視中", "売上5y CAGR": "8%"},
             ],
