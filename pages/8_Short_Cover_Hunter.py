@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
+from site_context import get_active_stock, set_active_stock
 import yfinance as yf
 
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
@@ -1094,6 +1095,12 @@ _command_focus_reason = str(
     st.session_state.pop("command_center_focus_reason", "") or ""
 )
 
+_site_active_ticker, _site_active_name, _ = get_active_stock()
+if not _command_focus_ticker and _site_active_ticker:
+    _command_focus_ticker = _site_active_ticker
+    _command_focus_name = _site_active_name
+    _command_focus_reason = "V3サイト共通の現在銘柄"
+
 if _command_focus_ticker:
     st.success(
         f"🔥 Daily Command Center から {_command_focus_ticker} "
@@ -1232,6 +1239,11 @@ else:
                     key=f"pretrade_entry_hunter_{_r['ticker']}_{_idx}",
                     use_container_width=True,
                 ):
+                    set_active_stock(
+                        str(_r["ticker"]),
+                        str(_r.get("name", "")),
+                        source="Entry Hunter",
+                    )
                     st.session_state["pretrade_ticker"] = str(_r["ticker"])
                     st.session_state["pretrade_name"] = str(_r.get("name", ""))
                     st.session_state["pretrade_source"] = (
