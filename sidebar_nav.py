@@ -5,21 +5,40 @@ import streamlit as st
 
 NAV_SECTIONS = [
     {
-        "label": "今日の売買フロー",
+        "label": "ホーム",
         "tone": "blue",
         "pages": [
-            ("dashboard_app.py", "ダッシュボード", "🏠"),
+            ("dashboard_app.py", "統合ダッシュボード", "🏠"),
+        ],
+    },
+    {
+        "label": "発見・スクリーニング",
+        "tone": "purple",
+        "pages": [
+            ("pages/14_Multiple_Expansion_Hunter.py", "ME Hunter", "🚀"),
+            ("pages/15_ME_Daily_Screener.py", "MEデイリースクリーナー", "🔎"),
+        ],
+    },
+    {
+        "label": "監視・エントリー",
+        "tone": "green",
+        "pages": [
             ("pages/8_Short_Cover_Hunter.py", "Entry Hunter", "🎯"),
+        ],
+    },
+    {
+        "label": "実行・記録",
+        "tone": "red",
+        "pages": [
             ("pages/9_Pre_Trade_Check.py", "購入前チェック", "🛡️"),
             ("pages/10_Trade_Journal.py", "売買日誌", "📓"),
         ],
     },
     {
-        "label": "スクリーニング",
-        "tone": "purple",
+        "label": "分析・レポート",
+        "tone": "teal",
         "pages": [
-            ("pages/14_Multiple_Expansion_Hunter.py", "ME Hunter", "🚀"),
-            ("pages/15_ME_Daily_Screener.py", "MEデイリースクリーナー", "🔎"),
+            ("pages/📖_レポートビューア.py", "レポートビューア", "📖"),
         ],
     },
     {
@@ -29,13 +48,6 @@ NAV_SECTIONS = [
             ("pages/11_Score_Calibration.py", "スコア較正", "⚙️"),
             ("pages/12_Calibration_Backtest.py", "較正バックテスト", "📊"),
             ("pages/13_Walk_Forward_Calibration.py", "ウォークフォワード較正", "📈"),
-        ],
-    },
-    {
-        "label": "レポート",
-        "tone": "teal",
-        "pages": [
-            ("pages/📖_レポートビューア.py", "レポートビューア", "📖"),
         ],
     },
 ]
@@ -76,10 +88,10 @@ section[data-testid="stSidebar"] > div {
 
 .takasan-brand-subtitle {
     margin-top: 0.2rem;
-    color: rgba(255, 255, 255, 0.76);
-    font-size: 0.67rem;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.66rem;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.13em;
 }
 
 .takasan-flow-badge {
@@ -87,9 +99,9 @@ section[data-testid="stSidebar"] > div {
     padding: 0.38rem 0.55rem;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.15);
-    font-size: 0.68rem;
+    font-size: 0.66rem;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
 }
 
 .takasan-section {
@@ -113,6 +125,8 @@ section[data-testid="stSidebar"] > div {
 
 .takasan-section.blue { --section-color: #2563eb; }
 .takasan-section.purple { --section-color: #7c3aed; }
+.takasan-section.green { --section-color: #059669; }
+.takasan-section.red { --section-color: #e11d48; }
 .takasan-section.orange { --section-color: #f59e0b; }
 .takasan-section.teal { --section-color: #0d9488; }
 
@@ -171,21 +185,72 @@ section[data-testid="stSidebar"] > div {
     font-size: 0.66rem;
     line-height: 1.5;
 }
+
+/* Main-page site portal */
+.takasan-site-hero {
+    margin: 0 0 1rem 0;
+    padding: 1.1rem 1.25rem;
+    border: 1px solid rgba(37, 99, 235, 0.16);
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at 90% 0%, rgba(99, 102, 241, 0.16), transparent 20rem),
+        linear-gradient(135deg, #f8fbff 0%, #ffffff 52%, #f7f8ff 100%);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+}
+
+.takasan-site-kicker {
+    color: #2563eb;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.takasan-site-title {
+    margin-top: 0.15rem;
+    color: #0f172a;
+    font-size: 1.65rem;
+    font-weight: 850;
+    letter-spacing: -0.02em;
+}
+
+.takasan-site-copy {
+    margin-top: 0.3rem;
+    color: #64748b;
+    font-size: 0.88rem;
+    line-height: 1.7;
+}
+
+.takasan-site-flow {
+    display: inline-block;
+    margin-top: 0.65rem;
+    padding: 0.38rem 0.7rem;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+main [data-testid="stPageLink"] a {
+    min-height: 2.7rem;
+    border-radius: 10px;
+    font-weight: 700;
+}
 </style>
 """
 
 
 def render_sidebar_navigation() -> None:
-    """Render the common Japanese sidebar used by every Streamlit page."""
+    """Render the common site navigation used by every Streamlit page."""
     st.markdown(_SIDEBAR_CSS, unsafe_allow_html=True)
 
     with st.sidebar:
         st.markdown(
             """
             <div class="takasan-brand">
-              <div class="takasan-brand-title">📈 たかさん株式分析</div>
+              <div class="takasan-brand-title">📈 たかさん日本株分析 V3</div>
               <div class="takasan-brand-subtitle">TAKASAN STOCK ANALYZER</div>
-              <div class="takasan-flow-badge">ME → ENTRY → PRE-TRADE</div>
+              <div class="takasan-flow-badge">DISCOVER → MONITOR → EXECUTE → REVIEW</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -205,8 +270,111 @@ def render_sidebar_navigation() -> None:
         st.markdown(
             """
             <div class="takasan-sidebar-footer">
-              DISCOVER → VALIDATE → EXECUTE → REVIEW
+              DISCOVER → MONITOR → EXECUTE → REVIEW → IMPROVE
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_site_portal() -> None:
+    """Render the V3 home/command-center shell on the main dashboard."""
+    st.markdown(
+        """
+        <div class="takasan-site-hero">
+          <div class="takasan-site-kicker">TAKASAN STOCK ANALYZER V3</div>
+          <div class="takasan-site-title">📈 たかさん日本株分析</div>
+          <div class="takasan-site-copy">
+            発見・監視・エントリー判断・購入前確認・売買記録・検証を、
+            ひとつのサイト内でつなぐ統合投資ワークスペース。
+          </div>
+          <div class="takasan-site-flow">発見 → 監視 → 実行 → 記録 → 改善</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("### 🧭 分析フロー")
+    st.caption("今日の目的から入口を選べます。各画面は左メニューからもいつでも移動できます。")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        with st.container(border=True):
+            st.markdown("#### 🔎 発見")
+            st.caption("MEの兆しと候補銘柄を探す")
+            st.page_link(
+                "pages/15_ME_Daily_Screener.py",
+                label="MEデイリースクリーナー",
+                icon="🔎",
+                use_container_width=True,
+            )
+            st.page_link(
+                "pages/14_Multiple_Expansion_Hunter.py",
+                label="ME Hunter",
+                icon="🚀",
+                use_container_width=True,
+            )
+
+    with c2:
+        with st.container(border=True):
+            st.markdown("#### 🎯 監視")
+            st.caption("候補をEntry条件まで追う")
+            st.page_link(
+                "pages/8_Short_Cover_Hunter.py",
+                label="Entry Hunter",
+                icon="🎯",
+                use_container_width=True,
+            )
+
+    with c3:
+        with st.container(border=True):
+            st.markdown("#### 🛡️ 実行")
+            st.caption("買う前にリスクと条件を確認")
+            st.page_link(
+                "pages/9_Pre_Trade_Check.py",
+                label="購入前チェック",
+                icon="🛡️",
+                use_container_width=True,
+            )
+
+    with c4:
+        with st.container(border=True):
+            st.markdown("#### 📓 記録")
+            st.caption("売買と分析を後から検証")
+            st.page_link(
+                "pages/10_Trade_Journal.py",
+                label="売買日誌",
+                icon="📓",
+                use_container_width=True,
+            )
+            st.page_link(
+                "pages/📖_レポートビューア.py",
+                label="レポートビューア",
+                icon="📖",
+                use_container_width=True,
+            )
+
+    with st.expander("🧪 検証・較正ツール", expanded=False):
+        v1, v2, v3 = st.columns(3)
+        with v1:
+            st.page_link(
+                "pages/11_Score_Calibration.py",
+                label="スコア較正",
+                icon="⚙️",
+                use_container_width=True,
+            )
+        with v2:
+            st.page_link(
+                "pages/12_Calibration_Backtest.py",
+                label="較正バックテスト",
+                icon="📊",
+                use_container_width=True,
+            )
+        with v3:
+            st.page_link(
+                "pages/13_Walk_Forward_Calibration.py",
+                label="ウォークフォワード較正",
+                icon="📈",
+                use_container_width=True,
+            )
