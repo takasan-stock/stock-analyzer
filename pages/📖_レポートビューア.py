@@ -130,6 +130,8 @@ def ticker_label(ticker: str) -> str:
 # 銘柄選択
 _active_ticker, _, _ = get_active_stock()
 _active_index = ticker_list.index(_active_ticker) if _active_ticker in ticker_list else 0
+if _active_ticker in ticker_list:
+    st.session_state["report_viewer_ticker"] = _active_ticker
 selected_ticker = st.sidebar.selectbox(
     "銘柄を選択",
     options=ticker_list,
