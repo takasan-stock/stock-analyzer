@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
+from site_context import get_active_stock, set_active_stock
 import yfinance as yf
 
 from daily_command_center import build_score_breakdown_rows
@@ -247,7 +248,13 @@ st.caption(
 )
 
 incoming_ticker = normalize_ticker(st.session_state.pop("pretrade_ticker", ""))
+_site_active_ticker, _site_active_name, _ = get_active_stock()
+if not incoming_ticker and _site_active_ticker:
+    incoming_ticker = normalize_ticker(_site_active_ticker)
+
 incoming_source = str(st.session_state.pop("pretrade_source", "") or "").strip()
+if not incoming_source and incoming_ticker and incoming_ticker == normalize_ticker(_site_active_ticker):
+    incoming_source = "V3サイト共通銘柄"
 incoming_name = str(st.session_state.pop("pretrade_name", "") or "").strip()
 incoming_earnings_days = st.session_state.pop("pretrade_earnings_days", None)
 incoming_opportunity_score = st.session_state.pop("pretrade_opportunity_score", None)
@@ -335,6 +342,12 @@ else:
 
 if not ticker:
     st.stop()
+
+set_active_stock(
+    ticker,
+    row.get("銘柄名", "") if isinstance(row, dict) else "",
+    source="Pre-Trade",
+)
 
 _active_source = str(st.session_state.get("pretrade_active_source", "") or "")
 _source_ticker = normalize_ticker(st.session_state.get("pretrade_source_ticker", ""))
