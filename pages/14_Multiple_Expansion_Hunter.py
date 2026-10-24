@@ -282,6 +282,8 @@ st.markdown("## 銘柄詳細")
 options = view["ticker"].astype(str).tolist()
 _active_ticker, _, _ = get_active_stock()
 _active_index = options.index(_active_ticker) if _active_ticker in options else 0
+if _active_ticker in options:
+    st.session_state["mex_detail_ticker"] = _active_ticker
 selected_ticker = st.selectbox(
     "銘柄",
     options=options,
