@@ -35,12 +35,15 @@ def set_active_stock(ticker: object, name: object = "", source: str = "") -> Non
     if not code:
         return
 
+    previous_code = normalize_site_ticker(
+        st.session_state.get(ACTIVE_TICKER_KEY, "")
+    )
     st.session_state[ACTIVE_TICKER_KEY] = code
 
     clean_name = str(name or "").strip()
     if clean_name:
         st.session_state[ACTIVE_NAME_KEY] = clean_name
-    elif normalize_site_ticker(st.session_state.get(ACTIVE_TICKER_KEY, "")) != code:
+    elif previous_code != code:
         st.session_state[ACTIVE_NAME_KEY] = ""
 
     if source:
