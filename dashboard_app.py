@@ -2585,6 +2585,13 @@ sync_reports_from_github()
 render_site_portal()
 
 # ==========================================
+# TODAY COMMAND CENTER: 運用状態
+# ==========================================
+_health = build_operational_health("data")
+_health_overall = str(_health.get("overall", "PENDING") or "PENDING")
+_health_icon = health_icon(_health_overall)
+
+# ==========================================
 # V3 今日見るべき銘柄（既存スナップショットを軽量集約）
 # ==========================================
 def _load_priority_csv(path: str, dtype=None) -> pd.DataFrame:
@@ -2632,10 +2639,10 @@ _priority_rows = build_daily_priority_board(
     today=datetime.date.today(),
 )
 
-st.markdown("### 🎯 今日見るべき銘柄")
+st.markdown("## 🌅 TODAY COMMAND CENTER")
 st.caption(
-    "V3 ACTION STATUSを使い、売買推奨ではなく『今日どの銘柄から確認するか』の順番を自動整理します。"
-    " 段階の優先度 → 同じ段階内でReadiness順です。"
+    "最初に確認する銘柄だけを上に集約します。"
+    "V3 ACTION STATUSは売買推奨ではなく、今日の確認順を整理するための研究・監視ステータスです。"
 )
 
 if not _priority_rows:
@@ -2653,56 +2660,99 @@ else:
         stage: sum(1 for row in _priority_rows if row.get("stage") == stage)
         for stage, _ in _stage_order
     }
-    _count_cols = st.columns(6)
-    for _col, (_stage, _label) in zip(_count_cols, _stage_order):
-        _col.metric(_label, _counts.get(_stage, 0))
+    _urgent_count = (
+        _counts.get("EVENT_CHECK", 0)
+        + _counts.get("PRETRADE", 0)
+        + _counts.get("ENTRY_MONITOR", 0)
+    )
+    _top_row = _priority_rows[0]
 
-    _display_limit = st.slider(
-        "表示件数",
-        min_value=5,
-        max_value=min(30, max(5, len(_priority_rows))),
-        value=min(10, max(5, len(_priority_rows))),
-        step=1,
-        key="v3_priority_limit",
+    _summary_cols = st.columns(4)
+    _summary_cols[0].metric("運用状態", f"{_health_icon} {_health_overall}")
+    _summary_cols[1].metric("優先確認", _urgent_count)
+    _summary_cols[2].metric("監視対象", len(_priority_rows))
+    _summary_cols[3].metric(
+        "最優先",
+        f"{_top_row['ticker']} {_top_row['name']}",
+        f"{_top_row['stage_icon']} {_top_row['stage_label']}",
     )
 
-    for _row in _priority_rows[:_display_limit]:
-        with st.container(border=True):
-            _c1, _c2, _c3, _c4 = st.columns([3.2, 1.15, 1.15, 1.5])
+    if _health_overall == "ALERT":
+        st.error(
+            "運用データにALERTがあります。候補確認より先にヘルスチェックを確認してください。"
+        )
+    elif _health_overall == "WARN":
+        st.warning("一部の運用データがWARNです。候補の鮮度を確認してください。")
+
+    st.markdown("### 🔥 最優先3銘柄")
+    _top3 = _priority_rows[:3]
+    _top_cols = st.columns(len(_top3))
+    for _col, _row in zip(_top_cols, _top3):
+        with _col:
+            with st.container(border=True):
+                st.markdown(
+                    f"**#{_row['rank']} {_row['stage_icon']} {_row['name'] or '—'}**  "
+                    f"{_row['ticker']}"
+                )
+                st.metric(
+                    _row["stage_label"],
+                    f"{_row['readiness']}/100",
+                    f"Confidence {_row['confidence']}",
+                )
+                _reason = str(_row.get("lead_reason", "") or "")
+                _blocker = str(_row.get("lead_blocker", "") or "")
+                if _reason:
+                    st.caption(f"✅ {_reason}")
+                if _blocker:
+                    st.caption(f"⚠️ {_blocker}")
+                if st.button(
+                    "🔬 銘柄詳細へ",
+                    key=f"v3_priority_top_open_{_row['ticker']}",
+                    use_container_width=True,
+                    type="primary" if int(_row["rank"]) == 1 else "secondary",
+                ):
+                    set_active_stock(
+                        _row["ticker"],
+                        _row.get("name", ""),
+                        source="TODAY COMMAND CENTER",
+                    )
+                    st.switch_page("pages/16_Stock_Detail.py")
+
+    with st.expander("📊 段階別サマリー・4位以下を見る", expanded=False):
+        _count_cols = st.columns(6)
+        for _col, (_stage, _label) in zip(_count_cols, _stage_order):
+            _col.metric(_label, _counts.get(_stage, 0))
+
+        for _row in _priority_rows[3:10]:
+            _c1, _c2, _c3, _c4 = st.columns([3.2, 1.2, 1.1, 1.5])
             with _c1:
                 st.markdown(
                     f"**#{_row['rank']} {_row['stage_icon']} {_row['name'] or '—'} "
                     f"({_row['ticker']})**"
                 )
-                st.caption(_row.get("summary", ""))
-                _reason = str(_row.get("lead_reason", "") or "")
-                _blocker = str(_row.get("lead_blocker", "") or "")
                 _parts = []
-                if _reason:
-                    _parts.append(f"追い風: {_reason}")
-                if _blocker:
-                    _parts.append(f"確認: {_blocker}")
+                if _row.get("lead_reason"):
+                    _parts.append(f"追い風: {_row['lead_reason']}")
+                if _row.get("lead_blocker"):
+                    _parts.append(f"確認: {_row['lead_blocker']}")
                 if _parts:
                     st.caption(" ｜ ".join(_parts))
-            with _c2:
-                st.metric("段階", _row["stage_label"])
-            with _c3:
-                st.metric("Readiness", f"{_row['readiness']}/100")
-                st.caption(f"Confidence {_row['confidence']}")
+            _c2.metric("段階", _row["stage_label"])
+            _c3.metric("Readiness", f"{_row['readiness']}/100")
             with _c4:
                 if st.button(
-                    "🔬 この銘柄を見る",
-                    key=f"v3_priority_open_{_row['ticker']}",
+                    "🔬 詳細",
+                    key=f"v3_priority_more_open_{_row['ticker']}",
                     use_container_width=True,
                 ):
                     set_active_stock(
                         _row["ticker"],
                         _row.get("name", ""),
-                        source="今日見るべき銘柄",
+                        source="TODAY COMMAND CENTER",
                     )
                     st.switch_page("pages/16_Stock_Detail.py")
 
-    with st.expander("📋 優先リストを一覧表示", expanded=False):
+        st.markdown("##### 📋 全優先リスト")
         _table = pd.DataFrame(_priority_rows)
         if not _table.empty:
             _table = _table[
@@ -2736,472 +2786,454 @@ else:
             )
             st.dataframe(_table, hide_index=True, width="stretch")
 
-st.title("📊 銘柄管理ダッシュボード")
-
-# ==========================================
-# Operational Health（ME / Entry Hunter 稼働確認）
-# ==========================================
-_health = build_operational_health("data")
-_health_overall = str(_health.get("overall", "PENDING") or "PENDING")
-_health_icon = health_icon(_health_overall)
-
 with st.expander(
-    f"{_health_icon} 運用ヘルスチェック｜{_health_overall}",
+    f"{_health_icon} 運用ヘルスチェック詳細｜{_health_overall}",
     expanded=_health_overall in {"ALERT", "WARN"},
 ):
     _h1, _h2 = st.columns(2)
-    _h1.metric(
-        "直近完了セッション",
-        str(_health.get("expected_session", "—")),
-    )
-    _h2.metric(
-        "次の東証セッション",
-        str(_health.get("next_session", "—")),
-    )
-
+    _h1.metric("直近完了セッション", str(_health.get("expected_session", "—")))
+    _h2.metric("次の東証セッション", str(_health.get("next_session", "—")))
     for _row in _health.get("rows", []):
         _status = str(_row.get("status", "") or "")
         _component = str(_row.get("component", "") or "")
         _detail = str(_row.get("detail", "") or "")
         st.markdown(
-            f"{health_icon(_status)} **{_component}｜{_status}**  \n"
-            f"{_detail}"
+            f"{health_icon(_status)} **{_component}｜{_status}**  \n{_detail}"
         )
 
-    if _health_overall == "ALERT":
-        st.error(
-            "古い市場データまたは場中監視の更新停止を検知しています。"
-            " 売買候補への昇格前に各コンポーネントを確認してください。"
-        )
-    elif _health_overall == "WARN":
-        st.warning("一部コンポーネントの更新状況を確認してください。")
-    elif _health_overall == "OK":
-        st.caption("主要なME / Entry Hunter運用データは正常範囲です。")
+st.divider()
+st.markdown("## 📚 分析・管理ワークスペース")
 
-# ==========================================
-# Deep FCF TOP5（FCFの裏付けが強いME候補）
-# ==========================================
-def _load_deep_fcf_me_screener():
-    path = "data/multiple_expansion/me_screener_latest.csv"
-    try:
-        if os.path.exists(path):
-            return pd.read_csv(path, dtype={"ticker": str})
-    except Exception:
-        pass
-    return pd.DataFrame()
+with st.expander("💵 Deep FCF TOP5｜FCF裏付けを詳しく見る", expanded=False):
+    # ==========================================
+    # Deep FCF TOP5（FCFの裏付けが強いME候補）
+    # ==========================================
+    def _load_deep_fcf_me_screener():
+        path = "data/multiple_expansion/me_screener_latest.csv"
+        try:
+            if os.path.exists(path):
+                return pd.read_csv(path, dtype={"ticker": str})
+        except Exception:
+            pass
+        return pd.DataFrame()
 
 
-_deep_fcf_frame = build_deep_fcf_top5(
-    _load_deep_fcf_me_screener(),
-    limit=5,
-    min_coverage=0.60,
-    min_score=55.0,
-    min_quality_grade="C",
-)
-
-st.markdown("### 💵 Deep FCF TOP5")
-st.caption(
-    "ME候補をFCFの質・持続性・変換効率・P/FCFで再評価した研究優先度です。"
-    " 表示条件は Coverage 60%以上・Deep FCF 55点以上・Quality C以上。"
-    " 条件未達なら5枠を埋めません。"
-)
-
-if _deep_fcf_frame.empty:
-    st.caption(
-        "現在は Deep FCF の表示基準（Coverage 60%以上・Score 55以上・Quality C以上）"
-        "を満たす銘柄がありません。次回の財務データ更新後に再評価します。"
+    _deep_fcf_frame = build_deep_fcf_top5(
+        _load_deep_fcf_me_screener(),
+        limit=5,
+        min_coverage=0.60,
+        min_score=55.0,
+        min_quality_grade="C",
     )
-else:
-    _fcf_rows = list(_deep_fcf_frame.iterrows())
-    for _row_start in range(0, len(_fcf_rows), 3):
-        _chunk = _fcf_rows[_row_start : _row_start + 3]
-        if len(_chunk) == 1:
-            _fcf_cols = st.columns([1, 2, 1])
-            _column_map = [1]
-        elif len(_chunk) == 2:
-            _fcf_cols = st.columns([1, 1, 1])
-            _column_map = [0, 1]
-        else:
-            _fcf_cols = st.columns(3)
-            _column_map = [0, 1, 2]
 
-        for _local_i, (_, _fcf_row) in enumerate(_chunk):
-            with _fcf_cols[_column_map[_local_i]]:
-                _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
-                _coverage = (
-                    float(_fcf_row.get("deep_fcf_coverage", 0.0) or 0.0) * 100.0
-                )
-                _ticker = str(_fcf_row.get("ticker", "") or "")
-                _name = str(_fcf_row.get("company_name", "") or "")
-                _quality = str(_fcf_row.get("fcf_quality_grade", "") or "—")
-                _strength = deep_fcf_strength(_score)
-                _gate_open = bool(_fcf_row.get("execution_ready", False))
-                _gate = "🟢 GATE OPEN" if _gate_open else "🟡 GATE WAIT"
+    st.markdown("### 💵 Deep FCF TOP5")
+    st.caption(
+        "ME候補をFCFの質・持続性・変換効率・P/FCFで再評価した研究優先度です。"
+        " 表示条件は Coverage 60%以上・Deep FCF 55点以上・Quality C以上。"
+        " 条件未達なら5枠を埋めません。"
+    )
 
+    if _deep_fcf_frame.empty:
+        st.caption(
+            "現在は Deep FCF の表示基準（Coverage 60%以上・Score 55以上・Quality C以上）"
+            "を満たす銘柄がありません。次回の財務データ更新後に再評価します。"
+        )
+    else:
+        _fcf_rows = list(_deep_fcf_frame.iterrows())
+        for _row_start in range(0, len(_fcf_rows), 3):
+            _chunk = _fcf_rows[_row_start : _row_start + 3]
+            if len(_chunk) == 1:
+                _fcf_cols = st.columns([1, 2, 1])
+                _column_map = [1]
+            elif len(_chunk) == 2:
+                _fcf_cols = st.columns([1, 1, 1])
+                _column_map = [0, 1]
+            else:
+                _fcf_cols = st.columns(3)
+                _column_map = [0, 1, 2]
+
+            for _local_i, (_, _fcf_row) in enumerate(_chunk):
+                with _fcf_cols[_column_map[_local_i]]:
+                    _score = float(_fcf_row.get("deep_fcf_score", 0.0) or 0.0)
+                    _coverage = (
+                        float(_fcf_row.get("deep_fcf_coverage", 0.0) or 0.0) * 100.0
+                    )
+                    _ticker = str(_fcf_row.get("ticker", "") or "")
+                    _name = str(_fcf_row.get("company_name", "") or "")
+                    _quality = str(_fcf_row.get("fcf_quality_grade", "") or "—")
+                    _strength = deep_fcf_strength(_score)
+                    _gate_open = bool(_fcf_row.get("execution_ready", False))
+                    _gate = "🟢 GATE OPEN" if _gate_open else "🟡 GATE WAIT"
+
+                    st.metric(
+                        f"#{int(_fcf_row['rank'])} {_ticker}",
+                        f"{_score:.0f}",
+                    )
+                    st.markdown(f"**{_name or '—'}**")
+                    st.caption(
+                        f"💵 {_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
+                    )
+
+                    _margin = _fcf_row.get("fcf_margin")
+                    _conversion = _fcf_row.get("cash_conversion")
+                    _p_fcf = _fcf_row.get("p_fcf")
+                    _margin_text = (
+                        "—" if pd.isna(_margin) else f"{float(_margin) * 100:.1f}%"
+                    )
+                    _conversion_text = (
+                        "—" if pd.isna(_conversion) else f"{float(_conversion):.2f}x"
+                    )
+                    _p_fcf_text = (
+                        "—" if pd.isna(_p_fcf) else f"{float(_p_fcf):.1f}x"
+                    )
+                    _valuation_label = deep_fcf_valuation_label(_p_fcf)
+                    st.caption(f"{_valuation_label}｜P/FCF {_p_fcf_text}")
+                    st.caption(
+                        f"{_gate}  \n"
+                        f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
+                    )
+
+                    st.link_button(
+                        "📈 TradingView",
+                        tradingview_url(_ticker),
+                        use_container_width=True,
+                    )
+
+                    if st.button(
+                        "🎯 Entry Hunter",
+                        key=f"deep_fcf_entry_{_ticker}_{int(_fcf_row['rank'])}",
+                        use_container_width=True,
+                        disabled=not _gate_open,
+                    ):
+                        st.session_state["command_center_focus_ticker"] = _ticker
+                        st.session_state["command_center_focus_name"] = _name
+                        st.session_state["command_center_focus_reason"] = (
+                            f"Deep FCF TOP5 #{int(_fcf_row['rank'])}｜"
+                            f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
+                        )
+                        st.switch_page("pages/8_Short_Cover_Hunter.py")
+
+                    if st.button(
+                        "🛡️ Pre-Trade",
+                        key=f"deep_fcf_pretrade_{_ticker}_{int(_fcf_row['rank'])}",
+                        use_container_width=True,
+                        disabled=not _gate_open,
+                    ):
+                        st.session_state["pretrade_ticker"] = _ticker
+                        st.session_state["pretrade_name"] = _name
+                        st.session_state["pretrade_source"] = (
+                            f"Deep FCF TOP5 #{int(_fcf_row['rank'])}"
+                        )
+                        st.session_state["pretrade_opportunity_reason"] = (
+                            f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%｜"
+                            f"{_valuation_label}｜P/FCF {_p_fcf_text}｜"
+                            f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
+                        )
+                        st.switch_page("pages/9_Pre_Trade_Check.py")
+
+
+
+with st.expander("🧭 Daily Command Center｜従来の詳細ビュー", expanded=False):
+    # ==========================================
+    # Daily Command Center（今日の最優先3銘柄）
+    # ==========================================
+    def _load_command_center_entry_status():
+        path = "data/short_cover_entry_status.json"
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+
+    def _load_command_center_me_screener():
+        path = "data/multiple_expansion/me_screener_latest.csv"
+        try:
+            if os.path.exists(path):
+                return pd.read_csv(path, dtype={"ticker": str})
+        except Exception:
+            pass
+        return pd.DataFrame()
+
+
+    def _load_command_center_history():
+        path = "data/daily_command_center_history.csv"
+        try:
+            if os.path.exists(path):
+                return pd.read_csv(path, dtype={"ticker": str})
+        except Exception:
+            pass
+        return pd.DataFrame()
+
+
+    def _load_after_close_review():
+        path = "data/after_close_review_latest.json"
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+
+    _cc_entry_status = _load_command_center_entry_status()
+    _cc_me_screener = _load_command_center_me_screener()
+    _cc_history = _load_command_center_history()
+    _cc_now = pd.Timestamp.now(tz="Asia/Tokyo")
+    _cc_session = build_command_center_session(
+        _cc_entry_status,
+        _cc_me_screener,
+        as_of=_cc_now,
+        limit=3,
+        history=_cc_history,
+    )
+
+
+    def _render_score_breakdown(row):
+        _items = build_score_breakdown_rows(row)
+        if not _items:
+            return
+
+        st.caption("Score Breakdown")
+        for _item in _items:
+            _label = _item["label"]
+            _value = float(_item["value"])
+            _pct = float(_item["percent"])
+            _direction = _item["direction"]
+
+            _left, _right = st.columns([1.2, 2.8])
+            with _left:
+                st.caption(f"{_label} {_value:+.1f}")
+            with _right:
+                if _direction == "positive":
+                    st.progress(_pct / 100.0, text=f"+{_pct:.0f}%")
+                elif _direction == "negative":
+                    st.progress(_pct / 100.0, text=f"-{_pct:.0f}%")
+                else:
+                    st.progress(0.0, text="0")
+
+
+    def _render_command_center_cards(frame, *, key_prefix):
+        if frame is None or frame.empty:
+            st.caption("表示できる候補はまだありません。次回のME / Entry Hunter更新後に反映されます。")
+            return
+
+        _cols = st.columns(len(frame))
+        for _i, (_, _row) in enumerate(frame.iterrows()):
+            with _cols[_i]:
+                _trend = str(_row.get("rank_trend", "NEW") or "NEW")
                 st.metric(
-                    f"#{int(_fcf_row['rank'])} {_ticker}",
-                    f"{_score:.0f}",
+                    label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
+                    value=f"{float(_row['opportunity_score']):.0f}",
+                    delta=f"{_trend}｜{_row['ticker']} {_row['name']}",
                 )
-                st.markdown(f"**{_name or '—'}**")
                 st.caption(
-                    f"💵 {_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
+                    f"**{_row.get('decision_card', '')}**  \n"
+                    f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
                 )
 
-                _margin = _fcf_row.get("fcf_margin")
-                _conversion = _fcf_row.get("cash_conversion")
-                _p_fcf = _fcf_row.get("p_fcf")
-                _margin_text = (
-                    "—" if pd.isna(_margin) else f"{float(_margin) * 100:.1f}%"
+                _breakdown_items = build_score_breakdown_rows(_row)
+                _has_score_breakdown = any(
+                    abs(float(_item["value"])) >= 0.05
+                    for _item in _breakdown_items
                 )
-                _conversion_text = (
-                    "—" if pd.isna(_conversion) else f"{float(_conversion):.2f}x"
-                )
-                _p_fcf_text = (
-                    "—" if pd.isna(_p_fcf) else f"{float(_p_fcf):.1f}x"
-                )
-                _valuation_label = deep_fcf_valuation_label(_p_fcf)
-                st.caption(f"{_valuation_label}｜P/FCF {_p_fcf_text}")
-                st.caption(
-                    f"{_gate}  \n"
-                    f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
-                )
+                _breakdown = str(_row.get("adaptive_breakdown", "") or "")
+                if _has_score_breakdown:
+                    if _breakdown:
+                        st.caption(f"🧮 {_breakdown}")
+                    _render_score_breakdown(_row)
 
+                _handoff = build_command_center_handoff(_row)
+                _execution_ready = execution_handoff_allowed(_row)
                 st.link_button(
                     "📈 TradingView",
-                    tradingview_url(_ticker),
+                    tradingview_url(_row["ticker"]),
                     use_container_width=True,
                 )
+
+                if not _execution_ready:
+                    st.caption(
+                        "🟡 WATCH ONLY｜再加速待ち。"
+                        " READY / PRIORITY WATCH / RE-EXP でEntry Hunterへ昇格します。"
+                    )
 
                 if st.button(
                     "🎯 Entry Hunter",
-                    key=f"deep_fcf_entry_{_ticker}_{int(_fcf_row['rank'])}",
+                    key=f"{key_prefix}_entry_{_row['ticker']}_{int(_row['rank'])}",
                     use_container_width=True,
-                    disabled=not _gate_open,
+                    disabled=not _execution_ready,
                 ):
-                    st.session_state["command_center_focus_ticker"] = _ticker
-                    st.session_state["command_center_focus_name"] = _name
-                    st.session_state["command_center_focus_reason"] = (
-                        f"Deep FCF TOP5 #{int(_fcf_row['rank'])}｜"
-                        f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%"
-                    )
+                    st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
+                    st.session_state["command_center_focus_name"] = _handoff["name"]
+                    st.session_state["command_center_focus_reason"] = _handoff["decision_card"]
                     st.switch_page("pages/8_Short_Cover_Hunter.py")
 
                 if st.button(
                     "🛡️ Pre-Trade",
-                    key=f"deep_fcf_pretrade_{_ticker}_{int(_fcf_row['rank'])}",
+                    key=f"{key_prefix}_pretrade_{_row['ticker']}_{int(_row['rank'])}",
                     use_container_width=True,
-                    disabled=not _gate_open,
+                    disabled=not _execution_ready,
                 ):
-                    st.session_state["pretrade_ticker"] = _ticker
-                    st.session_state["pretrade_name"] = _name
+                    st.session_state["pretrade_ticker"] = _handoff["ticker"]
+                    st.session_state["pretrade_name"] = _handoff["name"]
                     st.session_state["pretrade_source"] = (
-                        f"Deep FCF TOP5 #{int(_fcf_row['rank'])}"
+                        f"Daily Command Center #{int(_row['rank'])}"
                     )
-                    st.session_state["pretrade_opportunity_reason"] = (
-                        f"{_strength}｜Quality {_quality}｜Coverage {_coverage:.0f}%｜"
-                        f"{_valuation_label}｜P/FCF {_p_fcf_text}｜"
-                        f"FCF Margin {_margin_text}｜Cash Conv {_conversion_text}"
-                    )
+                    st.session_state["pretrade_opportunity_score"] = _handoff["opportunity_score"]
+                    st.session_state["pretrade_opportunity_rating"] = _handoff["opportunity_rating"]
+                    st.session_state["pretrade_opportunity_action"] = _handoff["opportunity_action"]
+                    st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
+                    st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
+                    st.session_state["pretrade_source_bonus"] = _handoff.get("source_bonus")
+                    st.session_state["pretrade_setup_bonus"] = _handoff.get("setup_bonus")
+                    st.session_state["pretrade_trait_bonus"] = _handoff.get("trait_bonus")
+                    st.session_state["pretrade_fast_bonus"] = _handoff.get("fast_bonus")
+                    st.session_state["pretrade_deep_fcf_rank"] = _handoff.get("deep_fcf_rank")
+                    st.session_state["pretrade_deep_fcf_score"] = _handoff.get("deep_fcf_score")
+                    st.session_state["pretrade_deep_fcf_coverage"] = _handoff.get("deep_fcf_coverage")
+                    st.session_state["pretrade_deep_fcf_confidence"] = _handoff.get("deep_fcf_confidence")
+                    st.session_state["pretrade_deep_fcf_bonus"] = _handoff.get("deep_fcf_bonus")
+                    st.session_state["pretrade_adaptive_total"] = _handoff.get("adaptive_total")
+                    st.session_state["pretrade_adaptive_breakdown"] = _handoff.get("adaptive_breakdown")
                     st.switch_page("pages/9_Pre_Trade_Check.py")
 
-# ==========================================
-# Daily Command Center（今日の最優先3銘柄）
-# ==========================================
-def _load_command_center_entry_status():
-    path = "data/short_cover_entry_status.json"
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
 
-
-def _load_command_center_me_screener():
-    path = "data/multiple_expansion/me_screener_latest.csv"
-    try:
-        if os.path.exists(path):
-            return pd.read_csv(path, dtype={"ticker": str})
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
-def _load_command_center_history():
-    path = "data/daily_command_center_history.csv"
-    try:
-        if os.path.exists(path):
-            return pd.read_csv(path, dtype={"ticker": str})
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
-def _load_after_close_review():
-    path = "data/after_close_review_latest.json"
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-_cc_entry_status = _load_command_center_entry_status()
-_cc_me_screener = _load_command_center_me_screener()
-_cc_history = _load_command_center_history()
-_cc_now = pd.Timestamp.now(tz="Asia/Tokyo")
-_cc_session = build_command_center_session(
-    _cc_entry_status,
-    _cc_me_screener,
-    as_of=_cc_now,
-    limit=3,
-    history=_cc_history,
-)
-
-
-def _render_score_breakdown(row):
-    _items = build_score_breakdown_rows(row)
-    if not _items:
-        return
-
-    st.caption("Score Breakdown")
-    for _item in _items:
-        _label = _item["label"]
-        _value = float(_item["value"])
-        _pct = float(_item["percent"])
-        _direction = _item["direction"]
-
-        _left, _right = st.columns([1.2, 2.8])
-        with _left:
-            st.caption(f"{_label} {_value:+.1f}")
-        with _right:
-            if _direction == "positive":
-                st.progress(_pct / 100.0, text=f"+{_pct:.0f}%")
-            elif _direction == "negative":
-                st.progress(_pct / 100.0, text=f"-{_pct:.0f}%")
-            else:
-                st.progress(0.0, text="0")
-
-
-def _render_command_center_cards(frame, *, key_prefix):
-    if frame is None or frame.empty:
-        st.caption("表示できる候補はまだありません。次回のME / Entry Hunter更新後に反映されます。")
-        return
-
-    _cols = st.columns(len(frame))
-    for _i, (_, _row) in enumerate(frame.iterrows()):
-        with _cols[_i]:
-            _trend = str(_row.get("rank_trend", "NEW") or "NEW")
-            st.metric(
-                label=f"#{int(_row['rank'])} {_row['opportunity_rating']}｜{_row['opportunity_action']}",
-                value=f"{float(_row['opportunity_score']):.0f}",
-                delta=f"{_trend}｜{_row['ticker']} {_row['name']}",
-            )
-            st.caption(
-                f"**{_row.get('decision_card', '')}**  \n"
-                f"{_row['source']}｜{_row['entry_status']}｜Coverage {float(_row['coverage']):.0f}%"
-            )
-
-            _breakdown_items = build_score_breakdown_rows(_row)
-            _has_score_breakdown = any(
-                abs(float(_item["value"])) >= 0.05
-                for _item in _breakdown_items
-            )
-            _breakdown = str(_row.get("adaptive_breakdown", "") or "")
-            if _has_score_breakdown:
-                if _breakdown:
-                    st.caption(f"🧮 {_breakdown}")
-                _render_score_breakdown(_row)
-
-            _handoff = build_command_center_handoff(_row)
-            _execution_ready = execution_handoff_allowed(_row)
-            st.link_button(
-                "📈 TradingView",
-                tradingview_url(_row["ticker"]),
-                use_container_width=True,
-            )
-
-            if not _execution_ready:
-                st.caption(
-                    "🟡 WATCH ONLY｜再加速待ち。"
-                    " READY / PRIORITY WATCH / RE-EXP でEntry Hunterへ昇格します。"
-                )
-
-            if st.button(
-                "🎯 Entry Hunter",
-                key=f"{key_prefix}_entry_{_row['ticker']}_{int(_row['rank'])}",
-                use_container_width=True,
-                disabled=not _execution_ready,
-            ):
-                st.session_state["command_center_focus_ticker"] = _handoff["ticker"]
-                st.session_state["command_center_focus_name"] = _handoff["name"]
-                st.session_state["command_center_focus_reason"] = _handoff["decision_card"]
-                st.switch_page("pages/8_Short_Cover_Hunter.py")
-
-            if st.button(
-                "🛡️ Pre-Trade",
-                key=f"{key_prefix}_pretrade_{_row['ticker']}_{int(_row['rank'])}",
-                use_container_width=True,
-                disabled=not _execution_ready,
-            ):
-                st.session_state["pretrade_ticker"] = _handoff["ticker"]
-                st.session_state["pretrade_name"] = _handoff["name"]
-                st.session_state["pretrade_source"] = (
-                    f"Daily Command Center #{int(_row['rank'])}"
-                )
-                st.session_state["pretrade_opportunity_score"] = _handoff["opportunity_score"]
-                st.session_state["pretrade_opportunity_rating"] = _handoff["opportunity_rating"]
-                st.session_state["pretrade_opportunity_action"] = _handoff["opportunity_action"]
-                st.session_state["pretrade_opportunity_reason"] = _handoff["opportunity_reason"]
-                st.session_state["pretrade_opportunity_coverage"] = _handoff["opportunity_coverage"]
-                st.session_state["pretrade_source_bonus"] = _handoff.get("source_bonus")
-                st.session_state["pretrade_setup_bonus"] = _handoff.get("setup_bonus")
-                st.session_state["pretrade_trait_bonus"] = _handoff.get("trait_bonus")
-                st.session_state["pretrade_fast_bonus"] = _handoff.get("fast_bonus")
-                st.session_state["pretrade_deep_fcf_rank"] = _handoff.get("deep_fcf_rank")
-                st.session_state["pretrade_deep_fcf_score"] = _handoff.get("deep_fcf_score")
-                st.session_state["pretrade_deep_fcf_coverage"] = _handoff.get("deep_fcf_coverage")
-                st.session_state["pretrade_deep_fcf_confidence"] = _handoff.get("deep_fcf_confidence")
-                st.session_state["pretrade_deep_fcf_bonus"] = _handoff.get("deep_fcf_bonus")
-                st.session_state["pretrade_adaptive_total"] = _handoff.get("adaptive_total")
-                st.session_state["pretrade_adaptive_breakdown"] = _handoff.get("adaptive_breakdown")
-                st.switch_page("pages/9_Pre_Trade_Check.py")
-
-
-st.markdown(f"### {_cc_session['headline']}")
-_render_command_center_cards(
-    _cc_session["primary"],
-    key_prefix=f"command_{_cc_session['mode'].lower().replace(' ', '_')}",
-)
-
-if _cc_session["mode"] == "PRE-MARKET":
-    _trade_date = _cc_session.get("me_trade_date")
-    _trade_date_text = (
-        "—"
-        if _trade_date is None
-        else pd.Timestamp(_trade_date).strftime("%Y-%m-%d")
-    )
-    st.info(
-        f"前日ME候補から今日狙う3銘柄を表示中です。"
-        f" ME基準日 {_trade_date_text}。9:00以降はEntry HunterのLIVE判定へ切り替わります。"
-    )
-elif _cc_session["mode"] == "LIVE":
-    st.caption(
-        "当日のEntry Hunter Opportunityを優先表示。"
-        " READY / CONFIRMED、順位変化、Decision Cardを見て確認順を決めます。"
-    )
-else:
-    st.caption(
-        "今日のLIVE結果を残したまま、次セッション候補を別枠で表示します。"
-        " 今日の結果と明日の候補を混ぜて順位付けしません。"
-    )
-
-    _after_review = _load_after_close_review()
-    _review_date = str(_after_review.get("review_date", "") or "")
-    _today_text = _cc_now.tz_localize(None).strftime("%Y-%m-%d")
-
-    st.markdown("### 📊 TODAY REVIEW")
-    if not _after_review or _review_date != _today_text:
-        st.caption("今日の引け後レビューはまだ更新待ちです。ME Daily Screener完了後に反映されます。")
-    else:
-        _r1, _r2, _r3, _r4 = st.columns(4)
-        _r1.metric("ENTRY READY", int(_after_review.get("ready_count", 0) or 0))
-        _r2.metric("CONFIRMED", int(_after_review.get("confirmed_count", 0) or 0))
-        _r3.metric("WEAKENING", int(_after_review.get("weakening_count", 0) or 0))
-        _r4.metric("明日に持ち越し", int(_after_review.get("carryover_count", 0) or 0))
-
-        _p1, _p2, _p3, _p4 = st.columns(4)
-        _top3_ret = _after_review.get("top3_avg_return_pct")
-        _avg_ret = _after_review.get("avg_close_return_pct")
-        _avg_mfe = _after_review.get("avg_mfe_pct")
-        _avg_mae = _after_review.get("avg_mae_pct")
-
-        _p1.metric(
-            "TOP3平均 当日",
-            "—" if _top3_ret is None else f"{float(_top3_ret):+.2f}%",
-        )
-        _p2.metric(
-            "全READY平均 当日",
-            "—" if _avg_ret is None else f"{float(_avg_ret):+.2f}%",
-        )
-        _p3.metric(
-            "平均MFE",
-            "—" if _avg_mfe is None else f"{float(_avg_mfe):+.2f}%",
-        )
-        _p4.metric(
-            "平均MAE",
-            "—" if _avg_mae is None else f"{float(_avg_mae):+.2f}%",
-        )
-
-        _review_rows = _after_review.get("rows", [])
-        if _review_rows:
-            _review_df = pd.DataFrame(_review_rows)
-            _review_cols = [
-                col
-                for col in [
-                    "ticker",
-                    "name",
-                    "source",
-                    "signal_key",
-                    "entry_price",
-                    "close_price",
-                    "close_return_pct",
-                    "mfe_pct",
-                    "mae_pct",
-                    "latest_status",
-                    "carryover",
-                ]
-                if col in _review_df.columns
-            ]
-            _review_df = _review_df[_review_cols].rename(
-                columns={
-                    "ticker": "Code",
-                    "name": "銘柄",
-                    "source": "Source",
-                    "signal_key": "Setup",
-                    "entry_price": "Entry",
-                    "close_price": "Close",
-                    "close_return_pct": "当日%",
-                    "mfe_pct": "MFE%",
-                    "mae_pct": "MAE%",
-                    "latest_status": "最終Status",
-                    "carryover": "持越し",
-                }
-            )
-            st.dataframe(
-                _review_df,
-                hide_index=True,
-                use_container_width=True,
-            )
-        st.caption(
-            f"価格取得 {_after_review.get('price_coverage', 0)}/{_after_review.get('tracked_entries', 0)}件。"
-            " 当日損益・MFE・MAEは最初のENTRY READY価格を基準に終値/高値/安値で計算します。"
-        )
-
-    st.markdown(f"### {_cc_session.get('secondary_headline', '🌅 NEXT SESSION WATCH')}")
-    _me_status = str(_cc_session.get("me_status", "") or "")
-    _me_trade_date = _cc_session.get("me_trade_date")
-    _me_trade_text = (
-        "—"
-        if _me_trade_date is None
-        else pd.Timestamp(_me_trade_date).strftime("%Y-%m-%d")
-    )
-
-    if _me_status == "UPDATED":
-        st.success(f"ME更新済み｜基準日 {_me_trade_text}")
-    else:
-        st.warning(
-            f"引け後ME更新待ち｜現在のME基準日 {_me_trade_text}。"
-            " 更新完了後に明日の候補へ自動反映されます。"
-        )
-
+    st.markdown(f"### {_cc_session['headline']}")
     _render_command_center_cards(
-        _cc_session["secondary"],
-        key_prefix="command_next_session",
+        _cc_session["primary"],
+        key_prefix=f"command_{_cc_session['mode'].lower().replace(' ', '_')}",
     )
+
+    if _cc_session["mode"] == "PRE-MARKET":
+        _trade_date = _cc_session.get("me_trade_date")
+        _trade_date_text = (
+            "—"
+            if _trade_date is None
+            else pd.Timestamp(_trade_date).strftime("%Y-%m-%d")
+        )
+        st.info(
+            f"前日ME候補から今日狙う3銘柄を表示中です。"
+            f" ME基準日 {_trade_date_text}。9:00以降はEntry HunterのLIVE判定へ切り替わります。"
+        )
+    elif _cc_session["mode"] == "LIVE":
+        st.caption(
+            "当日のEntry Hunter Opportunityを優先表示。"
+            " READY / CONFIRMED、順位変化、Decision Cardを見て確認順を決めます。"
+        )
+    else:
+        st.caption(
+            "今日のLIVE結果を残したまま、次セッション候補を別枠で表示します。"
+            " 今日の結果と明日の候補を混ぜて順位付けしません。"
+        )
+
+        _after_review = _load_after_close_review()
+        _review_date = str(_after_review.get("review_date", "") or "")
+        _today_text = _cc_now.tz_localize(None).strftime("%Y-%m-%d")
+
+        st.markdown("### 📊 TODAY REVIEW")
+        if not _after_review or _review_date != _today_text:
+            st.caption("今日の引け後レビューはまだ更新待ちです。ME Daily Screener完了後に反映されます。")
+        else:
+            _r1, _r2, _r3, _r4 = st.columns(4)
+            _r1.metric("ENTRY READY", int(_after_review.get("ready_count", 0) or 0))
+            _r2.metric("CONFIRMED", int(_after_review.get("confirmed_count", 0) or 0))
+            _r3.metric("WEAKENING", int(_after_review.get("weakening_count", 0) or 0))
+            _r4.metric("明日に持ち越し", int(_after_review.get("carryover_count", 0) or 0))
+
+            _p1, _p2, _p3, _p4 = st.columns(4)
+            _top3_ret = _after_review.get("top3_avg_return_pct")
+            _avg_ret = _after_review.get("avg_close_return_pct")
+            _avg_mfe = _after_review.get("avg_mfe_pct")
+            _avg_mae = _after_review.get("avg_mae_pct")
+
+            _p1.metric(
+                "TOP3平均 当日",
+                "—" if _top3_ret is None else f"{float(_top3_ret):+.2f}%",
+            )
+            _p2.metric(
+                "全READY平均 当日",
+                "—" if _avg_ret is None else f"{float(_avg_ret):+.2f}%",
+            )
+            _p3.metric(
+                "平均MFE",
+                "—" if _avg_mfe is None else f"{float(_avg_mfe):+.2f}%",
+            )
+            _p4.metric(
+                "平均MAE",
+                "—" if _avg_mae is None else f"{float(_avg_mae):+.2f}%",
+            )
+
+            _review_rows = _after_review.get("rows", [])
+            if _review_rows:
+                _review_df = pd.DataFrame(_review_rows)
+                _review_cols = [
+                    col
+                    for col in [
+                        "ticker",
+                        "name",
+                        "source",
+                        "signal_key",
+                        "entry_price",
+                        "close_price",
+                        "close_return_pct",
+                        "mfe_pct",
+                        "mae_pct",
+                        "latest_status",
+                        "carryover",
+                    ]
+                    if col in _review_df.columns
+                ]
+                _review_df = _review_df[_review_cols].rename(
+                    columns={
+                        "ticker": "Code",
+                        "name": "銘柄",
+                        "source": "Source",
+                        "signal_key": "Setup",
+                        "entry_price": "Entry",
+                        "close_price": "Close",
+                        "close_return_pct": "当日%",
+                        "mfe_pct": "MFE%",
+                        "mae_pct": "MAE%",
+                        "latest_status": "最終Status",
+                        "carryover": "持越し",
+                    }
+                )
+                st.dataframe(
+                    _review_df,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            st.caption(
+                f"価格取得 {_after_review.get('price_coverage', 0)}/{_after_review.get('tracked_entries', 0)}件。"
+                " 当日損益・MFE・MAEは最初のENTRY READY価格を基準に終値/高値/安値で計算します。"
+            )
+
+        st.markdown(f"### {_cc_session.get('secondary_headline', '🌅 NEXT SESSION WATCH')}")
+        _me_status = str(_cc_session.get("me_status", "") or "")
+        _me_trade_date = _cc_session.get("me_trade_date")
+        _me_trade_text = (
+            "—"
+            if _me_trade_date is None
+            else pd.Timestamp(_me_trade_date).strftime("%Y-%m-%d")
+        )
+
+        if _me_status == "UPDATED":
+            st.success(f"ME更新済み｜基準日 {_me_trade_text}")
+        else:
+            st.warning(
+                f"引け後ME更新待ち｜現在のME基準日 {_me_trade_text}。"
+                " 更新完了後に明日の候補へ自動反映されます。"
+            )
+
+        _render_command_center_cards(
+            _cc_session["secondary"],
+            key_prefix="command_next_session",
+        )
+
+
 
 
 
