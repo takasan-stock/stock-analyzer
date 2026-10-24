@@ -17,6 +17,7 @@ import yfinance as yf
 from portfolio_quality import build_company_news_query, is_relevant_company_news
 from sidebar_nav import render_sidebar_navigation
 from stock_action_status import evaluate_stock_action_status
+from site_ui import render_v3_page_header
 from site_context import (
     get_active_stock,
     load_portfolio_stock_options,
@@ -342,31 +343,12 @@ action_status = evaluate_stock_action_status(
     earnings_date=earnings_date,
 )
 
-st.markdown(
-    f"""
-    <div style="
-        padding:18px 20px;
-        border:1px solid rgba(37,99,235,.18);
-        border-radius:18px;
-        background:linear-gradient(135deg,#f8fbff 0%,#ffffff 58%,#f7f8ff 100%);
-        margin-bottom:14px;
-    ">
-      <div style="font-size:.72rem;font-weight:800;color:#2563eb;letter-spacing:.12em">
-        STOCK DETAIL HUB
-      </div>
-      <div style="font-size:1.7rem;font-weight:850;color:#0f172a;margin-top:3px">
-        {html.escape(company_name or active_ticker)}
-        <span style="font-size:1rem;color:#64748b;font-weight:700">
-          ｜{html.escape(active_ticker)}
-        </span>
-      </div>
-      <div style="font-size:.82rem;color:#64748b;margin-top:5px">
-        基本情報・FCF・ME・Entry・材料・レポートを1画面で確認し、
-        必要な専門ツールへそのまま深掘りします。
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+render_v3_page_header(
+    title=f"{company_name or active_ticker}｜{active_ticker}",
+    subtitle="基本情報・FCF・ME・Entry・材料・レポートを1画面で確認し、必要な専門ツールへそのまま深掘りします。",
+    stage="DETAIL",
+    icon="🔬",
+    badge="STOCK DETAIL HUB",
 )
 
 top1, top2, top3, top4, top5 = st.columns(5)
