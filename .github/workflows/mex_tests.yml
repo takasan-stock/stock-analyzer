@@ -32,6 +32,8 @@ on:
       - "tests/test_entry_opportunity.py"
       - "tests/test_daily_command_center.py"
       - "tests/test_after_close_review.py"
+      - "site_ui.py"
+      - "sidebar_nav.py"
       - "dashboard_app.py"
       - ".github/workflows/mex_tests.yml"
   push:
