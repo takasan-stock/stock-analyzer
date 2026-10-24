@@ -332,10 +332,20 @@ else:
         if incoming_earnings_days is not None:
             st.session_state["pretrade_incoming_earnings_days"] = incoming_earnings_days
 
+    def _sync_pretrade_stock():
+        _label = st.session_state.get("pretrade_selected_label", "")
+        _row = rows.get(_label, {})
+        set_active_stock(
+            _row.get("ティッカー", ""),
+            _row.get("銘柄名", ""),
+            source="Pre-Trade",
+        )
+
     selected = st.selectbox(
         "購入前チェックする銘柄",
         options,
         key="pretrade_selected_label",
+        on_change=_sync_pretrade_stock,
     )
     row = rows.get(selected, {})
     ticker = normalize_ticker(row.get("ティッカー", ""))
