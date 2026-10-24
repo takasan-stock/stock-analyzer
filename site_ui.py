@@ -16,6 +16,244 @@ WORKFLOW_STEPS = [
 ]
 
 
+V3_GLOBAL_CSS = """
+<style>
+:root {
+    --v3-blue: #2563eb;
+    --v3-blue-soft: #eff6ff;
+    --v3-slate-900: #0f172a;
+    --v3-slate-700: #334155;
+    --v3-slate-500: #64748b;
+    --v3-border: rgba(148, 163, 184, 0.22);
+    --v3-panel: rgba(255, 255, 255, 0.92);
+    --v3-panel-soft: rgba(248, 250, 252, 0.88);
+    --v3-shadow: 0 8px 24px rgba(15, 23, 42, 0.055);
+}
+
+/* Page width and rhythm */
+[data-testid="stAppViewContainer"] .main .block-container {
+    max-width: 1500px;
+    padding-top: 1.05rem;
+    padding-bottom: 3.5rem;
+}
+
+main h1, main h2, main h3, main h4 {
+    letter-spacing: -0.015em;
+}
+
+main h2 {
+    margin-top: 1.45rem;
+    margin-bottom: 0.65rem;
+}
+
+main h3 {
+    margin-top: 1.15rem;
+    margin-bottom: 0.55rem;
+}
+
+/* KPI / metric cards */
+main [data-testid="stMetric"] {
+    min-height: 92px;
+    padding: 0.82rem 0.95rem;
+    border: 1px solid var(--v3-border);
+    border-radius: 14px;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,.98) 0%, rgba(248,250,252,.92) 100%);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.035);
+}
+
+main [data-testid="stMetricLabel"] {
+    color: var(--v3-slate-500);
+    font-weight: 700;
+}
+
+main [data-testid="stMetricValue"] {
+    color: var(--v3-slate-900);
+    font-weight: 820;
+    letter-spacing: -0.02em;
+}
+
+/* Bordered Streamlit containers */
+main [data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 15px;
+    border-color: var(--v3-border);
+    background: var(--v3-panel);
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.035);
+}
+
+/* Buttons */
+main .stButton > button {
+    min-height: 2.65rem;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    font-weight: 750;
+    transition:
+        transform 120ms ease,
+        box-shadow 120ms ease,
+        border-color 120ms ease;
+}
+
+main .stButton > button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: rgba(37, 99, 235, 0.42);
+    box-shadow: 0 7px 18px rgba(37, 99, 235, 0.10);
+}
+
+main .stButton > button[kind="primary"] {
+    border: none;
+    background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+    color: #ffffff;
+    box-shadow: 0 7px 18px rgba(37, 99, 235, 0.18);
+}
+
+main .stButton > button:disabled {
+    opacity: 0.58;
+}
+
+/* Page-link buttons in the main area */
+main [data-testid="stPageLink"] a {
+    min-height: 2.6rem;
+    padding: 0.55rem 0.72rem;
+    border: 1px solid var(--v3-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.88);
+    font-weight: 720;
+    transition:
+        transform 120ms ease,
+        border-color 120ms ease,
+        box-shadow 120ms ease;
+}
+
+main [data-testid="stPageLink"] a:hover {
+    transform: translateY(-1px);
+    border-color: rgba(37, 99, 235, 0.38);
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.08);
+}
+
+/* Tabs */
+main [data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0.28rem;
+    padding: 0.28rem;
+    border-radius: 12px;
+    background: rgba(241, 245, 249, 0.86);
+}
+
+main [data-testid="stTabs"] [data-baseweb="tab"] {
+    min-height: 2.55rem;
+    padding: 0.55rem 0.82rem;
+    border-radius: 9px;
+    font-weight: 720;
+}
+
+main [data-testid="stTabs"] [aria-selected="true"] {
+    background: #ffffff;
+    color: #1d4ed8;
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
+}
+
+/* Expanders */
+main [data-testid="stExpander"] {
+    border-color: var(--v3-border);
+    border-radius: 13px;
+    overflow: hidden;
+    background: rgba(255,255,255,.76);
+}
+
+main [data-testid="stExpander"] summary {
+    min-height: 2.7rem;
+    font-weight: 720;
+}
+
+/* Inputs */
+main div[data-baseweb="input"] > div,
+main div[data-baseweb="textarea"] > div,
+main div[data-baseweb="select"] > div {
+    border-radius: 10px;
+}
+
+main textarea {
+    border-radius: 10px !important;
+}
+
+/* Dataframes / tables */
+main [data-testid="stDataFrame"] {
+    border: 1px solid var(--v3-border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Alerts */
+main [data-testid="stAlert"] {
+    border-radius: 12px;
+}
+
+/* Reduce visual noise between tightly stacked blocks */
+main [data-testid="stVerticalBlock"] > div {
+    scroll-margin-top: 5rem;
+}
+
+.v3-section-shell {
+    margin: 1.15rem 0 0.7rem 0;
+    padding: 0.78rem 0.92rem;
+    border-left: 4px solid var(--v3-blue);
+    border-radius: 0 12px 12px 0;
+    background: linear-gradient(90deg, rgba(239,246,255,.82), rgba(255,255,255,.35));
+}
+
+.v3-section-title {
+    color: var(--v3-slate-900);
+    font-size: 1rem;
+    font-weight: 820;
+}
+
+.v3-section-caption {
+    margin-top: 0.12rem;
+    color: var(--v3-slate-500);
+    font-size: 0.76rem;
+    line-height: 1.5;
+}
+
+.v3-inline-badge {
+    display: inline-block;
+    padding: .22rem .48rem;
+    border-radius: 999px;
+    background: var(--v3-blue-soft);
+    color: #1d4ed8;
+    font-size: .69rem;
+    font-weight: 800;
+}
+</style>
+"""
+
+
+def render_v3_design_system() -> None:
+    """Apply shared visual tokens and interaction styling across the V3 site."""
+    st.markdown(V3_GLOBAL_CSS, unsafe_allow_html=True)
+
+
+def render_v3_section(
+    title: str,
+    caption: str = "",
+    *,
+    icon: str = "",
+) -> None:
+    icon_text = f"{icon} " if icon else ""
+    caption_html = (
+        f'<div class="v3-section-caption">{html.escape(caption)}</div>'
+        if caption
+        else ""
+    )
+    st.markdown(
+        (
+            '<div class="v3-section-shell">'
+            f'<div class="v3-section-title">{icon_text}{html.escape(title)}</div>'
+            f'{caption_html}'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_v3_page_header(
     *,
     title: str,
