@@ -17,7 +17,7 @@ import yfinance as yf
 from portfolio_quality import build_company_news_query, is_relevant_company_news
 from sidebar_nav import render_sidebar_navigation
 from stock_action_status import evaluate_stock_action_status
-from site_ui import render_v3_page_header
+from site_ui import render_v3_page_header, render_v3_section
 from site_context import (
     get_active_stock,
     load_portfolio_stock_options,
@@ -442,7 +442,7 @@ with _action_col2:
         "イベント確認がどこまで揃っているかを示す研究・監視の進行度です。"
     )
 
-st.markdown("### 🚦 次のアクション")
+render_v3_section("次のアクション", "現在のステータスから専門画面へ深掘りします。", icon="🚦")
 a1, a2, a3, a4, a5 = st.columns(5)
 with a1:
     st.page_link(
@@ -491,7 +491,7 @@ overview_tab, engine_tab, entry_tab, event_tab, record_tab = st.tabs(
 )
 
 with overview_tab:
-    st.markdown("#### 基本情報")
+    render_v3_section("基本情報", "登録情報と基礎的な成長・財務指標を確認します。", icon="📋")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("セクター", _safe_text(portfolio_row.get("セクター") or me_row.get("sector33_name")))
     c2.metric("売上5y CAGR", _safe_text(portfolio_row.get("売上5y CAGR")))
@@ -509,7 +509,7 @@ with overview_tab:
         st.info(f"💬 投資家メモ: {memo}")
 
 with engine_tab:
-    st.markdown("#### FCF / Quality")
+    render_v3_section("FCF / Quality", "企業価値のエンジンとキャッシュ創出力を確認します。", icon="💵")
     if not me_row:
         st.info("この銘柄は現在のME/FCFスナップショットにありません。")
     else:
@@ -525,7 +525,7 @@ with engine_tab:
         f7.metric("Operating Margin", _fmt_pct_ratio(me_row.get("operating_margin")))
         f8.metric("Net Cash Ratio", _fmt_pct_ratio(me_row.get("net_cash_ratio")))
 
-        st.markdown("#### Multiple Expansion")
+        render_v3_section("Multiple Expansion", "市場評価の変化と再加速状態を確認します。", icon="🚀")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("MEX Score", _fmt_num(me_row.get("mex_score"), 1))
         m2.metric("MEX Coverage", _fmt_pct_ratio(me_row.get("mex_coverage")))
@@ -544,7 +544,7 @@ with engine_tab:
         )
 
 with entry_tab:
-    st.markdown("#### Entry / Short Cover")
+    render_v3_section("Entry / Short Cover", "需給・点火・Entry状態を確認します。", icon="🎯")
     if not short_row and not live_entry:
         st.info("現在、この銘柄のEntry / Short Cover監視データはありません。")
     else:
@@ -576,7 +576,7 @@ with entry_tab:
         )
 
 with event_tab:
-    st.markdown("#### 決算・材料")
+    render_v3_section("決算・材料", "直近イベントと登録材料を確認します。", icon="📅")
     x1, x2, x3 = st.columns(3)
     x1.metric(
         "次回決算予定",
@@ -593,7 +593,7 @@ with event_tab:
     if catalyst:
         st.info(f"💡 登録材料: {catalyst}")
 
-    st.markdown("#### 最新ニュース")
+    render_v3_section("最新ニュース", "銘柄に関連する直近ニュースを確認します。", icon="📰")
     news_items = _fetch_news(active_ticker, company_name)
     if not news_items:
         st.caption("関連ニュースを取得できませんでした。")
@@ -612,7 +612,7 @@ with event_tab:
             )
 
 with record_tab:
-    st.markdown("#### AI分析・リサーチ記録")
+    render_v3_section("AI分析・リサーチ記録", "保存済み分析と決算レポートへつなぎます。", icon="📚")
     r1, r2, r3 = st.columns(3)
     r1.metric("銘柄分析レポート", analysis_count)
     r2.metric("決算分析レポート", earnings_count)

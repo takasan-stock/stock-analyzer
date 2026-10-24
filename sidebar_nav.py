@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from site_ui import render_v3_design_system
 from site_context import (
     get_active_stock,
     load_portfolio_stock_options,
@@ -250,6 +251,7 @@ main [data-testid="stPageLink"] a {
 
 def render_sidebar_navigation() -> None:
     """Render the common site navigation used by every Streamlit page."""
+    render_v3_design_system()
     st.markdown(_SIDEBAR_CSS, unsafe_allow_html=True)
 
     with st.sidebar:
