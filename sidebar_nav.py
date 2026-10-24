@@ -264,6 +264,8 @@ def render_sidebar_navigation() -> None:
             _names = {code: name for code, name in _stock_options}
             _active_ticker, _, _ = get_active_stock()
             _active_index = _codes.index(_active_ticker) if _active_ticker in _codes else 0
+            if _active_ticker in _codes:
+                st.session_state["site_sidebar_stock_selector"] = _active_ticker
 
             st.markdown(
                 '<div class="takasan-section green">現在の銘柄</div>',
