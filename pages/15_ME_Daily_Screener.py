@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
-from site_context import get_active_stock, set_active_stock
+from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
 
 from multiple_expansion_screener import build_daily_screener, candidate_only
 
@@ -339,6 +339,11 @@ selected = st.selectbox(
     options=options,
     index=_active_index,
     key="me_daily_detail_ticker",
+    on_change=set_active_stock_from_widget,
+    kwargs={
+        "widget_key": "me_daily_detail_ticker",
+        "source": "ME Daily Screener",
+    },
 )
 row = view[view["ticker"].astype(str) == selected].iloc[0]
 
