@@ -5,6 +5,7 @@ GitHubリポジトリ（stock-reports）から直接Markdownを読み込んで�
 """
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
+from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
 import requests
 import base64
 from collections import defaultdict
@@ -127,10 +128,27 @@ def ticker_label(ticker: str) -> str:
     return f"{ticker}　{name}" if name else ticker
 
 # 銘柄選択
+_active_ticker, _, _ = get_active_stock()
+_active_index = ticker_list.index(_active_ticker) if _active_ticker in ticker_list else 0
+if _active_ticker in ticker_list:
+    st.session_state["report_viewer_ticker"] = _active_ticker
 selected_ticker = st.sidebar.selectbox(
     "銘柄を選択",
     options=ticker_list,
+    index=_active_index,
     format_func=ticker_label,
+    key="report_viewer_ticker",
+    on_change=set_active_stock_from_widget,
+    kwargs={
+        "widget_key": "report_viewer_ticker",
+        "source": "レポートビューア",
+        "name_map": name_map,
+    },
+)
+set_active_stock(
+    selected_ticker,
+    name_map.get(selected_ticker, ""),
+    source="レポートビューア",
 )
 
 # 種別選択（銘柄分析 / 決算分析）

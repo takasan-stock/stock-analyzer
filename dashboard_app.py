@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 from sidebar_nav import render_sidebar_navigation, render_site_portal
+from site_context import get_active_stock, set_active_stock
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -4876,12 +4877,37 @@ with tab5:
             f"{row['ティッカー']} : {row['銘柄名']}": str(row["ティッカー"])
             for _, row in df.iterrows()
         }
-        selected_label = st.selectbox("レポートを表示する銘柄を選択してください", list(ticker_label_map.keys()))
+        _report_labels = list(ticker_label_map.keys())
+        _active_ticker, _, _ = get_active_stock()
+        _active_label = next(
+            (
+                label
+                for label, ticker_code in ticker_label_map.items()
+                if str(ticker_code).replace(".0", "") == _active_ticker
+            ),
+            _report_labels[0],
+        )
+        st.session_state["dashboard_report_stock_selector"] = _active_label
+
+        def _sync_dashboard_report_stock():
+            _label = st.session_state.get("dashboard_report_stock_selector", "")
+            _code = ticker_label_map.get(_label, "")
+            _name = _label.split(" : ", 1)[1] if " : " in _label else ""
+            set_active_stock(_code, _name, source="銘柄管理ダッシュボード")
+
+        selected_label = st.selectbox(
+            "レポートを表示する銘柄を選択してください",
+            _report_labels,
+            index=_report_labels.index(_active_label),
+            key="dashboard_report_stock_selector",
+            on_change=_sync_dashboard_report_stock,
+        )
         selected_ticker = ticker_label_map[selected_label]
 
         matched_rows = df[df["ティッカー"].astype(str) == selected_ticker]
         selected_row = matched_rows.iloc[0] if not matched_rows.empty else None
         company_name = selected_row["銘柄名"] if selected_row is not None else ""
+        set_active_stock(selected_ticker, company_name, source="銘柄管理ダッシュボード")
 
         # GitHub連携の設定（レポート・ニュースクリップ関連セクションで共通利用）
         github_config = get_github_config()
