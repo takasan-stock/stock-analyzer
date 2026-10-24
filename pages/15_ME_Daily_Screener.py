@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
+from site_context import get_active_stock, set_active_stock
 
 from multiple_expansion_screener import build_daily_screener, candidate_only
 
@@ -329,10 +330,18 @@ st.divider()
 st.markdown("## 銘柄詳細")
 
 options = view["ticker"].astype(str).tolist()
-selected = st.selectbox("銘柄", options=options)
+_active_ticker, _, _ = get_active_stock()
+_active_index = options.index(_active_ticker) if _active_ticker in options else 0
+selected = st.selectbox(
+    "銘柄",
+    options=options,
+    index=_active_index,
+    key="me_daily_detail_ticker",
+)
 row = view[view["ticker"].astype(str) == selected].iloc[0]
 
 company_name = str(row.get("company_name", "") or "").strip()
+set_active_stock(selected, company_name, source="ME Daily Screener")
 if company_name:
     st.markdown(f"### {selected}｜{company_name}")
 
