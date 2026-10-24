@@ -4888,11 +4888,19 @@ with tab5:
             _report_labels[0],
         )
         st.session_state["dashboard_report_stock_selector"] = _active_label
+
+        def _sync_dashboard_report_stock():
+            _label = st.session_state.get("dashboard_report_stock_selector", "")
+            _code = ticker_label_map.get(_label, "")
+            _name = _label.split(" : ", 1)[1] if " : " in _label else ""
+            set_active_stock(_code, _name, source="銘柄管理ダッシュボード")
+
         selected_label = st.selectbox(
             "レポートを表示する銘柄を選択してください",
             _report_labels,
             index=_report_labels.index(_active_label),
             key="dashboard_report_stock_selector",
+            on_change=_sync_dashboard_report_stock,
         )
         selected_ticker = ticker_label_map[selected_label]
 
