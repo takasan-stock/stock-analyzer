@@ -127,7 +127,7 @@ def _fcf_label(value: object) -> str:
 render_v3_page_header(
     title="ME Daily Screener",
     subtitle="マルチプル・エクスパンションの第1波 / 第2波候補を、FCF・過去エッジ・再加速形状から毎日順位付けします。",
-    stage="ME",
+    stage="DISCOVERY",
     icon="🔎",
     badge="DISCOVERY / DAILY SCREEN",
 )
