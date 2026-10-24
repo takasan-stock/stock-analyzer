@@ -15,6 +15,8 @@ on:
       - "pages/13_Walk_Forward_Calibration.py"
       - "pages/8_Short_Cover_Hunter.py"
       - "pages/16_Stock_Detail.py"
+      - "stock_action_status.py"
+      - "tests/test_stock_action_status.py"
       - "sidebar_nav.py"
       - "site_context.py"
       - "dashboard_app.py"
@@ -89,6 +91,8 @@ jobs:
           python -m py_compile pages/13_Walk_Forward_Calibration.py
           python -m py_compile pages/8_Short_Cover_Hunter.py
           python -m py_compile pages/16_Stock_Detail.py
+          python -m py_compile stock_action_status.py
+          python -m py_compile tests/test_stock_action_status.py
           python -m py_compile sidebar_nav.py
           python -m py_compile site_context.py
           python -m py_compile dashboard_app.py
@@ -101,6 +105,7 @@ jobs:
 
       - name: Run Pre-Trade and Trade Journal unit tests
         run: |
+          python -m unittest tests.test_stock_action_status -v
           python -m unittest tests.test_portfolio_quality -v
           python -m unittest tests.test_portfolio_integration -v
           python -m unittest tests.test_report_storage_v2 -v
