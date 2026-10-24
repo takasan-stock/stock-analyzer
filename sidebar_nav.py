@@ -16,6 +16,7 @@ NAV_SECTIONS = [
         "tone": "blue",
         "pages": [
             ("dashboard_app.py", "統合ダッシュボード", "🏠"),
+            ("pages/16_Stock_Detail.py", "銘柄詳細", "🔬"),
         ],
     },
     {
@@ -342,7 +343,18 @@ def render_site_portal() -> None:
     st.markdown("### 🧭 分析フロー")
     st.caption("今日の目的から入口を選べます。各画面は左メニューからもいつでも移動できます。")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c0, c1, c2, c3, c4 = st.columns(5)
+
+    with c0:
+        with st.container(border=True):
+            st.markdown("#### 🔬 銘柄詳細")
+            st.caption("現在の銘柄を1画面で俯瞰")
+            st.page_link(
+                "pages/16_Stock_Detail.py",
+                label="銘柄詳細を開く",
+                icon="🔬",
+                use_container_width=True,
+            )
 
     with c1:
         with st.container(border=True):
