@@ -21,6 +21,8 @@ on:
       - "tests/test_stock_priority_board.py"
       - "sidebar_nav.py"
       - "site_context.py"
+      - "site_ui.py"
+      - "pages/📖_レポートビューア.py"
       - "dashboard_app.py"
       - "portfolio_quality.py"
       - "portfolio_integration.py"
@@ -99,6 +101,8 @@ jobs:
           python -m py_compile tests/test_stock_priority_board.py
           python -m py_compile sidebar_nav.py
           python -m py_compile site_context.py
+          python -m py_compile site_ui.py
+          python -m py_compile pages/📖_レポートビューア.py
           python -m py_compile dashboard_app.py
           python -m py_compile portfolio_quality.py
           python -m py_compile portfolio_integration.py
