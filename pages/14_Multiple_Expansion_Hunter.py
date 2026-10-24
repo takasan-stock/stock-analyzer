@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
+from site_context import get_active_stock, set_active_stock
 
 
 st.set_page_config(
@@ -279,13 +280,22 @@ st.divider()
 st.markdown("## 銘柄詳細")
 
 options = view["ticker"].astype(str).tolist()
+_active_ticker, _, _ = get_active_stock()
+_active_index = options.index(_active_ticker) if _active_ticker in options else 0
 selected_ticker = st.selectbox(
     "銘柄",
     options=options,
+    index=_active_index,
+    key="mex_detail_ticker",
 )
 row = view[
     view["ticker"].astype(str) == selected_ticker
 ].iloc[0]
+set_active_stock(
+    selected_ticker,
+    row.get("company_name", ""),
+    source="ME Hunter",
+)
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric(
