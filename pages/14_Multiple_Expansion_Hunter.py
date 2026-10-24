@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
 from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
+from site_ui import render_v3_page_header
 
 
 st.set_page_config(
@@ -66,10 +67,12 @@ def _pct(value, digits=1):
     return f"{num * 100:.{digits}f}%"
 
 
-st.title("🚀 Multiple Expansion Hunter v0.1")
-st.caption(
-    "FCFという企業価値のエンジンが強い銘柄の中から、"
-    "市場評価（マルチプル）が低位から上向き始める局面を検出します。"
+render_v3_page_header(
+    title="Multiple Expansion Hunter",
+    subtitle="FCFという企業価値のエンジンが強い銘柄の中から、市場評価が低位から上向き始める局面を検出します。",
+    stage="ME",
+    icon="🚀",
+    badge="ME / MULTIPLE EXPANSION",
 )
 
 latest = _load_csv(LATEST_FILE)
