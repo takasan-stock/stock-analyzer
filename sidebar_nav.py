@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import streamlit as st
 
-from site_context import get_active_stock, load_portfolio_stock_options, set_active_stock
+from site_context import (
+    get_active_stock,
+    load_portfolio_stock_options,
+    set_active_stock,
+    set_active_stock_from_widget,
+)
 
 
 NAV_SECTIONS = [
@@ -282,6 +287,12 @@ def render_sidebar_navigation() -> None:
                 ),
                 key="site_sidebar_stock_selector",
                 label_visibility="collapsed",
+                on_change=set_active_stock_from_widget,
+                kwargs={
+                    "widget_key": "site_sidebar_stock_selector",
+                    "source": "sidebar",
+                    "name_map": _names,
+                },
             )
             set_active_stock(
                 _selected_code,
