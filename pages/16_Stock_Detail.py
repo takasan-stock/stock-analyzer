@@ -16,6 +16,7 @@ import yfinance as yf
 
 from portfolio_quality import build_company_news_query, is_relevant_company_news
 from sidebar_nav import render_sidebar_navigation
+from stock_action_status import evaluate_stock_action_status
 from site_context import (
     get_active_stock,
     load_portfolio_stock_options,
@@ -333,6 +334,13 @@ set_active_stock(active_ticker, company_name, source="銘柄詳細")
 price = _price_snapshot(active_ticker)
 earnings_date = _earnings_date(active_ticker)
 analysis_count, earnings_count = _report_counts(active_ticker)
+action_status = evaluate_stock_action_status(
+    portfolio_row=portfolio_row,
+    me_row=me_row,
+    short_row=short_row,
+    live_entry=live_entry,
+    earnings_date=earnings_date,
+)
 
 st.markdown(
     f"""
@@ -386,6 +394,70 @@ if price:
             if active_source and active_source != "銘柄詳細"
             else ""
         )
+    )
+
+_status_palette = {
+    "PRETRADE": ("#ecfdf3", "#067647", "#abefc6"),
+    "ENTRY_MONITOR": ("#eff8ff", "#175cd3", "#b2ddff"),
+    "MONITOR": ("#f5f3ff", "#6941c6", "#d9d6fe"),
+    "RESEARCH": ("#fff7ed", "#b54708", "#fedf89"),
+    "DATA_CHECK": ("#f8fafc", "#475467", "#d0d5dd"),
+    "EVENT_CHECK": ("#fff1f3", "#c01048", "#fecdd6"),
+}
+_status_bg, _status_fg, _status_border = _status_palette.get(
+    action_status.stage,
+    ("#f8fafc", "#344054", "#d0d5dd"),
+)
+_reasons_text = " ｜ ".join(action_status.reasons) if action_status.reasons else "強い追い風シグナルはまだ未確認"
+_blockers_text = " ｜ ".join(action_status.blockers) if action_status.blockers else "大きなブロッカーなし"
+
+st.markdown(
+    f"""
+    <div style="
+        margin:14px 0 12px 0;
+        padding:16px 18px;
+        border:1px solid {_status_border};
+        border-radius:16px;
+        background:{_status_bg};
+    ">
+      <div style="font-size:.72rem;font-weight:800;color:{_status_fg};letter-spacing:.08em">
+        V3 ACTION STATUS
+      </div>
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:3px">
+        <div style="font-size:1.35rem;font-weight:850;color:{_status_fg}">
+          {action_status.icon} {html.escape(action_status.label)}
+        </div>
+        <div style="font-size:.78rem;color:#667085;font-weight:700">
+          Readiness {action_status.readiness_score}/100 ｜ Confidence {action_status.confidence}
+        </div>
+      </div>
+      <div style="font-size:.86rem;color:#344054;margin-top:7px;line-height:1.65">
+        {html.escape(action_status.summary)}
+      </div>
+      <div style="font-size:.76rem;color:#475467;margin-top:8px;line-height:1.6">
+        <b>追い風:</b> {html.escape(_reasons_text)}<br>
+        <b>確認事項:</b> {html.escape(_blockers_text)}
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+_action_col1, _action_col2 = st.columns([1, 3])
+with _action_col1:
+    if action_status.stage == "EVENT_CHECK":
+        st.info("📰 下の「材料・イベント」タブを優先確認")
+    else:
+        st.page_link(
+            action_status.next_page,
+            label=action_status.next_label,
+            icon=action_status.next_icon,
+            use_container_width=True,
+        )
+with _action_col2:
+    st.caption(
+        "Readinessは売買推奨スコアではなく、Growth / FCF / ME / Entry / "
+        "イベント確認がどこまで揃っているかを示す研究・監視の進行度です。"
     )
 
 st.markdown("### 🚦 次のアクション")
