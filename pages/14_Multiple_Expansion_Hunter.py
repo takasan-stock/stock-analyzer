@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
-from site_context import get_active_stock, set_active_stock
+from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
 
 
 st.set_page_config(
@@ -289,6 +289,11 @@ selected_ticker = st.selectbox(
     options=options,
     index=_active_index,
     key="mex_detail_ticker",
+    on_change=set_active_stock_from_widget,
+    kwargs={
+        "widget_key": "mex_detail_ticker",
+        "source": "ME Hunter",
+    },
 )
 row = view[
     view["ticker"].astype(str) == selected_ticker
