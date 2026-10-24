@@ -11,6 +11,8 @@ on:
       - ".github/workflows/short_cover_daily.yml"
       - ".github/workflows/short_cover_entry_alert.yml"
       - "requirements.txt"
+      - "site_ui.py"
+      - "sidebar_nav.py"
       - "dashboard_app.py"
       - ".github/workflows/short_cover_check.yml"
   workflow_dispatch:

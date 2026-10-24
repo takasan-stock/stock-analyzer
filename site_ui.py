@@ -222,6 +222,105 @@ main [data-testid="stVerticalBlock"] > div {
     font-size: .69rem;
     font-weight: 800;
 }
+
+/* Tablet / iPad: wrap only dense 4+ column rows, keep 2-3 column layouts intact. */
+@media (max-width: 1100px) {
+    [data-testid="stAppViewContainer"] .main .block-container {
+        padding-left: 1.05rem;
+        padding-right: 1.05rem;
+    }
+
+    main [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(4)) {
+        flex-wrap: wrap;
+        gap: .65rem !important;
+    }
+
+    main [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(4))
+        > [data-testid="column"] {
+        flex: 1 1 calc(50% - .65rem) !important;
+        min-width: 230px !important;
+        width: auto !important;
+    }
+
+    main [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
+    }
+
+    main [data-testid="stTabs"] [data-baseweb="tab"] {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+
+    main [data-testid="stDataFrame"] {
+        font-size: .84rem;
+    }
+
+    .v3-page-title {
+        font-size: 1.28rem;
+    }
+
+    .v3-page-subtitle {
+        font-size: .80rem;
+    }
+}
+
+/* Phone / narrow portrait: one card per row and slightly tighter controls. */
+@media (max-width: 700px) {
+    [data-testid="stAppViewContainer"] .main .block-container {
+        padding-left: .7rem;
+        padding-right: .7rem;
+        padding-top: .7rem;
+    }
+
+    main [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(3)) {
+        flex-wrap: wrap;
+        gap: .55rem !important;
+    }
+
+    main [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(3))
+        > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+        width: 100% !important;
+    }
+
+    main [data-testid="stMetric"] {
+        min-height: 80px;
+        padding: .68rem .78rem;
+    }
+
+    main .stButton > button,
+    main [data-testid="stPageLink"] a {
+        min-height: 2.85rem;
+    }
+
+    .v3-page-shell {
+        padding: .82rem .9rem;
+        border-radius: 14px;
+    }
+
+    .v3-page-title {
+        font-size: 1.14rem;
+    }
+
+    .v3-page-meta {
+        gap: .3rem;
+    }
+}
+
+/* Touch devices: increase practical hit area without inflating desktop UI. */
+@media (pointer: coarse) {
+    main .stButton > button,
+    main [data-testid="stPageLink"] a {
+        min-height: 2.9rem;
+    }
+
+    main [data-testid="stExpander"] summary {
+        min-height: 3rem;
+    }
+}
 </style>
 """
 
