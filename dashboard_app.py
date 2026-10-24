@@ -1,6 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-from sidebar_nav import render_sidebar_navigation
+from sidebar_nav import render_sidebar_navigation, render_site_portal
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -2579,6 +2579,8 @@ if "df" not in st.session_state:
 
 # 起動時にGitHubのreports/をローカルに同期（1セッションに1度だけ）
 sync_reports_from_github()
+
+render_site_portal()
 
 st.title("📊 銘柄管理ダッシュボード")
 
