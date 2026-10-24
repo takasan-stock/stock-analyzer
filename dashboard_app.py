@@ -4887,6 +4887,7 @@ with tab5:
             ),
             _report_labels[0],
         )
+        st.session_state["dashboard_report_stock_selector"] = _active_label
         selected_label = st.selectbox(
             "レポートを表示する銘柄を選択してください",
             _report_labels,
