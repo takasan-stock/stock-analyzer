@@ -14,6 +14,7 @@ import requests
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
 from site_context import get_active_stock, set_active_stock
+from site_ui import render_v3_page_header
 import yfinance as yf
 
 from entry_hunter_sources import combine_entry_candidates, select_me_entry_candidates
@@ -653,9 +654,12 @@ def fmt_num(v, digits=1, suffix=""):
     return f"{float(v):,.{digits}f}{suffix}"
 
 
-st.title("🔥 Short Cover Hunter v1")
-st.caption(
-    "大口空売りの『買い戻し初動』を、JPX公表残高イベント＋価格・出来高・AVWAP代理値・RSで推定します。"
+render_v3_page_header(
+    title="Entry Hunter",
+    subtitle="ME候補・Short Cover・価格・出来高・AVWAP・RSを統合し、監視からエントリー準備までを追います。",
+    stage="ENTRY",
+    icon="🎯",
+    badge="MONITOR / ENTRY",
 )
 
 with st.expander("このツールの読み方", expanded=False):

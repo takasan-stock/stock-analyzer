@@ -9,6 +9,7 @@ import requests
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
 from site_context import get_active_stock, set_active_stock
+from site_ui import render_v3_page_header
 import yfinance as yf
 
 from daily_command_center import build_score_breakdown_rows
@@ -241,12 +242,6 @@ def _yen(v) -> str:
         return "—"
 
 
-st.title("🛡️ Pre-Trade Check v1")
-st.caption(
-    "注文前の最終チェック。チャートの質・買い位置・リスク管理を分離して採点します。"
-    "これは売買推奨ではなく、確認漏れを減らすための実行支援ツールです。"
-)
-
 incoming_ticker = normalize_ticker(st.session_state.pop("pretrade_ticker", ""))
 _site_active_ticker, _site_active_name, _ = get_active_stock()
 if not incoming_ticker and _site_active_ticker:
@@ -357,6 +352,14 @@ set_active_stock(
     ticker,
     row.get("銘柄名", "") if isinstance(row, dict) else "",
     source="Pre-Trade",
+)
+
+render_v3_page_header(
+    title="Pre-Trade Check",
+    subtitle="注文前の最終チェック。チャートの質・買い位置・リスク管理を分離して、確認漏れを減らします。",
+    stage="PRETRADE",
+    icon="🛡️",
+    badge="EXECUTION / RISK CHECK",
 )
 
 _active_source = str(st.session_state.get("pretrade_active_source", "") or "")

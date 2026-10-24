@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
 from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
+from site_ui import render_v3_page_header
 
 from multiple_expansion_screener import build_daily_screener, candidate_only
 
@@ -123,10 +124,12 @@ def _fcf_label(value: object) -> str:
     return labels.get(text, text)
 
 
-st.title("🔥 Multiple Expansion Daily Screener v0.9")
-st.caption(
-    "マルチプル・エクスパンションの第1波/第2波が始まりそうな銘柄を、"
-    "FCF・過去エッジ・MLP再加速形状を合わせて毎日順位付けします。"
+render_v3_page_header(
+    title="ME Daily Screener",
+    subtitle="マルチプル・エクスパンションの第1波 / 第2波候補を、FCF・過去エッジ・再加速形状から毎日順位付けします。",
+    stage="DISCOVERY",
+    icon="🔎",
+    badge="DISCOVERY / DAILY SCREEN",
 )
 
 cached = _load_csv(SCREENER_FILE)

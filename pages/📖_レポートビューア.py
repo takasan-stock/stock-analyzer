@@ -6,6 +6,7 @@ GitHubリポジトリ（stock-reports）から直接Markdownを読み込んで�
 import streamlit as st
 from sidebar_nav import render_sidebar_navigation
 from site_context import get_active_stock, set_active_stock, set_active_stock_from_widget
+from site_ui import render_v3_page_header
 import requests
 import base64
 from collections import defaultdict
@@ -194,9 +195,18 @@ if selected_entry is None:
 # ヘッダー
 company_name = name_map.get(selected_ticker, "")
 kind_str = kind_labels.get(selected_entry["kind"], selected_entry["kind"])
-st.title(f"{company_name}（{selected_ticker}）" if company_name else selected_ticker)
-st.caption(f"{kind_str}　／　{selected_key}")
-st.divider()
+render_v3_page_header(
+    title="レポートビューア",
+    subtitle="保存済みのAI分析・決算分析を、現在の銘柄コンテキストのまま振り返ります。",
+    stage="RECORD",
+    icon="📖",
+    badge=f"{kind_str} / {selected_key}",
+)
+st.markdown(
+    f"### {company_name}（{selected_ticker}）"
+    if company_name
+    else f"### {selected_ticker}"
+)
 
 # 本文取得・表示
 with st.spinner("レポートを読み込み中..."):
