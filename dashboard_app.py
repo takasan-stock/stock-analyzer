@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from sidebar_nav import render_sidebar_navigation, render_site_portal
 from site_context import get_active_stock, set_active_stock
+from stock_priority_board import build_daily_priority_board
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -2582,6 +2583,158 @@ if "df" not in st.session_state:
 sync_reports_from_github()
 
 render_site_portal()
+
+# ==========================================
+# V3 今日見るべき銘柄（既存スナップショットを軽量集約）
+# ==========================================
+def _load_priority_csv(path: str, dtype=None) -> pd.DataFrame:
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path, dtype=dtype)
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def _load_priority_live_entries() -> list[dict]:
+    path = "data/short_cover_entry_status.json"
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return list(payload.get("rows", []) or [])
+    except Exception:
+        return []
+
+
+_priority_portfolio = st.session_state.df.copy()
+_priority_me = _load_priority_csv(
+    "data/multiple_expansion/me_screener_latest.csv",
+    dtype={"ticker": str},
+)
+if _priority_me.empty:
+    _priority_me = _load_priority_csv(
+        "data/multiple_expansion/me_universe_snapshot.csv",
+        dtype={"ticker": str},
+    )
+_priority_short = _load_priority_csv(
+    "data/short_cover_alert_history.csv",
+    dtype={"ticker": str},
+)
+_priority_live_rows = _load_priority_live_entries()
+
+_priority_rows = build_daily_priority_board(
+    portfolio_rows=_priority_portfolio.to_dict("records") if not _priority_portfolio.empty else [],
+    me_rows=_priority_me.to_dict("records") if not _priority_me.empty else [],
+    short_rows=_priority_short.to_dict("records") if not _priority_short.empty else [],
+    live_entry_rows=_priority_live_rows,
+    today=datetime.date.today(),
+)
+
+st.markdown("### 🎯 今日見るべき銘柄")
+st.caption(
+    "V3 ACTION STATUSを使い、売買推奨ではなく『今日どの銘柄から確認するか』の順番を自動整理します。"
+    " 段階の優先度 → 同じ段階内でReadiness順です。"
+)
+
+if not _priority_rows:
+    st.info("現在、優先順位を作れる監視銘柄データがありません。")
+else:
+    _stage_order = [
+        ("EVENT_CHECK", "📅 決算確認"),
+        ("PRETRADE", "🛡️ 購入前チェック"),
+        ("ENTRY_MONITOR", "🎯 ENTRY監視"),
+        ("MONITOR", "👀 ME監視"),
+        ("RESEARCH", "🔎 研究優先"),
+        ("DATA_CHECK", "🧩 データ確認"),
+    ]
+    _counts = {
+        stage: sum(1 for row in _priority_rows if row.get("stage") == stage)
+        for stage, _ in _stage_order
+    }
+    _count_cols = st.columns(6)
+    for _col, (_stage, _label) in zip(_count_cols, _stage_order):
+        _col.metric(_label, _counts.get(_stage, 0))
+
+    _display_limit = st.slider(
+        "表示件数",
+        min_value=5,
+        max_value=min(30, max(5, len(_priority_rows))),
+        value=min(10, max(5, len(_priority_rows))),
+        step=1,
+        key="v3_priority_limit",
+    )
+
+    for _row in _priority_rows[:_display_limit]:
+        with st.container(border=True):
+            _c1, _c2, _c3, _c4 = st.columns([3.2, 1.15, 1.15, 1.5])
+            with _c1:
+                st.markdown(
+                    f"**#{_row['rank']} {_row['stage_icon']} {_row['name'] or '—'} "
+                    f"({_row['ticker']})**"
+                )
+                st.caption(_row.get("summary", ""))
+                _reason = str(_row.get("lead_reason", "") or "")
+                _blocker = str(_row.get("lead_blocker", "") or "")
+                _parts = []
+                if _reason:
+                    _parts.append(f"追い風: {_reason}")
+                if _blocker:
+                    _parts.append(f"確認: {_blocker}")
+                if _parts:
+                    st.caption(" ｜ ".join(_parts))
+            with _c2:
+                st.metric("段階", _row["stage_label"])
+            with _c3:
+                st.metric("Readiness", f"{_row['readiness']}/100")
+                st.caption(f"Confidence {_row['confidence']}")
+            with _c4:
+                if st.button(
+                    "🔬 この銘柄を見る",
+                    key=f"v3_priority_open_{_row['ticker']}",
+                    use_container_width=True,
+                ):
+                    set_active_stock(
+                        _row["ticker"],
+                        _row.get("name", ""),
+                        source="今日見るべき銘柄",
+                    )
+                    st.switch_page("pages/16_Stock_Detail.py")
+
+    with st.expander("📋 優先リストを一覧表示", expanded=False):
+        _table = pd.DataFrame(_priority_rows)
+        if not _table.empty:
+            _table = _table[
+                [
+                    "rank",
+                    "ticker",
+                    "name",
+                    "stage_label",
+                    "readiness",
+                    "confidence",
+                    "mex_score",
+                    "sw_decision",
+                    "entry_status",
+                    "lead_reason",
+                    "lead_blocker",
+                ]
+            ].rename(
+                columns={
+                    "rank": "順位",
+                    "ticker": "コード",
+                    "name": "銘柄名",
+                    "stage_label": "段階",
+                    "readiness": "Readiness",
+                    "confidence": "Confidence",
+                    "mex_score": "MEX",
+                    "sw_decision": "ME判定",
+                    "entry_status": "Entry/需給",
+                    "lead_reason": "主な追い風",
+                    "lead_blocker": "主な確認事項",
+                }
+            )
+            st.dataframe(_table, hide_index=True, width="stretch")
 
 st.title("📊 銘柄管理ダッシュボード")
 
