@@ -324,45 +324,38 @@ def render_sidebar_navigation() -> None:
 
 
 def render_site_portal() -> None:
-    """Render the V3 home/command-center shell on the main dashboard."""
+    """Render a compact V3 home shell; the dashboard below is the daily command center."""
     st.markdown(
         """
         <div class="takasan-site-hero">
           <div class="takasan-site-kicker">TAKASAN STOCK ANALYZER V3</div>
           <div class="takasan-site-title">📈 たかさん日本株分析</div>
           <div class="takasan-site-copy">
-            発見・監視・エントリー判断・購入前確認・売買記録・検証を、
-            ひとつのサイト内でつなぐ統合投資ワークスペース。
+            発見 → 監視 → 実行 → 記録 → 改善を、ひとつのサイトでつなぐ投資ワークスペース。
           </div>
-          <div class="takasan-site-flow">発見 → 監視 → 実行 → 記録 → 改善</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("### 🧭 分析フロー")
-    st.caption("今日の目的から入口を選べます。各画面は左メニューからもいつでも移動できます。")
+    with st.expander("🧭 分析ツール一覧", expanded=False):
+        st.caption("必要な専門画面へ直接移動できます。現在の銘柄はページ間で引き継がれます。")
+        c0, c1, c2, c3, c4 = st.columns(5)
 
-    c0, c1, c2, c3, c4 = st.columns(5)
-
-    with c0:
-        with st.container(border=True):
-            st.markdown("#### 🔬 銘柄詳細")
-            st.caption("現在の銘柄を1画面で俯瞰")
+        with c0:
+            st.markdown("**🔬 銘柄詳細**")
             st.page_link(
                 "pages/16_Stock_Detail.py",
-                label="銘柄詳細を開く",
+                label="詳細を開く",
                 icon="🔬",
                 use_container_width=True,
             )
 
-    with c1:
-        with st.container(border=True):
-            st.markdown("#### 🔎 発見")
-            st.caption("MEの兆しと候補銘柄を探す")
+        with c1:
+            st.markdown("**🔎 発見**")
             st.page_link(
                 "pages/15_ME_Daily_Screener.py",
-                label="MEデイリースクリーナー",
+                label="ME Daily",
                 icon="🔎",
                 use_container_width=True,
             )
@@ -373,10 +366,8 @@ def render_site_portal() -> None:
                 use_container_width=True,
             )
 
-    with c2:
-        with st.container(border=True):
-            st.markdown("#### 🎯 監視")
-            st.caption("候補をEntry条件まで追う")
+        with c2:
+            st.markdown("**🎯 監視**")
             st.page_link(
                 "pages/8_Short_Cover_Hunter.py",
                 label="Entry Hunter",
@@ -384,54 +375,49 @@ def render_site_portal() -> None:
                 use_container_width=True,
             )
 
-    with c3:
-        with st.container(border=True):
-            st.markdown("#### 🛡️ 実行")
-            st.caption("買う前にリスクと条件を確認")
+        with c3:
+            st.markdown("**🛡️ 実行**")
             st.page_link(
                 "pages/9_Pre_Trade_Check.py",
                 label="購入前チェック",
                 icon="🛡️",
                 use_container_width=True,
             )
-
-    with c4:
-        with st.container(border=True):
-            st.markdown("#### 📓 記録")
-            st.caption("売買と分析を後から検証")
             st.page_link(
                 "pages/10_Trade_Journal.py",
                 label="売買日誌",
                 icon="📓",
                 use_container_width=True,
             )
+
+        with c4:
+            st.markdown("**📚 記録・検証**")
             st.page_link(
                 "pages/📖_レポートビューア.py",
-                label="レポートビューア",
+                label="レポート",
                 icon="📖",
                 use_container_width=True,
             )
-
-    with st.expander("🧪 検証・較正ツール", expanded=False):
-        v1, v2, v3 = st.columns(3)
-        with v1:
             st.page_link(
                 "pages/11_Score_Calibration.py",
                 label="スコア較正",
                 icon="⚙️",
                 use_container_width=True,
             )
-        with v2:
-            st.page_link(
-                "pages/12_Calibration_Backtest.py",
-                label="較正バックテスト",
-                icon="📊",
-                use_container_width=True,
-            )
-        with v3:
-            st.page_link(
-                "pages/13_Walk_Forward_Calibration.py",
-                label="ウォークフォワード較正",
-                icon="📈",
-                use_container_width=True,
-            )
+
+        with st.expander("🧪 詳細な検証ツール", expanded=False):
+            v1, v2 = st.columns(2)
+            with v1:
+                st.page_link(
+                    "pages/12_Calibration_Backtest.py",
+                    label="較正バックテスト",
+                    icon="📊",
+                    use_container_width=True,
+                )
+            with v2:
+                st.page_link(
+                    "pages/13_Walk_Forward_Calibration.py",
+                    label="ウォークフォワード較正",
+                    icon="📈",
+                    use_container_width=True,
+                )
