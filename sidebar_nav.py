@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from site_context import get_active_stock, load_portfolio_stock_options, set_active_stock
+
 
 NAV_SECTIONS = [
     {
@@ -255,6 +257,36 @@ def render_sidebar_navigation() -> None:
             """,
             unsafe_allow_html=True,
         )
+
+        _stock_options = load_portfolio_stock_options()
+        if _stock_options:
+            _codes = [code for code, _ in _stock_options]
+            _names = {code: name for code, name in _stock_options}
+            _active_ticker, _, _ = get_active_stock()
+            _active_index = _codes.index(_active_ticker) if _active_ticker in _codes else 0
+
+            st.markdown(
+                '<div class="takasan-section green">現在の銘柄</div>',
+                unsafe_allow_html=True,
+            )
+            _selected_code = st.selectbox(
+                "サイト共通の銘柄",
+                options=_codes,
+                index=_active_index,
+                format_func=lambda code: (
+                    f"{code}｜{_names.get(code, '')}"
+                    if _names.get(code, "")
+                    else code
+                ),
+                key="site_sidebar_stock_selector",
+                label_visibility="collapsed",
+            )
+            set_active_stock(
+                _selected_code,
+                _names.get(_selected_code, ""),
+                source="sidebar",
+            )
+            st.caption("各分析ページへこの銘柄を引き継ぎます。")
 
         for section in NAV_SECTIONS:
             st.markdown(
