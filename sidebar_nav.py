@@ -16,6 +16,7 @@ NAV_SECTIONS = [
         "tone": "blue",
         "pages": [
             ("dashboard_app.py", "統合ダッシュボード", "🏠"),
+            ("pages/16_Stock_Detail.py", "銘柄詳細", "🔬"),
         ],
     },
     {
