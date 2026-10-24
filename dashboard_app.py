@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 from sidebar_nav import render_sidebar_navigation, render_site_portal
 from site_context import get_active_stock, set_active_stock
 from stock_priority_board import build_daily_priority_board
+from site_ui import render_v3_section
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -2639,9 +2640,8 @@ _priority_rows = build_daily_priority_board(
     today=datetime.date.today(),
 )
 
-st.markdown("## 🌅 TODAY COMMAND CENTER")
+render_v3_section("TODAY COMMAND CENTER", "最初に確認する銘柄だけを上に集約します。", icon="🌅")
 st.caption(
-    "最初に確認する銘柄だけを上に集約します。"
     "V3 ACTION STATUSは売買推奨ではなく、今日の確認順を整理するための研究・監視ステータスです。"
 )
 
@@ -2684,7 +2684,7 @@ else:
     elif _health_overall == "WARN":
         st.warning("一部の運用データがWARNです。候補の鮮度を確認してください。")
 
-    st.markdown("### 🔥 最優先3銘柄")
+    render_v3_section("最優先3銘柄", "優先度の高い3銘柄だけを固定表示します。", icon="🔥")
     _top3 = _priority_rows[:3]
     _top_cols = st.columns(len(_top3))
     for _col, _row in zip(_top_cols, _top3):
@@ -2802,7 +2802,7 @@ with st.expander(
         )
 
 st.divider()
-st.markdown("## 📚 分析・管理ワークスペース")
+render_v3_section("分析・管理ワークスペース", "必要に応じて専門分析・管理画面を開きます。", icon="📚")
 
 with st.expander("💵 Deep FCF TOP5｜FCF裏付けを詳しく見る", expanded=False):
     # ==========================================
