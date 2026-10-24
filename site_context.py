@@ -50,6 +50,19 @@ def set_active_stock(ticker: object, name: object = "", source: str = "") -> Non
         st.session_state[ACTIVE_SOURCE_KEY] = str(source).strip()
 
 
+def set_active_stock_from_widget(
+    widget_key: str,
+    *,
+    source: str = "",
+    name_map: dict[str, str] | None = None,
+) -> None:
+    code = normalize_site_ticker(st.session_state.get(widget_key, ""))
+    if not code:
+        return
+    name = (name_map or {}).get(code, "")
+    set_active_stock(code, name, source=source)
+
+
 def load_portfolio_stock_options(path: str = "portfolio_data.csv") -> list[tuple[str, str]]:
     file_path = Path(path)
     if not file_path.exists():
