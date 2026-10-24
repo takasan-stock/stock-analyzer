@@ -34,9 +34,22 @@ def _text(value: Any) -> str:
 
 
 def _pct_like(value: Any) -> float | None:
-    num = _num(value)
-    if num is None:
+    if value is None:
         return None
+
+    text = str(value).strip()
+    has_percent = text.endswith("%")
+    if has_percent:
+        text = text[:-1].strip()
+
+    try:
+        num = float(text.replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+    if has_percent:
+        return num
+
     # Accept either 0.25 or 25.0 style inputs.
     if -1.5 <= num <= 1.5:
         return num * 100.0
