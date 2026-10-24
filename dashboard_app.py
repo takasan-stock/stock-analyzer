@@ -3238,38 +3238,6 @@ with st.expander("🧭 Daily Command Center｜従来の詳細ビュー", expande
 
 
 # ==========================================
-# カスタムCSS（全体の見た目を整える）
-# ==========================================
-st.markdown("""
-<style>
-/* タブを大きく押しやすく */
-.stTabs [data-baseweb="tab"] {
-    font-size: 0.95rem;
-    padding: 10px 18px;
-}
-/* metricカードに枠線と背景 */
-[data-testid="stMetric"] {
-    background: rgba(128, 128, 128, 0.08);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 10px;
-    padding: 12px 16px;
-}
-/* expanderのヘッダーを見やすく */
-[data-testid="stExpander"] summary {
-    font-weight: 600;
-}
-/* ボタンの角を丸く */
-.stButton > button {
-    border-radius: 8px;
-}
-/* dividerの余白を詰める */
-hr {
-    margin: 0.8rem 0;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
 # サイドバー：ポートフォリオサマリー
 # ==========================================
 with st.sidebar:
