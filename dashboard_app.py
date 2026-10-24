@@ -2585,6 +2585,13 @@ sync_reports_from_github()
 render_site_portal()
 
 # ==========================================
+# TODAY COMMAND CENTER: 運用状態
+# ==========================================
+_health = build_operational_health("data")
+_health_overall = str(_health.get("overall", "PENDING") or "PENDING")
+_health_icon = health_icon(_health_overall)
+
+# ==========================================
 # V3 今日見るべき銘柄（既存スナップショットを軽量集約）
 # ==========================================
 def _load_priority_csv(path: str, dtype=None) -> pd.DataFrame:
@@ -2632,10 +2639,10 @@ _priority_rows = build_daily_priority_board(
     today=datetime.date.today(),
 )
 
-st.markdown("### 🎯 今日見るべき銘柄")
+st.markdown("## 🌅 TODAY COMMAND CENTER")
 st.caption(
-    "V3 ACTION STATUSを使い、売買推奨ではなく『今日どの銘柄から確認するか』の順番を自動整理します。"
-    " 段階の優先度 → 同じ段階内でReadiness順です。"
+    "最初に確認する銘柄だけを上に集約します。"
+    "V3 ACTION STATUSは売買推奨ではなく、今日の確認順を整理するための研究・監視ステータスです。"
 )
 
 if not _priority_rows:
@@ -2653,56 +2660,99 @@ else:
         stage: sum(1 for row in _priority_rows if row.get("stage") == stage)
         for stage, _ in _stage_order
     }
-    _count_cols = st.columns(6)
-    for _col, (_stage, _label) in zip(_count_cols, _stage_order):
-        _col.metric(_label, _counts.get(_stage, 0))
+    _urgent_count = (
+        _counts.get("EVENT_CHECK", 0)
+        + _counts.get("PRETRADE", 0)
+        + _counts.get("ENTRY_MONITOR", 0)
+    )
+    _top_row = _priority_rows[0]
 
-    _display_limit = st.slider(
-        "表示件数",
-        min_value=5,
-        max_value=min(30, max(5, len(_priority_rows))),
-        value=min(10, max(5, len(_priority_rows))),
-        step=1,
-        key="v3_priority_limit",
+    _summary_cols = st.columns(4)
+    _summary_cols[0].metric("運用状態", f"{_health_icon} {_health_overall}")
+    _summary_cols[1].metric("優先確認", _urgent_count)
+    _summary_cols[2].metric("監視対象", len(_priority_rows))
+    _summary_cols[3].metric(
+        "最優先",
+        f"{_top_row['ticker']} {_top_row['name']}",
+        f"{_top_row['stage_icon']} {_top_row['stage_label']}",
     )
 
-    for _row in _priority_rows[:_display_limit]:
-        with st.container(border=True):
-            _c1, _c2, _c3, _c4 = st.columns([3.2, 1.15, 1.15, 1.5])
+    if _health_overall == "ALERT":
+        st.error(
+            "運用データにALERTがあります。候補確認より先にヘルスチェックを確認してください。"
+        )
+    elif _health_overall == "WARN":
+        st.warning("一部の運用データがWARNです。候補の鮮度を確認してください。")
+
+    st.markdown("### 🔥 最優先3銘柄")
+    _top3 = _priority_rows[:3]
+    _top_cols = st.columns(len(_top3))
+    for _col, _row in zip(_top_cols, _top3):
+        with _col:
+            with st.container(border=True):
+                st.markdown(
+                    f"**#{_row['rank']} {_row['stage_icon']} {_row['name'] or '—'}**  "
+                    f"{_row['ticker']}"
+                )
+                st.metric(
+                    _row["stage_label"],
+                    f"{_row['readiness']}/100",
+                    f"Confidence {_row['confidence']}",
+                )
+                _reason = str(_row.get("lead_reason", "") or "")
+                _blocker = str(_row.get("lead_blocker", "") or "")
+                if _reason:
+                    st.caption(f"✅ {_reason}")
+                if _blocker:
+                    st.caption(f"⚠️ {_blocker}")
+                if st.button(
+                    "🔬 銘柄詳細へ",
+                    key=f"v3_priority_top_open_{_row['ticker']}",
+                    use_container_width=True,
+                    type="primary" if int(_row["rank"]) == 1 else "secondary",
+                ):
+                    set_active_stock(
+                        _row["ticker"],
+                        _row.get("name", ""),
+                        source="TODAY COMMAND CENTER",
+                    )
+                    st.switch_page("pages/16_Stock_Detail.py")
+
+    with st.expander("📊 段階別サマリー・4位以下を見る", expanded=False):
+        _count_cols = st.columns(6)
+        for _col, (_stage, _label) in zip(_count_cols, _stage_order):
+            _col.metric(_label, _counts.get(_stage, 0))
+
+        for _row in _priority_rows[3:10]:
+            _c1, _c2, _c3, _c4 = st.columns([3.2, 1.2, 1.1, 1.5])
             with _c1:
                 st.markdown(
                     f"**#{_row['rank']} {_row['stage_icon']} {_row['name'] or '—'} "
                     f"({_row['ticker']})**"
                 )
-                st.caption(_row.get("summary", ""))
-                _reason = str(_row.get("lead_reason", "") or "")
-                _blocker = str(_row.get("lead_blocker", "") or "")
                 _parts = []
-                if _reason:
-                    _parts.append(f"追い風: {_reason}")
-                if _blocker:
-                    _parts.append(f"確認: {_blocker}")
+                if _row.get("lead_reason"):
+                    _parts.append(f"追い風: {_row['lead_reason']}")
+                if _row.get("lead_blocker"):
+                    _parts.append(f"確認: {_row['lead_blocker']}")
                 if _parts:
                     st.caption(" ｜ ".join(_parts))
-            with _c2:
-                st.metric("段階", _row["stage_label"])
-            with _c3:
-                st.metric("Readiness", f"{_row['readiness']}/100")
-                st.caption(f"Confidence {_row['confidence']}")
+            _c2.metric("段階", _row["stage_label"])
+            _c3.metric("Readiness", f"{_row['readiness']}/100")
             with _c4:
                 if st.button(
-                    "🔬 この銘柄を見る",
-                    key=f"v3_priority_open_{_row['ticker']}",
+                    "🔬 詳細",
+                    key=f"v3_priority_more_open_{_row['ticker']}",
                     use_container_width=True,
                 ):
                     set_active_stock(
                         _row["ticker"],
                         _row.get("name", ""),
-                        source="今日見るべき銘柄",
+                        source="TODAY COMMAND CENTER",
                     )
                     st.switch_page("pages/16_Stock_Detail.py")
 
-    with st.expander("📋 優先リストを一覧表示", expanded=False):
+        st.markdown("##### 📋 全優先リスト")
         _table = pd.DataFrame(_priority_rows)
         if not _table.empty:
             _table = _table[
@@ -2736,47 +2786,23 @@ else:
             )
             st.dataframe(_table, hide_index=True, width="stretch")
 
-st.title("📊 銘柄管理ダッシュボード")
-
-# ==========================================
-# Operational Health（ME / Entry Hunter 稼働確認）
-# ==========================================
-_health = build_operational_health("data")
-_health_overall = str(_health.get("overall", "PENDING") or "PENDING")
-_health_icon = health_icon(_health_overall)
-
 with st.expander(
-    f"{_health_icon} 運用ヘルスチェック｜{_health_overall}",
+    f"{_health_icon} 運用ヘルスチェック詳細｜{_health_overall}",
     expanded=_health_overall in {"ALERT", "WARN"},
 ):
     _h1, _h2 = st.columns(2)
-    _h1.metric(
-        "直近完了セッション",
-        str(_health.get("expected_session", "—")),
-    )
-    _h2.metric(
-        "次の東証セッション",
-        str(_health.get("next_session", "—")),
-    )
-
+    _h1.metric("直近完了セッション", str(_health.get("expected_session", "—")))
+    _h2.metric("次の東証セッション", str(_health.get("next_session", "—")))
     for _row in _health.get("rows", []):
         _status = str(_row.get("status", "") or "")
         _component = str(_row.get("component", "") or "")
         _detail = str(_row.get("detail", "") or "")
         st.markdown(
-            f"{health_icon(_status)} **{_component}｜{_status}**  \n"
-            f"{_detail}"
+            f"{health_icon(_status)} **{_component}｜{_status}**  \n{_detail}"
         )
 
-    if _health_overall == "ALERT":
-        st.error(
-            "古い市場データまたは場中監視の更新停止を検知しています。"
-            " 売買候補への昇格前に各コンポーネントを確認してください。"
-        )
-    elif _health_overall == "WARN":
-        st.warning("一部コンポーネントの更新状況を確認してください。")
-    elif _health_overall == "OK":
-        st.caption("主要なME / Entry Hunter運用データは正常範囲です。")
+st.divider()
+st.markdown("## 📚 分析・管理ワークスペース")
 
 # ==========================================
 # Deep FCF TOP5（FCFの裏付けが強いME候補）
