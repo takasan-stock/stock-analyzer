@@ -1,8 +1,8 @@
 {
-  "checked_at": "2026-10-30T00:24:44.382536+09:00",
-  "actual_trade_date": "2026-10-28",
-  "expected_trade_date": "2026-10-29",
+  "checked_at": "2026-10-31T00:12:50.319375+09:00",
+  "actual_trade_date": "2026-10-29",
+  "expected_trade_date": "2026-10-30",
   "stale": true,
   "status": "STALE",
-  "reason": "Latest market data is 2026-10-28; expected completed TSE session is 2026-10-29."
+  "reason": "Latest market data is 2026-10-29; expected completed TSE session is 2026-10-30."
 }
