@@ -1,57 +1,14 @@
 {
-  "run_at": "2026-10-31T00:12:52.650514+09:00",
-  "validation_as_of": "2026-11-02T09:00:00",
+  "run_at": "2026-11-03T03:39:25.270777+09:00",
+  "validation_as_of": "2026-11-04T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 3,
-  "short_cover_candidates": 3,
+  "candidate_count": 0,
+  "short_cover_candidates": 0,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": [
-    {
-      "ticker": "6834",
-      "name": "精工技研",
-      "source": "SHORT COVER",
-      "signal_key": "SC|CONFIRMED",
-      "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 40.0,
-      "market_date": "2026-10-30 00:00:00",
-      "opportunity_score": 68.1,
-      "opportunity_rating": "B",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質STRONG / ENTRY条件待ち"
-    },
-    {
-      "ticker": "4588",
-      "name": "オンコリスバイオファーマ",
-      "source": "SHORT COVER",
-      "signal_key": "SC|CONFIRMED",
-      "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 45.0,
-      "market_date": "2026-10-30 00:00:00",
-      "opportunity_score": 55.9,
-      "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / ENTRY条件待ち"
-    },
-    {
-      "ticker": "4565",
-      "name": "ネクセラファーマ",
-      "source": "SHORT COVER",
-      "signal_key": "SC|CONFIRMED",
-      "me_promotion": false,
-      "entry_status": "🔴 CANCEL",
-      "entry_score": 20.0,
-      "market_date": "2026-10-30 00:00:00",
-      "opportunity_score": 26.2,
-      "opportunity_rating": "C",
-      "opportunity_action": "AVOID",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 初動崩れ"
-    }
-  ]
+  "rows": []
 }
