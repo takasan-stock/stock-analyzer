@@ -1,14 +1,43 @@
 {
-  "run_at": "2026-11-03T03:39:25.270777+09:00",
-  "validation_as_of": "2026-11-04T09:00:00",
+  "run_at": "2026-11-04T01:28:05.329807+09:00",
+  "validation_as_of": "2026-11-05T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 0,
+  "candidate_count": 2,
   "short_cover_candidates": 0,
-  "me_entry_candidates": 0,
+  "me_entry_candidates": 2,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": []
+  "rows": [
+    {
+      "ticker": "3491",
+      "name": "ＧＡ　ｔｅｃｈｎｏｌｏｇｉｅｓ",
+      "source": "ME HUNTER",
+      "signal_key": "ME|R-READY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-11-02 00:00:00",
+      "opportunity_score": 42.6,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "ME HUNTER / ME|R-READY / ENTRY条件待ち"
+    },
+    {
+      "ticker": "7309",
+      "name": "シマノ",
+      "source": "ME HUNTER",
+      "signal_key": "ME|R-READY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-11-02 00:00:00",
+      "opportunity_score": 41.6,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "ME HUNTER / ME|R-READY / ENTRY条件待ち"
+    }
+  ]
 }
