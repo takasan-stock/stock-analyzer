@@ -1031,10 +1031,14 @@ def add_simple_rs_proxy(
         g["rs_rating_20d_ago"] = g["rs_rating"].shift(20)
         return g
 
+    processed_groups = [
+        process(g.copy())
+        for _, g in out.groupby("ticker", sort=True)
+    ]
     return (
-        out.groupby("ticker", group_keys=False)
-        .apply(process)
-        .reset_index(drop=True)
+        pd.concat(processed_groups, ignore_index=True)
+        if processed_groups
+        else out.iloc[0:0].copy()
     )
 
 
