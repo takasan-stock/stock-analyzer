@@ -87,9 +87,24 @@ def _parse_codes(value: str) -> list[str]:
     ]
 
 
+def _light_safe_from_date(requested_from: str, to_date: str) -> str:
+    """Clip market/index requests to the Light plan's five-year window."""
+    requested = pd.to_datetime(requested_from, errors="coerce")
+    end = pd.to_datetime(to_date, errors="coerce")
+    if pd.isna(end):
+        end = pd.Timestamp(date.today())
+    # Keep a small safety margin inside the five-year boundary to avoid
+    # inclusive-boundary / timezone differences at the API edge.
+    earliest = end - pd.DateOffset(years=5) + pd.Timedelta(days=7)
+    if pd.isna(requested) or requested < earliest:
+        return earliest.date().isoformat()
+    return requested.date().isoformat()
+
+
 def _default_from_date() -> str:
-    # Request a little more than five years where the plan permits it.
-    return (date.today() - timedelta(days=365 * 5 + 45)).isoformat()
+    # Light supports five years. Stay a few days inside the boundary.
+    today = date.today().isoformat()
+    return _light_safe_from_date("", today)
 
 
 def _write_outputs(result: pd.DataFrame) -> None:
@@ -209,10 +224,17 @@ def main() -> int:
 
     client = JQuantsV2Client.from_env()
 
+    effective_topix_from = _light_safe_from_date(args.from_date, args.to_date)
+    if effective_topix_from != args.from_date:
+        print(
+            f"[MEX] TOPIX start clipped for J-Quants Light: "
+            f"{args.from_date} -> {effective_topix_from}"
+        )
+
     # TOPIX is fetched once and reused across tickers.
     try:
         topix = client.topix(
-            from_date=args.from_date.replace("-", ""),
+            from_date=effective_topix_from.replace("-", ""),
             to_date=args.to_date.replace("-", ""),
         )
     except PermissionError:
