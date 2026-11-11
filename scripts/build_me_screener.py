@@ -135,7 +135,17 @@ def _write_changes(
     if old_history.empty:
         merged = changes.copy()
     else:
-        merged = pd.concat([old_history, changes], ignore_index=True)
+        frames = [old_history, changes]
+        ordered_cols = list(dict.fromkeys(
+            col for frame in frames for col in frame.columns
+        ))
+        concat_ready = [
+            frame.dropna(axis=1, how="all")
+            for frame in frames
+        ]
+        merged = pd.concat(concat_ready, ignore_index=True).reindex(
+            columns=ordered_cols
+        )
         if "event_id" in merged.columns:
             merged = merged.drop_duplicates("event_id", keep="last")
 
