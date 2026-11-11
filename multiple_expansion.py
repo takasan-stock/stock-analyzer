@@ -346,10 +346,14 @@ def calculate_multiple_normalization(
 
         return g.drop(columns=d_cols + z_cols)
 
+    processed_groups = [
+        process_group(g.copy())
+        for _, g in out.groupby("ticker", sort=True)
+    ]
     return (
-        out.groupby("ticker", group_keys=False)
-        .apply(process_group)
-        .reset_index(drop=True)
+        pd.concat(processed_groups, ignore_index=True)
+        if processed_groups
+        else out.iloc[0:0].copy()
     )
 
 
@@ -1129,10 +1133,14 @@ def calculate_price_driver(
         )
         return g
 
+    processed_groups = [
+        process(g.copy())
+        for _, g in out.groupby("ticker", sort=True)
+    ]
     return (
-        out.groupby("ticker", group_keys=False)
-        .apply(process)
-        .reset_index(drop=True)
+        pd.concat(processed_groups, ignore_index=True)
+        if processed_groups
+        else out.iloc[0:0].copy()
     )
 
 

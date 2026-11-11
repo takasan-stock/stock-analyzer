@@ -390,7 +390,16 @@ def main() -> int:
         print("[MEX] No results were produced.")
         return 2
 
-    result = pd.concat(results, ignore_index=True)
+    ordered_cols = list(dict.fromkeys(
+        col for frame in results for col in frame.columns
+    ))
+    concat_ready = [
+        frame.dropna(axis=1, how="all")
+        for frame in results
+    ]
+    result = pd.concat(concat_ready, ignore_index=True).reindex(
+        columns=ordered_cols
+    )
     _write_outputs(result)
 
     print(f"[MEX] wrote {OUT_DIR / 'mex_latest.csv'}")

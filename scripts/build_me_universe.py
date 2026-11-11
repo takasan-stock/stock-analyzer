@@ -575,10 +575,14 @@ def _build_universe_snapshot(
     if market.empty:
         return pd.DataFrame()
 
+    featured_groups = [
+        _coarse_multiple_features(g.copy())
+        for _, g in market.groupby("ticker", sort=True)
+    ]
     featured = (
-        market.groupby("ticker", group_keys=False)
-        .apply(_coarse_multiple_features)
-        .reset_index(drop=True)
+        pd.concat(featured_groups, ignore_index=True)
+        if featured_groups
+        else pd.DataFrame()
     )
 
     rows = []
