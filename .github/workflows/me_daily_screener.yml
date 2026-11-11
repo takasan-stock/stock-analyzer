@@ -31,14 +31,14 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
       PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Check whether today's scheduled ME run already completed
         id: fresh
         if: github.event_name == 'schedule'
@@ -77,7 +77,7 @@ jobs:
 
       - name: Set up Python
         if: github.event_name != 'schedule' || steps.fresh.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
