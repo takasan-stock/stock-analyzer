@@ -258,7 +258,18 @@ def add_reacceleration_engine(
         g["reexp_event_v09"] = reexp_events
         groups.append(g)
 
-    return pd.concat(groups, ignore_index=True)
+    if not groups:
+        return out.iloc[0:0].copy()
+
+    ordered_cols = list(dict.fromkeys(
+        col for frame in groups for col in frame.columns
+    ))
+    concat_ready = [
+        frame.dropna(axis=1, how="all")
+        for frame in groups
+    ]
+    merged = pd.concat(concat_ready, ignore_index=True)
+    return merged.reindex(columns=ordered_cols)
 
 
 def add_historical_edge(history: pd.DataFrame) -> pd.DataFrame:
