@@ -1,6 +1,6 @@
 {
-  "run_at": "2026-11-12T01:28:05.972216+09:00",
-  "validation_as_of": "2026-11-13T09:00:00",
+  "run_at": "2026-11-13T01:59:16.449599+09:00",
+  "validation_as_of": "2026-11-16T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
   "candidate_count": 1,
@@ -12,18 +12,18 @@
   "me_promoted_tickers": [],
   "rows": [
     {
-      "ticker": "6862",
-      "name": "ミナトホールディングス",
+      "ticker": "4631",
+      "name": "ＤＩＣ",
       "source": "SHORT COVER",
       "signal_key": "SC|CONFIRMED",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
       "entry_score": 0.0,
-      "market_date": "2026-11-11 00:00:00",
-      "opportunity_score": 47.2,
+      "market_date": "2026-11-12 00:00:00",
+      "opportunity_score": 53.5,
       "opportunity_rating": "C",
       "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質GOOD / ENTRY条件待ち"
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質STRONG / ENTRY条件待ち"
     }
   ]
 }
