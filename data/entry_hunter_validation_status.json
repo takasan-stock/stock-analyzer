@@ -1,29 +1,14 @@
 {
-  "run_at": "2026-11-14T01:39:49.994604+09:00",
-  "validation_as_of": "2026-11-16T09:00:00",
+  "run_at": "2026-11-17T03:46:31.158891+09:00",
+  "validation_as_of": "2026-11-18T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 1,
-  "short_cover_candidates": 1,
+  "candidate_count": 0,
+  "short_cover_candidates": 0,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": [
-    {
-      "ticker": "4631",
-      "name": "ＤＩＣ",
-      "source": "SHORT COVER",
-      "signal_key": "SC|CONFIRMED",
-      "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 45.0,
-      "market_date": "2026-11-13 00:00:00",
-      "opportunity_score": 71.5,
-      "opportunity_rating": "B+",
-      "opportunity_action": "WATCH",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 候補品質STRONG / ENTRY条件待ち"
-    }
-  ]
+  "rows": []
 }
