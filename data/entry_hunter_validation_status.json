@@ -1,57 +1,14 @@
 {
-  "run_at": "2026-11-19T02:26:01.689610+09:00",
-  "validation_as_of": "2026-11-20T09:00:00",
+  "run_at": "2026-11-20T02:31:51.812211+09:00",
+  "validation_as_of": "2026-11-24T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 3,
-  "short_cover_candidates": 3,
+  "candidate_count": 0,
+  "short_cover_candidates": 0,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": [
-    {
-      "ticker": "9706",
-      "name": "日本空港ビルデング",
-      "source": "SHORT COVER",
-      "signal_key": "SC|CONFIRMED",
-      "me_promotion": false,
-      "entry_status": "🟢 ENTRY READY",
-      "entry_score": 95.0,
-      "market_date": "2026-11-18 00:00:00",
-      "opportunity_score": 78.3,
-      "opportunity_rating": "A",
-      "opportunity_action": "ENTRY READY",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 寄り後READY"
-    },
-    {
-      "ticker": "623A",
-      "name": "ベルテックス",
-      "source": "SHORT COVER",
-      "signal_key": "SC|OTHER",
-      "me_promotion": false,
-      "entry_status": "🔴 CANCEL",
-      "entry_score": 30.0,
-      "market_date": "2026-11-18 00:00:00",
-      "opportunity_score": 27.2,
-      "opportunity_rating": "C",
-      "opportunity_action": "AVOID",
-      "opportunity_reason": "SHORT COVER / SC|OTHER / 初動崩れ"
-    },
-    {
-      "ticker": "4222",
-      "name": "児玉化学工業",
-      "source": "SHORT COVER",
-      "signal_key": "SC|OTHER",
-      "me_promotion": false,
-      "entry_status": "🟡 WAIT",
-      "entry_score": 45.0,
-      "market_date": "2026-11-18 00:00:00",
-      "opportunity_score": 49.0,
-      "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|OTHER / ENTRY条件待ち"
-    }
-  ]
+  "rows": []
 }
