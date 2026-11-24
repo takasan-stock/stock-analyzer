@@ -1,14 +1,29 @@
 {
-  "run_at": "2026-11-24T05:27:06.025414+09:00",
-  "validation_as_of": "2026-11-25T09:00:00",
+  "run_at": "2026-11-25T04:39:09.967091+09:00",
+  "validation_as_of": "2026-11-26T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
-  "candidate_count": 0,
-  "short_cover_candidates": 0,
+  "candidate_count": 1,
+  "short_cover_candidates": 1,
   "me_entry_candidates": 0,
   "me_watch_candidates": 0,
   "me_watch_tickers": [],
   "me_promoted_count": 0,
   "me_promoted_tickers": [],
-  "rows": []
+  "rows": [
+    {
+      "ticker": "4586",
+      "name": "メドレックス",
+      "source": "SHORT COVER",
+      "signal_key": "SC|EARLY",
+      "me_promotion": false,
+      "entry_status": "🟡 WAIT",
+      "entry_score": 0.0,
+      "market_date": "2026-11-24 00:00:00",
+      "opportunity_score": 36.7,
+      "opportunity_rating": "C",
+      "opportunity_action": "WAIT",
+      "opportunity_reason": "SHORT COVER / SC|EARLY / ENTRY条件待ち"
+    }
+  ]
 }
