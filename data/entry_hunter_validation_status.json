@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-27T03:34:02.016359+09:00",
+  "run_at": "2026-11-28T03:22:56.073400+09:00",
   "validation_as_of": "2026-11-30T09:00:00",
   "mode": "VALIDATION_ONLY",
   "side_effects": "NONE",
@@ -18,9 +18,9 @@
       "signal_key": "SC|CONFIRMED",
       "me_promotion": false,
       "entry_status": "🟡 WAIT",
-      "entry_score": 0.0,
-      "market_date": "2026-11-26 00:00:00",
-      "opportunity_score": 40.1,
+      "entry_score": 20.0,
+      "market_date": "2026-11-27 00:00:00",
+      "opportunity_score": 48.1,
       "opportunity_rating": "C",
       "opportunity_action": "WAIT",
       "opportunity_reason": "SHORT COVER / SC|CONFIRMED / ENTRY条件待ち"
@@ -31,13 +31,13 @@
       "source": "SHORT COVER",
       "signal_key": "SC|CONFIRMED",
       "me_promotion": false,
-      "entry_status": "🟡 WAIT",
+      "entry_status": "🔴 CANCEL",
       "entry_score": 0.0,
-      "market_date": "2026-11-26 00:00:00",
-      "opportunity_score": 39.0,
+      "market_date": "2026-11-27 00:00:00",
+      "opportunity_score": 22.0,
       "opportunity_rating": "C",
-      "opportunity_action": "WAIT",
-      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / ENTRY条件待ち"
+      "opportunity_action": "AVOID",
+      "opportunity_reason": "SHORT COVER / SC|CONFIRMED / 初動崩れ"
     }
   ]
 }
